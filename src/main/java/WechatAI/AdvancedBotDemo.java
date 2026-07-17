@@ -1,0 +1,75 @@
+package WechatAI;
+
+import WechatAI.config.AiProperties;
+import WechatAI.config.AppConfigLoader;
+import WechatAI.config.WechatClientFactory;
+import WechatAI.service.AiChatService;
+import WechatAI.service.ImageGenerationService;
+import WechatAI.service.ImageUnderstandingService;
+import WechatAI.service.MessagePollingService;
+import WechatAI.service.MessageTextExtractor;
+import WechatAI.service.WechatMessageService;
+import com.github.wechat.ilink.sdk.ILinkClient;
+import com.github.wechat.ilink.sdk.core.login.LoginContext;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+import java.util.concurrent.ExecutionException;
+
+@SpringBootApplication
+public class AdvancedBotDemo {
+
+    public static void main(String[] args) {
+        AiProperties aiProperties = AppConfigLoader.load();
+        ILinkClient client = WechatClientFactory.create();
+
+        String qrCodeContent = client.executeLogin();
+        System.out.println("📱 请将以下内容渲染为二维码后扫码登录：");
+        System.out.println(qrCodeContent);
+
+        if (!waitForLogin(client)) {
+            return;
+        }
+
+        AiChatService aiChatService = new AiChatService(aiProperties);
+        ImageUnderstandingService imageUnderstandingService = new ImageUnderstandingService(aiProperties);
+        ImageGenerationService imageGenerationService = new ImageGenerationService(aiProperties);
+        MessageTextExtractor textExtractor = new MessageTextExtractor();
+        WechatMessageService messageService = new WechatMessageService(
+                client,
+                aiChatService,
+                imageUnderstandingService,
+                imageGenerationService,
+                textExtractor
+        );
+        MessagePollingService pollingService = new MessagePollingService(client, messageService);
+
+        System.out.println("🔄 开始监听消息...");
+        pollingService.start();
+
+        keepAlive();
+    }
+
+    private static boolean waitForLogin(ILinkClient client) {
+        try {
+            LoginContext context = client.getLoginFuture().get();
+            System.out.println("✅ 恭喜登录成功，botId = " + context.getBotId());
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            System.err.println("❌ 登录被中断: " + e.getMessage());
+            return false;
+        } catch (ExecutionException e) {
+            System.err.println("❌ 登录失败: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private static void keepAlive() {
+        try {
+            Thread.sleep(Long.MAX_VALUE);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            System.out.println("程序已停止");
+        }
+    }
+}

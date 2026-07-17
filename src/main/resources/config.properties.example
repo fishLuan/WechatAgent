@@ -1,0 +1,14 @@
+# Copy this file to config.properties for local development.
+# Do not commit real API keys.
+qwen.api.key=${QWEN_API_KEY}
+
+qwen.text.api.url=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+qwen.text.model=qwen3.7-max
+
+qwen.vision.api.url=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+qwen.vision.model=qwen3.5-ocr
+
+qwen.image.generation.api.url=https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation
+qwen.image.generation.model=qwen-image-plus
+
+system.prompt=你是一个友好的微信AI助手，请用简洁、温暖的方式回答用户的问题。
