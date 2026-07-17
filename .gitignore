@@ -31,3 +31,33 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### 敏感信息 — 请勿提交 ###
+# 备份文件
+*.bak
+*.old
+*.swp
+*.backup
+
+# 环境变量文件
+.env
+.env.*
+!.env.example
+
+# 本地配置文件
+application-local.properties
+application-secret.properties
+*.properties.local
+*.conf.local
+
+# 密钥/证书
+secret/
+keys/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# 日志
+*.log
+logs/
