@@ -36,6 +36,16 @@ public class SimpleBot {
     private static final String DEEPSEEK_MODEL = "deepseek-chat";
     private static final String DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions";
 
+    // ===== 阿里云百炼配置 =====
+    // 从环境变量 DASHSCOPE_API_KEY 或系统属性 dashscope.api.key 读取
+    // 提供功能：图片理解（看图）、文生图（画图）
+    private static final String DASHSCOPE_API_KEY =
+        firstNonNull(System.getenv("DASHSCOPE_API_KEY"),
+            System.getProperty("dashscope.api.key"),
+            "");
+    private static final AliyunDashscopeService aliyunService =
+        new AliyunDashscopeService(DASHSCOPE_API_KEY);
+
     // 人设
     private static final String SYSTEM_PROMPT =
         "你是一个友好、幽默、有耐心的微信机器人助手。"
@@ -68,6 +78,12 @@ public class SimpleBot {
         if (DEEPSEEK_API_KEY == null || DEEPSEEK_API_KEY.trim().isEmpty()) {
             System.out.println("[WARN] DeepSeek API Key 未配置，将使用 echo 模式");
             System.out.println("       请配置环境变量 DEEPSEEK_API_KEY 后重启");
+            System.out.println();
+        }
+
+        if (!aliyunService.isConfigured()) {
+            System.out.println("[WARN] 阿里云百炼 API Key 未配置，看图/画图功能不可用");
+            System.out.println("       请配置环境变量 DASHSCOPE_API_KEY 后重启");
             System.out.println();
         }
 
@@ -158,27 +174,221 @@ public class SimpleBot {
             // 去重，同一条消息不重复处理
             if (!processedMsgIds.add(msg.getMessage_id())) continue;
 
-            String text = extractText(msg);
-            if (text == null || text.trim().isEmpty()) continue;
-
             String from = msg.getFrom_user_id();
-            System.out.println("[RECV] <" + from + "> " + text);
+            String textContent = extractText(msg);
 
-            // 生成回复
-            String reply = buildReply(text);
+            // 分支 1：消息包含图片 → 看图理解
+            if (hasImage(msg)) {
+                handleImageMessage(client, msg, from, textContent);
+                continue;
+            }
+
+            // 其他消息至少需要有文字
+            if (textContent == null || textContent.trim().isEmpty()) continue;
+            System.out.println("[RECV] <" + from + "> " + textContent);
+
+            // 分支 2：检测"画图"指令 → 文生图
+            String imagePrompt = extractImagePrompt(textContent);
+            if (imagePrompt != null) {
+                handleGenerateImage(client, from, imagePrompt);
+                continue;
+            }
+
+            // 分支 3：普通文本 → DeepSeek 对话
+            handleTextMessage(client, from, textContent);
+        }
+    }
+
+    // ===== 图片消息处理：看图理解 =====
+    private static void handleImageMessage(ILinkClient client, WeixinMessage msg,
+                                            String from, String textContent) {
+        String question = (textContent == null || textContent.trim().isEmpty())
+            ? "请描述这张图片的内容"
+            : textContent.replace("[图片]", "").replace("[语音]", "")
+                .replace("[文件]", "").replace("[视频]", "").trim();
+
+        System.out.println("[RECV] <" + from + "> [图片] "
+            + (question.isEmpty() ? "(无文字问题)" : question));
+
+        // 百炼 Key 未配置 → 提示
+        if (!aliyunService.isConfigured()) {
+            String hint = "（我暂时无法识别图片，请先配置 DASHSCOPE_API_KEY 后再试）";
             try {
-                // 显示"输入中..."
-                long typingMillis = Math.min(2000, 300 + reply.length() * 20L);
-                client.sendTextWithTyping(from, reply, typingMillis);
-                System.out.println("[SEND] " + reply.replace("\n", " | "));
-
-                // 加入对话历史
-                appendToHistory(text, reply);
-
+                client.sendTextWithTyping(from, hint, 1500);
+                System.out.println("[SEND] " + hint);
             } catch (Exception e) {
                 System.err.println("[ERROR] Send failed: " + e.getMessage());
             }
+            return;
         }
+
+        // 下载图片字节
+        byte[] imageBytes = downloadFirstImage(client, msg);
+        if (imageBytes == null || imageBytes.length == 0) {
+            try {
+                client.sendTextWithTyping(from, "图片下载失败了，请换一张试试～", 1500);
+            } catch (Exception e) {
+                System.err.println("[ERROR] Send failed: " + e.getMessage());
+            }
+            return;
+        }
+
+        // 调用百炼看图
+        try {
+            System.out.println("[INFO] 正在调用百炼图片理解模型...");
+            String description = aliyunService.understandImage(imageBytes,
+                question.isEmpty() ? "请描述这张图片的内容" : question);
+
+            long typingMillis = Math.min(2500, 500 + description.length() * 20L);
+            client.sendTextWithTyping(from, description, typingMillis);
+            System.out.println("[SEND] " + description.replace("\n", " | "));
+
+            // 图片对话不累积到历史，避免 prompt 膨胀
+        } catch (Exception e) {
+            System.err.println("[ERROR] 图片理解失败: " + e.getMessage());
+            try {
+                client.sendTextWithTyping(from, "抱歉，图片识别出问题了："
+                    + (e.getMessage() == null ? "未知错误" : e.getMessage()), 1500);
+            } catch (Exception ex) {
+                System.err.println("[ERROR] Send failed: " + ex.getMessage());
+            }
+        }
+    }
+
+    // ===== 画图指令处理：文生图 =====
+    private static void handleGenerateImage(ILinkClient client, String from, String prompt) {
+        System.out.println("[RECV] <" + from + "> [画图指令] " + prompt);
+
+        // 百炼 Key 未配置 → 提示
+        if (!aliyunService.isConfigured()) {
+            String hint = "（我暂时无法生成图片，请先配置 DASHSCOPE_API_KEY 后再试）";
+            try {
+                client.sendTextWithTyping(from, hint, 1500);
+                System.out.println("[SEND] " + hint);
+            } catch (Exception e) {
+                System.err.println("[ERROR] Send failed: " + e.getMessage());
+            }
+            return;
+        }
+
+        try {
+            // 先发一条文字提示告诉用户正在生成
+            String pendingMsg = "好的，正在为你画图：" + prompt + "\n（生成图片需要一点时间，请耐心等待～）";
+            client.sendTextWithTyping(from, pendingMsg, Math.min(2000, 500 + pendingMsg.length() * 15L));
+            System.out.println("[SEND] " + pendingMsg.replace("\n", " | "));
+
+            // 调用百炼生成图片
+            System.out.println("[INFO] 正在调用百炼文生图模型...");
+            byte[] imageBytes = aliyunService.generateImage(prompt);
+
+            // 发送图片给用户
+            String fileName = "ai-generated-" + System.currentTimeMillis() + ".png";
+            client.sendImage(from, imageBytes, fileName, null);
+            System.out.println("[SEND] [图片] " + fileName + " (" + imageBytes.length + " bytes)");
+
+            // 生成图对话不累积到历史
+        } catch (Exception e) {
+            System.err.println("[ERROR] 图片生成失败: " + e.getMessage());
+            try {
+                client.sendTextWithTyping(from, "抱歉，画图出问题了："
+                    + (e.getMessage() == null ? "未知错误" : e.getMessage()), 1500);
+            } catch (Exception ex) {
+                System.err.println("[ERROR] Send failed: " + ex.getMessage());
+            }
+        }
+    }
+
+    // ===== 普通文本消息处理：DeepSeek 对话 =====
+    private static void handleTextMessage(ILinkClient client, String from, String userText) {
+        String reply = buildReply(userText);
+        try {
+            long typingMillis = Math.min(2000, 300 + reply.length() * 20L);
+            client.sendTextWithTyping(from, reply, typingMillis);
+            System.out.println("[SEND] " + reply.replace("\n", " | "));
+            appendToHistory(userText, reply);
+        } catch (Exception e) {
+            System.err.println("[ERROR] Send failed: " + e.getMessage());
+        }
+    }
+
+    // ===== 辅助：消息是否包含图片 =====
+    private static boolean hasImage(WeixinMessage msg) {
+        if (msg.getItem_list() == null) return false;
+        for (MessageItem item : msg.getItem_list()) {
+            if (item.getImage_item() != null) return true;
+        }
+        return false;
+    }
+
+    // ===== 辅助：下载消息中第一张图片为字节 =====
+    private static byte[] downloadFirstImage(ILinkClient client, WeixinMessage msg) {
+        if (msg.getItem_list() == null) return null;
+        for (MessageItem item : msg.getItem_list()) {
+            if (item.getImage_item() != null) {
+                try {
+                    return client.downloadImageFromMessageItem(item);
+                } catch (Exception e) {
+                    System.err.println("[ERROR] 图片下载失败: " + e.getMessage());
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    // ===== 辅助：检测"画图"指令，返回 prompt（不是画图指令返回 null） =====
+    private static String extractImagePrompt(String userText) {
+        if (userText == null) return null;
+        String t = userText.trim();
+
+        // 注意：长的前缀要放在前面，避免被短的前缀截断
+        // 例如必须先检查"给我画一张"，再检查"给我画"
+        String[] prefixes = {
+            // 最明确的：画图/生成图
+            "画图：", "画图:", "画图 ", "画图",
+            "生成图：", "生成图:", "生成图 ", "生成图",
+
+            // 一张类：画一张/生成一张/来一张/给一张
+            "画一张：", "画一张:", "画一张 ", "画一张",
+            "生成一张：", "生成一张:", "生成一张 ", "生成一张",
+            "来一张：", "来一张:", "来一张 ", "来一张",
+            "给一张：", "给一张:", "给一张 ", "给一张",
+            "来张：", "来张:", "来张 ", "来张",
+
+            // 请求类：帮我画/给我画/帮我生成/给我生成
+            "帮我画一张", "帮我画一张 ", "帮我画一张：", "帮我画一张:",
+            "给我画一张", "给我画一张 ", "给我画一张：", "给我画一张:",
+            "帮我画个", "帮我画个 ", "帮我画个：", "帮我画个:",
+            "给我画个", "给我画个 ", "给我画个：", "给我画个:",
+            "帮我画", "帮我画 ", "帮我画：", "帮我画:",
+            "给我画", "给我画 ", "给我画：", "给我画:",
+            "帮我生成一张", "帮我生成一张 ", "帮我生成",
+            "给我生成一张", "给我生成一张 ", "给我生成",
+
+            // 简短类：画个/画/生成
+            "画个", "画个 ", "画个：", "画个:",
+            "画 ", "画"
+        };
+
+        for (String prefix : prefixes) {
+            if (t.startsWith(prefix)) {
+                String prompt = t.substring(prefix.length()).trim();
+                // 去掉开头的"..." 中的冒号和空格
+                if (prompt.startsWith("：") || prompt.startsWith(":")) {
+                    prompt = prompt.substring(1).trim();
+                }
+                // 去掉"一张图片""图片"等冗余词（保留核心描述）
+                String[] redundant = {"一张图片", "一张图", "张图片", "张图", "图片"};
+                for (String r : redundant) {
+                    if (prompt.equals(r)) {
+                        // 只说了"画图一张图片"这类，没有实际描述，当无效处理
+                        return null;
+                    }
+                }
+                return prompt.isEmpty() ? null : prompt;
+            }
+        }
+        return null;
     }
 
     // ===== 从消息中提取文字 =====
@@ -210,7 +420,10 @@ public class SimpleBot {
 
         // 特殊命令
         if (t.equalsIgnoreCase("help") || t.equals("帮助") || t.equals("?")) {
-            return "我接入了DeepSeek大模型，你可以随便问我任何问题！"
+            return "我可以做的事情："
+                + "\n1. 文本对话（接入 DeepSeek 大模型）"
+                + "\n2. 看图识别（发送图片即可，同时接入阿里云百炼视觉模型）"
+                + "\n3. 文生图（说「画图 一只在月球上的猫」即可生成图片）"
                 + "\n（发送 'clear' 可清空对话记忆）";
         }
         if (t.equalsIgnoreCase("clear") || t.equals("清空") || t.equals("重置")) {
