@@ -23,7 +23,12 @@ import java.util.concurrent.atomic.AtomicReference;
 public class SimpleBot {
 
     // ===== DeepSeek 配置 =====
-    // 填入你的 API Key，也可以通过环境变量 DEEPSEEK_API_KEY 覆盖
+    // ⚠️ 请勿将 API Key 硬编码在此处！
+    // 从环境变量 DEEPSEEK_API_KEY 或系统属性 deepseek.api.key 读取
+    // 配置方式：
+    //   1. Win+R 输入: rundll32 sysdm.cpl,EditEnvironmentVariables
+    //   2. 添加用户变量: DEEPSEEK_API_KEY = 你的key
+    //   3. 重启 IDE
     private static final String DEEPSEEK_API_KEY =
         firstNonNull(System.getenv("DEEPSEEK_API_KEY"),
             System.getProperty("deepseek.api.key"),
@@ -36,7 +41,9 @@ public class SimpleBot {
         "你是一个友好、幽默、有耐心的微信机器人助手。"
         + "你的名字叫ClawBot。"
         + "用简洁自然的中文回答用户。"
-        + "回答不要太长，控制在3句话以内。";
+        + "回答不要太长，控制在3句话以内。"
+        + "不要讨论或编造你使用的底层技术、模型架构或API供应商。"
+        + "当用户问你是什么模型时，用幽默的方式回答，比如'我是一个训练有素的语言模型小助手～'。";
 
     // 对话历史（维持上下文）
     private static final StringBuilder conversationHistory = new StringBuilder();
@@ -58,8 +65,9 @@ public class SimpleBot {
         System.out.println("========================================");
         System.out.println();
 
-        if (DEEPSEEK_API_KEY == null || DEEPSEEK_API_KEY.trim().isEmpty() || DEEPSEEK_API_KEY.contains("这里")) {
+        if (DEEPSEEK_API_KEY == null || DEEPSEEK_API_KEY.trim().isEmpty()) {
             System.out.println("[WARN] DeepSeek API Key 未配置，将使用 echo 模式");
+            System.out.println("       请配置环境变量 DEEPSEEK_API_KEY 后重启");
             System.out.println();
         }
 
@@ -211,9 +219,9 @@ public class SimpleBot {
         }
 
         // 没配置 API Key：echo 模式
-        if (DEEPSEEK_API_KEY == null || DEEPSEEK_API_KEY.trim().isEmpty() || DEEPSEEK_API_KEY.contains("这里")) {
+        if (DEEPSEEK_API_KEY == null || DEEPSEEK_API_KEY.trim().isEmpty()) {
             return "（Echo模式）你说: " + userText
-                + "\n提示：配置 DeepSeek API Key 开启智能对话";
+                + "\n提示：配置环境变量 DEEPSEEK_API_KEY 开启智能对话";
         }
 
         // DeepSeek
