@@ -1,10 +1,10 @@
 package com.xwc.demo;
 
-import com.github.wechat.ilink.sdk.ILinkClient;
-import com.github.wechat.ilink.sdk.core.config.ILinkConfig;
-import com.github.wechat.ilink.sdk.core.listener.OnMessageListener;
-import com.github.wechat.ilink.sdk.core.model.MessageItem;
-import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
+import com.xwc.demo.wechat.iLink.ILinkClient;
+import com.xwc.demo.wechat.iLink.core.config.ILinkConfig;
+import com.xwc.demo.wechat.iLink.core.listener.OnMessageListener;
+import com.xwc.demo.wechat.iLink.core.model.MessageItem;
+import com.xwc.demo.wechat.iLink.core.model.WeixinMessage;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -24,18 +24,25 @@ public class WeChatBotService {
 
     private static final Logger log = LoggerFactory.getLogger(WeChatBotService.class);
 
+    private final LlmService llmService;
+
     private ILinkClient client;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final Queue<BotMessage> messageLog = new ConcurrentLinkedQueue<>();
     private final Set<String> activeUsers = Collections.synchronizedSet(new HashSet<>());
     private Thread pollerThread;
 
-    @PostConstruct
-    public void init() {
-        log.info("WeChatBotService 初始化完成，等待调用 start() 启动登录");
+    public WeChatBotService(LlmService llmService) {
+        this.llmService = llmService;
     }
 
-    @PreDestroy
+    @PostConstruct // 所有依赖注入完成后，自动调用一次
+    public void init() {
+        log.info("WeChatBotService 初始化完成，LLM={}，等待调用 start() 启动登录",
+                llmService.isEnabled() ? ("已启用(" + llmService.getModel() + ")") : "未启用");
+    }
+
+    @PreDestroy // 应用关闭时，自动调用（优雅退出）
     public void destroy() {
         stop();
     }
@@ -45,6 +52,7 @@ public class WeChatBotService {
             return new BotStartResult(false, "机器人已登录", null);
         }
 
+        // 1. 配置微信 SDK（超时、重试、心跳）
         ILinkConfig config = ILinkConfig.builder()
                 .connectTimeoutMs(30000)
                 .readTimeoutMs(30000)
@@ -54,6 +62,7 @@ public class WeChatBotService {
                 .heartbeatIntervalMs(30000)
                 .build();
 
+        // 2. 构建 ILinkClient，挂上消息监听器
         client = ILinkClient.builder()
                 .config(config)
                 .onMessage(new OnMessageListener() {
@@ -84,7 +93,7 @@ public class WeChatBotService {
                             if (messageLog.size() > 200) messageLog.poll();
 
                             if (text != null) {
-                                String reply = generateReply(text);
+                                String reply = generateReply(from, text);
                                 try {
                                     sendMessage(from, reply);
                                 } catch (IOException e) {
@@ -97,9 +106,11 @@ public class WeChatBotService {
                 .build();
 
         log.info("正在获取登录二维码...");
-        String qrContent = client.executeLogin();
-        String qrHtmlPath = saveQrCodePage(qrContent);
+        // 3. 获取登录二维码（让用户用微信扫码）
+        String qrContent = client.executeLogin();// 调微信 API 拿二维码
+        String qrHtmlPath = saveQrCodePage(qrContent);// 存成 HTML 文件
 
+        // 4. 启动后台线程，持续拉取新消息
         running.set(true);
         pollerThread = new Thread(() -> {
             log.info("消息监听线程已启动");
@@ -153,7 +164,7 @@ public class WeChatBotService {
         if (client == null || !client.isLoggedIn()) {
             throw new IllegalStateException("机器人未登录，请先调用 /bot/start 扫码登录");
         }
-        client.sendText(toUserId, text);
+        client.sendText(toUserId, text);//调用
         BotMessage botMsg = new BotMessage(System.currentTimeMillis(), toUserId, "text", text, "sent");
         messageLog.offer(botMsg);
         if (messageLog.size() > 200) messageLog.poll();
@@ -260,12 +271,36 @@ public class WeChatBotService {
         return false;
     }
 
-    // ========== 智能回复（简化版） ==========
+    // ========== 智能回复（LLM + 本地关键词回退） ==========
 
     private final Random rand = new Random();
 
-    private String generateReply(String text) {
+    private String generateReply(String userId, String text) {
         if (text == null) return "你好呀~";
+
+        // 优先走 LLM（多轮对话记忆）
+        if (llmService.isEnabled()) {
+            // 本地拦截：清空对话历史
+            String t = text.trim().toLowerCase();
+            if (matchesAny(t, "重置对话", "清空记忆", "重新开始", "从头开始", "clear chat")) {
+                llmService.clearSession(userId);
+                return "好的，我已经忘掉我们之前的对话啦~ 我们重新开始吧！";
+            }
+            // 1. 优先用大模型
+            try {
+                return llmService.chat(userId, text);
+            } catch (Exception e) {
+                log.warn("LLM 调用失败，回退到本地关键词回复: {}", e.getMessage());
+                // LLM 失败时回退到本地关键词，不影响用户体验
+            }
+        }
+
+        // 本地关键词回退（LLM 未配置或调用失败时使用）
+        return localKeywordReply(text);
+    }
+
+    // 2. 大模型没配 / 失败 → 用本地关键词匹配（老逻辑）
+    private String localKeywordReply(String text) {
         String t = text.toLowerCase().trim();
 
         if (matchesAny(t, "你好", "您好", "hi", "hello", "嗨"))

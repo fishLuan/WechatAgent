@@ -29,5 +29,23 @@ build/
 !**/src/main/**/build/
 !**/src/test/**/build/
 
+# 屏蔽本地私有配置（存放真实API密钥）
+application-local.properties
+application-local.yml
+application-dev.properties
+application-dev.yml
+# 全局屏蔽所有环境配置，只保留基础application.properties
+application-*.properties
+application-*.yml
+# 其他敏感文件一并屏蔽
+.env
+*.env
+*secret*
+*apikey*
+
 ### VS Code ###
 .vscode/
+
+### 敏感配置（包含 API Key，不要提交）
+application.properties
+config.properties
