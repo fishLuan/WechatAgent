@@ -1,4 +1,7 @@
-package com.github.wechat.ilink.sdk.example;
+package com.github.wechat.ilink.sdk.example.service.impl;
+
+import com.github.wechat.ilink.sdk.example.service.ImageGenService;
+import com.github.wechat.ilink.sdk.example.service.VisionService;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -12,23 +15,15 @@ import java.util.Base64;
  * 阿里云百炼 (DashScope) API 服务封装
  *
  * 功能：
- *   1. 图片理解（看图 + 视觉问答） - 调用 qwen-vl-plus
- *   2. 文生图（根据文字描述生成图片） - 调用 wan2.6-t2i
+ *   1. 图片理解（看图 + 视觉问答） - 调用 qwen-vl-plus   (实现 VisionService)
+ *   2. 文生图（根据文字描述生成图片） - 调用 wan2.6-t2i  (实现 ImageGenService)
  *
  * 使用方式：
  *   在环境变量中配置 DASHSCOPE_API_KEY = sk-xxxxxxxxxxxx
  *
- * API 文档参考：
- *   - 视觉理解: https://help.aliyun.com/zh/model-studio/vision
- *   - 文生图:    https://help.aliyun.com/zh/model-studio/text-to-image
- *
- * 代码风格：与 SimpleBot.java 保持一致
- *   - 使用 Java 11+ HttpClient
- *   - 手动构造 JSON 字符串
- *   - 手动解析 JSON 响应 (indexOf / substring)
- *   - 无第三方 JSON 库依赖
+ * 代码风格：Java 11+ HttpClient + 手动 JSON 处理
  */
-public class AliyunDashscopeService {
+public class AliyunDashscopeService implements VisionService, ImageGenService {
 
     // ===== API 基础配置 =====
     private static final String API_BASE = "https://dashscope.aliyuncs.com/api/v1";

@@ -61,7 +61,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.1.1</version>
                 <configuration>
-                    <mainClass>com.github.wechat.ilink.sdk.example.SimpleBot</mainClass>
+                    <mainClass>com.github.wechat.ilink.sdk.example.WeChatBotApplication</mainClass>
                 </configuration>
             </plugin>
         </plugins>
