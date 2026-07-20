@@ -1,6 +1,7 @@
 # Copy this file to config.properties for local development.
 # Do not commit real API keys.
 qwen.api.key=${QWEN_API_KEY}
+qwen.workspace.id=${QWEN_WORKSPACE_ID}
 
 qwen.text.api.url=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
 qwen.text.model=qwen3.7-max
@@ -10,5 +11,21 @@ qwen.vision.model=qwen3.5-ocr
 
 qwen.image.generation.api.url=https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation
 qwen.image.generation.model=qwen-image-plus
+
+qwen.speech.recognition.api.url=https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation
+qwen.speech.recognition.model=fun-asr-flash-2026-06-15
+
+qwen.speech.synthesis.api.url=https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation
+qwen.speech.synthesis.model=qwen3-tts-flash
+qwen.speech.synthesis.voice=Cherry
+
+redis.host=127.0.0.1
+redis.port=6379
+redis.password=${REDIS_PASSWORD}
+redis.database=0
+
+memory.enabled=true
+memory.max.messages=20
+memory.ttl.seconds=1800
 
 system.prompt=你是一个友好的微信AI助手，请用简洁、温暖的方式回答用户的问题。

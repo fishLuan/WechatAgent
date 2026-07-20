@@ -12,6 +12,20 @@ public class AiProperties {
     private final String imageGenerationApiKey;
     private final String imageGenerationApiUrl;
     private final String imageGenerationModel;
+    private final String speechRecognitionApiKey;
+    private final String speechRecognitionApiUrl;
+    private final String speechRecognitionModel;
+    private final String speechSynthesisApiKey;
+    private final String speechSynthesisApiUrl;
+    private final String speechSynthesisModel;
+    private final String speechSynthesisVoice;
+    private final String redisHost;
+    private final int redisPort;
+    private final String redisPassword;
+    private final int redisDatabase;
+    private final boolean memoryEnabled;
+    private final int memoryMaxMessages;
+    private final int memoryTtlSeconds;
 
     public AiProperties(
             String textApiKey,
@@ -23,7 +37,21 @@ public class AiProperties {
             String visionModel,
             String imageGenerationApiKey,
             String imageGenerationApiUrl,
-            String imageGenerationModel
+            String imageGenerationModel,
+            String speechRecognitionApiKey,
+            String speechRecognitionApiUrl,
+            String speechRecognitionModel,
+            String speechSynthesisApiKey,
+            String speechSynthesisApiUrl,
+            String speechSynthesisModel,
+            String speechSynthesisVoice,
+            String redisHost,
+            int redisPort,
+            String redisPassword,
+            int redisDatabase,
+            boolean memoryEnabled,
+            int memoryMaxMessages,
+            int memoryTtlSeconds
     ) {
         this.textApiKey = textApiKey;
         this.textApiUrl = textApiUrl;
@@ -35,6 +63,20 @@ public class AiProperties {
         this.imageGenerationApiKey = imageGenerationApiKey;
         this.imageGenerationApiUrl = imageGenerationApiUrl;
         this.imageGenerationModel = imageGenerationModel;
+        this.speechRecognitionApiKey = speechRecognitionApiKey;
+        this.speechRecognitionApiUrl = speechRecognitionApiUrl;
+        this.speechRecognitionModel = speechRecognitionModel;
+        this.speechSynthesisApiKey = speechSynthesisApiKey;
+        this.speechSynthesisApiUrl = speechSynthesisApiUrl;
+        this.speechSynthesisModel = speechSynthesisModel;
+        this.speechSynthesisVoice = speechSynthesisVoice;
+        this.redisHost = redisHost;
+        this.redisPort = redisPort;
+        this.redisPassword = redisPassword;
+        this.redisDatabase = redisDatabase;
+        this.memoryEnabled = memoryEnabled;
+        this.memoryMaxMessages = memoryMaxMessages;
+        this.memoryTtlSeconds = memoryTtlSeconds;
     }
 
     public String getTextApiKey() {
@@ -75,5 +117,61 @@ public class AiProperties {
 
     public String getImageGenerationModel() {
         return imageGenerationModel;
+    }
+
+    public String getSpeechRecognitionApiKey() {
+        return speechRecognitionApiKey;
+    }
+
+    public String getSpeechRecognitionApiUrl() {
+        return speechRecognitionApiUrl;
+    }
+
+    public String getSpeechRecognitionModel() {
+        return speechRecognitionModel;
+    }
+
+    public String getSpeechSynthesisApiKey() {
+        return speechSynthesisApiKey;
+    }
+
+    public String getSpeechSynthesisApiUrl() {
+        return speechSynthesisApiUrl;
+    }
+
+    public String getSpeechSynthesisModel() {
+        return speechSynthesisModel;
+    }
+
+    public String getSpeechSynthesisVoice() {
+        return speechSynthesisVoice;
+    }
+
+    public String getRedisHost() {
+        return redisHost;
+    }
+
+    public int getRedisPort() {
+        return redisPort;
+    }
+
+    public String getRedisPassword() {
+        return redisPassword;
+    }
+
+    public int getRedisDatabase() {
+        return redisDatabase;
+    }
+
+    public boolean isMemoryEnabled() {
+        return memoryEnabled;
+    }
+
+    public int getMemoryMaxMessages() {
+        return memoryMaxMessages;
+    }
+
+    public int getMemoryTtlSeconds() {
+        return memoryTtlSeconds;
     }
 }

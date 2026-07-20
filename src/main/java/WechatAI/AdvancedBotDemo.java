@@ -8,7 +8,19 @@ import WechatAI.service.ImageGenerationService;
 import WechatAI.service.ImageUnderstandingService;
 import WechatAI.service.MessagePollingService;
 import WechatAI.service.MessageTextExtractor;
+import WechatAI.service.MemoryService;
+import WechatAI.service.SpeechRecognitionService;
+import WechatAI.service.SpeechSynthesisService;
 import WechatAI.service.WechatMessageService;
+import WechatAI.service.impl.QwenAiChatService;
+import WechatAI.service.impl.QwenImageGenerationService;
+import WechatAI.service.impl.QwenImageUnderstandingService;
+import WechatAI.service.impl.QwenSpeechRecognitionService;
+import WechatAI.service.impl.QwenSpeechSynthesisService;
+import WechatAI.service.impl.RedisMemoryService;
+import WechatAI.service.impl.WechatMessagePollingService;
+import WechatAI.service.impl.WechatMessageServiceImpl;
+import WechatAI.service.impl.WechatMessageTextExtractor;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.login.LoginContext;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -30,18 +42,24 @@ public class AdvancedBotDemo {
             return;
         }
 
-        AiChatService aiChatService = new AiChatService(aiProperties);
-        ImageUnderstandingService imageUnderstandingService = new ImageUnderstandingService(aiProperties);
-        ImageGenerationService imageGenerationService = new ImageGenerationService(aiProperties);
-        MessageTextExtractor textExtractor = new MessageTextExtractor();
-        WechatMessageService messageService = new WechatMessageService(
+        AiChatService aiChatService = new QwenAiChatService(aiProperties);
+        ImageUnderstandingService imageUnderstandingService = new QwenImageUnderstandingService(aiProperties);
+        ImageGenerationService imageGenerationService = new QwenImageGenerationService(aiProperties);
+        SpeechRecognitionService speechRecognitionService = new QwenSpeechRecognitionService(aiProperties);
+        SpeechSynthesisService speechSynthesisService = new QwenSpeechSynthesisService(aiProperties);
+        MessageTextExtractor textExtractor = new WechatMessageTextExtractor();
+        MemoryService memoryService = new RedisMemoryService(aiProperties);
+        WechatMessageService messageService = new WechatMessageServiceImpl(
                 client,
                 aiChatService,
                 imageUnderstandingService,
                 imageGenerationService,
-                textExtractor
+                speechRecognitionService,
+                speechSynthesisService,
+                textExtractor,
+                memoryService
         );
-        MessagePollingService pollingService = new MessagePollingService(client, messageService);
+        MessagePollingService pollingService = new WechatMessagePollingService(client, messageService);
 
         System.out.println("🔄 开始监听消息...");
         pollingService.start();

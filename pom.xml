@@ -67,6 +67,20 @@
 			<artifactId>gson</artifactId>
 			<version>2.10.1</version>
 		</dependency>
+
+		<!-- Redis 短期记忆 -->
+		<dependency>
+			<groupId>redis.clients</groupId>
+			<artifactId>jedis</artifactId>
+			<version>5.2.0</version>
+		</dependency>
+
+		<!-- 微信语音 Silk V3 解码为 PCM/WAV 后再交给 ASR -->
+		<dependency>
+			<groupId>io.github.kasukusakura</groupId>
+			<artifactId>silk-codec</artifactId>
+			<version>0.0.5</version>
+		</dependency>
 	</dependencies>
 
 	<build>
