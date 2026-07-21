@@ -8,13 +8,11 @@ package com.github.wechat.ilink.sdk.example.service;
  */
 public interface SpeechSynthesisService {
 
-    /**
-     * 把文字合成为音频
-     * @param text 要合成的文字
-     * @return 音频字节数组（MP3 格式）
-     * @throws Exception 调用失败时抛出
-     */
+    /** 把文字合成为音频（用默认音色） */
     byte[] synthesize(String text) throws Exception;
+
+    /** 把文字合成为音频（指定音色：Cherry/Dora/Echo/Ivy 等） */
+    byte[] synthesize(String text, String voice) throws Exception;
 
     /** 返回音频格式的文件扩展名（如 "mp3" / "wav"） */
     String getFileExtension();

@@ -6,10 +6,12 @@ import com.github.wechat.ilink.sdk.core.login.LoginContext;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import com.github.wechat.ilink.sdk.example.config.BotConfig;
 import com.github.wechat.ilink.sdk.example.base.MessageHandler;
+import com.github.wechat.ilink.sdk.example.handler.DocumentMessageHandler;
 import com.github.wechat.ilink.sdk.example.handler.ImageGenHandler;
 import com.github.wechat.ilink.sdk.example.handler.ImageMessageHandler;
 import com.github.wechat.ilink.sdk.example.handler.TextMessageHandler;
 import com.github.wechat.ilink.sdk.example.service.ChatService;
+import com.github.wechat.ilink.sdk.example.service.DocumentService;
 import com.github.wechat.ilink.sdk.example.service.SpeechSynthesisService;
 import com.github.wechat.ilink.sdk.example.service.impl.AliyunDashcodeService;
 import com.github.wechat.ilink.sdk.example.service.impl.DeepSeekChatService;
@@ -33,6 +35,9 @@ import java.util.concurrent.atomic.AtomicReference;
 public class WeChatBotApplication {
 
     public static void main(String[] args) {
+        // 第一步：屏蔽 PDF 库（fontbox/pdfbox）的噪音日志，越早越好
+        DocumentService.silencePdfLogs();
+
         System.out.println();
         System.out.println("========================================");
         System.out.println("   WeChat iLink Bot - 分层架构版");
@@ -54,16 +59,19 @@ public class WeChatBotApplication {
 
         // ============= 阶段二：初始化服务 =============
         ChatService chatService = new DeepSeekChatService(config);
-        // 阿里云服务已经存在，实例化它（同时实现 VisionService 和 ImageGenService）
+        // 阿里云服务已经存在，实例化它（同时实现 VisionService 和 ImageGenService 和 SpeechSynthesisService）
         AliyunDashcodeService aliyunService = new AliyunDashcodeService(config.getDashscopeApiKey());
+        // 文档服务：读 PDF/Word，生成 PDF/Word
+        DocumentService documentService = new DocumentService();
 
         // ============= 阶段三：注册所有 Handler =============
         List<MessageHandler> handlers = new ArrayList<>();
         handlers.add(new ImageMessageHandler(aliyunService));  // 优先级 10：图片 → 看图
         handlers.add(new ImageGenHandler(aliyunService));      // 优先级 50：画图指令 → 文生图
-        // 有 DASHSCOPE_API_KEY 时，额外生成 MP3 语音文件发送
+        handlers.add(new DocumentMessageHandler(chatService, documentService)); // 优先级 30：用户发来的 PDF/Word → 自动总结
+        // 有 DASHSCOPE_API_KEY 时，额外生成 MP3 语音文件发送；同时注入 DocumentService 用于关键词文档导出
         SpeechSynthesisService ttsService = config.isDashscopeConfigured() ? aliyunService : null;
-        handlers.add(new TextMessageHandler(chatService, ttsService));     // 优先级 100：文本/语音 → DeepSeek + 可选语音文件
+        handlers.add(new TextMessageHandler(chatService, ttsService, documentService)); // 优先级 100：文本/语音 → DeepSeek + 可选语音文件
 
         // 按 priority 从小到大排序（小的优先尝试）
         handlers.sort(Comparator.comparingInt(MessageHandler::priority));

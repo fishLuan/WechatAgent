@@ -309,22 +309,31 @@ public class AliyunDashcodeService implements VisionService, ImageGenService, Sp
      */
     @Override
     public byte[] synthesize(String text) throws Exception {
+        return synthesize(text, DEFAULT_VOICE);
+    }
+
+    @Override
+    public byte[] synthesize(String text, String voice) throws Exception {
         if (text == null || text.trim().isEmpty()) {
             throw new IllegalArgumentException("合成文字不能为空");
         }
         // qwen3-tts-flash 单次请求字符数限制，截取前 500 字
         if (text.length() > 500) text = text.substring(0, 500);
+        // 音色为空时用默认
+        if (voice == null || voice.trim().isEmpty()) {
+            voice = DEFAULT_VOICE;
+        }
 
         String body = "{"
             + "\"model\":\"" + TTS_MODEL + "\","
             + "\"input\":{"
             +     "\"text\":" + jsonEscape(text) + ","
-            +     "\"voice\":" + jsonEscape(DEFAULT_VOICE) + ","
+            +     "\"voice\":" + jsonEscape(voice) + ","
             +     "\"format\":\"" + AUDIO_FORMAT + "\""
             +   "}"
             + "}";
 
-        System.out.println("  [百炼 TTS] 正在提交请求...");
+        System.out.println("  [百炼 TTS] 正在提交请求（音色: " + voice + "）...");
 
         // 注意：用的是和看图/生图相同的 multimodal-generation 端点
         HttpRequest req = HttpRequest.newBuilder()

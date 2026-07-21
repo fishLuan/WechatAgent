@@ -48,11 +48,13 @@ public class ImageMessageHandler implements MessageHandler {
         // 从消息中提取文本作为问题（用户可能在发图的同时写了文字）
         String question = extractUserTextQuestion(msg);
 
-        // 调用百炼看图
+        // 调用百炼看图 —— 默认 prompt 让模型用生动口语化的语气描述，带点表情
         try {
             System.out.println("[INFO] 正在调用百炼图片理解模型...");
             String description = visionService.understandImage(imageBytes,
-                question.isEmpty() ? "请描述这张图片的内容" : question);
+                question.isEmpty()
+                    ? "用生动口语化的语气描述这张图片，2-3 句话就行，不要分点、不要写详细分析，最后可以带一个合适的 emoji 表情"
+                    : question);
             safeSendText(client, from, description);
             System.out.println("[SEND] " + description.replace("\n", " | "));
         } catch (Exception e) {

@@ -77,55 +77,102 @@ public class ImageGenHandler implements MessageHandler {
     }
 
     /**
-     * 检测"画图"等关键词，返回去掉关键词后的描述；不是画图指令返回 null
+     * 检测"画图/给我画张..."等关键词，返回去掉关键词后的描述；不是画图指令返回 null
      */
     private String extractImagePrompt(String userText) {
         if (userText == null) return null;
         String t = userText.trim();
+        String lower = t.toLowerCase();
 
-        // 注意：长的前缀先判断，避免被短的截断
+        // ---- 第 1 步：长前缀精确匹配（优先级最高）----
+        // 按长度从长到短排列，避免先被短的截断
         String[] prefixes = {
-            // 明确的画图/生成图
+            // 请求 + 动作（带"帮我/给我"）
+            "帮我画一张", "给我画一张", "帮我画个", "给我画个",
+            "帮我画张", "给我画张", "帮我画", "给我画",
+            "帮我画一张：", "帮我画一张:", "给我画一张：", "给我画一张:",
+            "帮我画个：", "帮我画个:", "给我画个：", "给我画个:",
+            "帮我画张：", "帮我画张:", "给我画张：", "给我画张:",
+            "帮我生成一张图片", "给我生成一张图片",
+            "帮我生成一张", "给我生成一张",
+            "帮我生成图", "给我生成图",
+
+            // 直接动作（不带请求词）
             "画图：", "画图:", "画图 ", "画图",
-            "生成图：", "生成图:", "生成图 ", "生成图",
-
-            // 一张类
             "画一张：", "画一张:", "画一张 ", "画一张",
-            "生成一张：", "生成一张:", "生成一张 ", "生成一张",
-            "来一张：", "来一张:", "来一张 ", "来一张",
-            "给一张：", "给一张:", "给一张 ", "给一张",
-            "来张：", "来张:", "来张 ", "来张",
-
-            // 请求类
-            "帮我画一张：", "帮我画一张:", "帮我画一张 ", "帮我画一张",
-            "给我画一张：", "给我画一张:", "给我画一张 ", "给我画一张",
-            "帮我画个：", "帮我画个:", "帮我画个 ", "帮我画个",
-            "给我画个：", "给我画个:", "给我画个 ", "给我画个",
-            "帮我画：", "帮我画:", "帮我画 ", "帮我画",
-            "给我画：", "给我画:", "给我画 ", "给我画",
-            "帮我生成一张：", "帮我生成一张 ", "帮我生成一张",
-            "给我生成一张：", "给我生成一张 ", "给我生成一张",
-
-            // 简短类
+            "画张：", "画张:", "画张 ", "画张",
             "画个：", "画个:", "画个 ", "画个",
-            "画 "
+            "生成一张：", "生成一张:", "生成一张 ", "生成一张",
+            "生成一张图片", "生成图：", "生成图:", "生成图 ", "生成图",
+            "来一张：", "来一张:", "来一张 ", "来一张",
+            "来张：", "来张:", "来张 ", "来张",
+            "给一张：", "给一张:", "给一张 ", "给一张",
+            "画 ",
         };
-
         for (String prefix : prefixes) {
             if (t.startsWith(prefix)) {
-                String prompt = t.substring(prefix.length()).trim();
-                if (prompt.startsWith("：") || prompt.startsWith(":")) {
-                    prompt = prompt.substring(1).trim();
-                }
-                // "画一张图片"这种无效描述（没有实际内容）过滤掉
-                String[] redundant = {"一张图片", "一张图", "张图片", "张图", "图片"};
-                for (String r : redundant) {
-                    if (prompt.equals(r)) return null;
-                }
-                return prompt.isEmpty() ? null : prompt;
+                return extractAfterPrefix(t, prefix);
             }
         }
+
+        // ---- 第 2 步：包含关键词（如"你给我画张..."、"给我画张..."）----
+        // 匹配第一个画图关键词，然后取关键词后面的全部内容作为 prompt
+        // 关键词按长度从长到短
+        String[] inlineKeywords = {
+            "帮我画一张", "给我画一张",
+            "帮我画张", "给我画张", "帮我画个", "给我画个",
+            "帮我画", "给我画",
+            "帮我生成一张图片", "给我生成一张图片",
+            "帮我生成一张", "给我生成一张",
+            "画一张", "画张", "画个",
+            "生成一张图片", "生成一张", "生成图",
+            "来一张", "来张", "给一张",
+            "画图", "画图 ",
+        };
+
+        for (String kw : inlineKeywords) {
+            int idx = t.indexOf(kw);
+            if (idx >= 0) {
+                String after = t.substring(idx + kw.length()).trim();
+                // 去掉开头可能残留的冒号/空格/图片 这类词
+                String prompt = stripColons(after);
+                prompt = stripRedundantImageWords(prompt);
+                if (prompt.isEmpty()) return null;
+                return prompt;
+            }
+        }
+
+        // ---- 第 3 步：只做 lower 不区分大小写的兜底 ----
+        // 如果文本里明确包含"画"字 +（"张/个/图"），但没匹配到上面的格式，也作为画图
+        // （这里比较保守，避免误匹配"画了一幅画"这种文本）
         return null;
+    }
+
+    private String extractAfterPrefix(String t, String prefix) {
+        String prompt = t.substring(prefix.length()).trim();
+        prompt = stripColons(prompt);
+        prompt = stripRedundantImageWords(prompt);
+        return prompt.isEmpty() ? null : prompt;
+    }
+
+    private String stripColons(String s) {
+        while (!s.isEmpty() && (s.startsWith("：") || s.startsWith(":") || s.startsWith(" ") || s.startsWith("　"))) {
+            s = s.substring(1).trim();
+        }
+        return s;
+    }
+
+    private String stripRedundantImageWords(String s) {
+        if (s.isEmpty()) return s;
+        String[] redundant = {"一张图片", "一张图", "张图片", "张图", "一张", "图片"};
+        for (String r : redundant) {
+            if (s.equalsIgnoreCase(r)) return "";
+        }
+        // 去掉末尾的 "图片" / "的图片"
+        String trimmed = s;
+        if (trimmed.endsWith("的图片")) trimmed = trimmed.substring(0, trimmed.length() - 4).trim();
+        if (trimmed.endsWith("图片")) trimmed = trimmed.substring(0, trimmed.length() - 2).trim();
+        return trimmed;
     }
 
     private void safeSendText(ILinkClient client, String to, String text) {

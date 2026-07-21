@@ -6,6 +6,7 @@ import com.github.wechat.ilink.sdk.core.model.VoiceItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import com.github.wechat.ilink.sdk.example.base.MessageHandler;
 import com.github.wechat.ilink.sdk.example.service.ChatService;
+import com.github.wechat.ilink.sdk.example.service.DocumentService;
 import com.github.wechat.ilink.sdk.example.service.SpeechSynthesisService;
 import com.github.wechat.ilink.sdk.example.util.JsonUtils;
 
@@ -43,18 +44,25 @@ public class TextMessageHandler implements MessageHandler {
 
     private final ChatService chatService;
     private final SpeechSynthesisService tts;
+    private final DocumentService documentService;
     private final StringBuilder longTermSummary = new StringBuilder();
     private final List<String> recentMessages = new ArrayList<>();
     private int turnCounter = 0;
     private final Set<Long> processedMsgIds = new HashSet<>();
 
     public TextMessageHandler(ChatService chatService) {
-        this(chatService, null);
+        this(chatService, null, null);
     }
 
     public TextMessageHandler(ChatService chatService, SpeechSynthesisService tts) {
+        this(chatService, tts, null);
+    }
+
+    public TextMessageHandler(ChatService chatService, SpeechSynthesisService tts, DocumentService documentService) {
         this.chatService = chatService;
         this.tts = tts;
+        this.documentService = documentService;
+        DocumentService.silencePdfLogs();  // 屏蔽 PDF 库的噪音日志
         loadMemoryFromFile();  // 启动时从磁盘读回：摘要 + 最近对话
     }
 
@@ -92,36 +100,56 @@ public class TextMessageHandler implements MessageHandler {
 
         // DeepSeek 对话
         try {
-            // 关键词预处理：检测语音指令，并从传给 DeepSeek 的文本中剥离关键词，
-            // 避免 DeepSeek 自作主张说"我不能生成语音"。
+            // 1. 关键词预处理：
+            //    - 语音指令：剥离"语音/读"等词，避免 DeepSeek 自作主张
+            //    - 文档指令：先正常对话，把回复写入 PDF/Word
             boolean wantVoice = shouldTriggerTts(userText);
-            String textForChat = wantVoice ? stripTtsKeywords(userText) : userText;
+            boolean wantDoc = shouldTriggerDocGen(userText);
+            String textForChat = userText;
+            if (wantVoice) textForChat = stripTtsKeywords(textForChat);
+            if (wantDoc)   textForChat = stripDocKeywords(textForChat);
 
-            // 传给大模型的内容 = 长期摘要 + 最近完整对话
+            // 2. 传给大模型的内容 = 长期摘要 + 最近完整对话
             String context = buildContextForModel();
-
             String reply = chatService.chat(textForChat, context.isEmpty() ? "" : context);
-            safeSendText(client, from, reply);
-            appendHistory(userText, reply);
-            System.out.println("[RECV] <" + from + "> " + userText + " → [SEND] " + reply.replace("\n", " | "));
 
-            // ===== 语音合成（关键词触发）：把回复文字 → WAV 文件，再通过 sendFile 发送 =====
+            // 3. 发送文字回复（清理大模型可能自作主张加的"（用男声）"等标记）
+            String textReply = cleanBotReply(reply);
+            safeSendText(client, from, textReply);
+            appendHistory(userText, textReply);
+            System.out.println("[RECV] <" + from + "> " + userText);
+            System.out.println("[SEND] " + textReply.replace("\n", " | "));
+
+            // ===== 4. 语音合成（关键词触发）：把回复文字 → WAV 文件发送 =====
             if (tts != null && wantVoice) {
                 try {
-                    // 太长的回复截取前面一段用于语音（避免合成太慢/文件太大）
-                    String textForTts = reply.length() > 200
-                        ? reply.substring(0, 200) : reply;
-
-                    byte[] audioBytes = tts.synthesize(textForTts);
+                    String textForTts = textReply.length() > 200
+                        ? textReply.substring(0, 200) : textReply;
+                    String voice = pickVoice(userText);
+                    byte[] audioBytes = tts.synthesize(textForTts, voice);
                     String fileName = "reply-" + System.currentTimeMillis() + "." + tts.getFileExtension();
-                    String caption = "🔊 文字回复的语音版（" + textForTts.length() + "字）";
-
-                    // 作为文件发送 —— 用户在微信里收到一个可点击的音频文件
+                    String caption = "🔊 语音回复（" + textForTts.length() + "字，音色: " + voice + "）";
                     client.sendFile(from, audioBytes, fileName, caption);
                     System.out.println("[INFO] ✅ 语音文件已发送: " + fileName + " (" + audioBytes.length + " bytes)");
                 } catch (Exception e2) {
                     System.err.println("[WARN] 语音合成/发送失败: " + e2.getMessage());
-                    // 语音失败不影响文字回复已发送，所以不用再回复
+                }
+            }
+
+            // ===== 5. 文档生成（关键词触发）：把回复文字 → PDF/Word 文件发送 =====
+            if (documentService != null && wantDoc) {
+                try {
+                    boolean isPdf = userText.toLowerCase().contains("pdf");
+                    byte[] fileBytes = isPdf
+                        ? documentService.createPdf("回复内容", textReply)
+                        : documentService.createWord("回复内容", textReply);
+                    String fileName = "bot-" + System.currentTimeMillis() + (isPdf ? ".pdf" : ".docx");
+                    String caption = "📄 " + (isPdf ? "PDF" : "Word") + " 文档（" + textReply.length() + "字）";
+                    client.sendFile(from, fileBytes, fileName, caption);
+                    System.out.println("[INFO] ✅ 文档已发送: " + fileName + " (" + fileBytes.length + " bytes)");
+                } catch (Exception e2) {
+                    System.err.println("[WARN] 文档生成/发送失败: " + e2.getMessage());
+                    safeSendText(client, from, "（文档生成失败，但上面的文字回复已经发了～）");
                 }
             }
         } catch (Exception e) {
@@ -138,18 +166,66 @@ public class TextMessageHandler implements MessageHandler {
     // ============================================================
 
     /**
-     * 关键词触发语音生成 —— 用户消息中包含以下任一关键词才额外发送语音：
-     *   语音、生成语音、发语音、读、读一下、念、念出来、朗读、说出来、说给我听
+     * 清理大模型的回复：当用户触发了语音/文档时，大模型可能自作主张在开头加
+     *  "（用沉稳的男声）"、"（语音版：）" 这类标记，去掉它们让回复更自然。
+     */
+    private String cleanBotReply(String reply) {
+        if (reply == null) return reply;
+        String r = reply.trim();
+
+        // 按顺序尝试去掉前缀（中文括号、英文括号都要考虑）
+        String[] prefixPatterns = new String[] {
+            "^（用[^\n]{0,15}?声[^\n]{0,5}?）\\s*",
+            "^\\(用[^\n]{0,15}?声[^\n]{0,5}?\\)\\s*",
+            "^（[^\n]{0,10}?男声[^\n]{0,10}?）\\s*",
+            "^（[^\n]{0,10}?女声[^\n]{0,10}?）\\s*",
+            "^（[^\n]{0,10}?语音[^\n]{0,10}?）\\s*",
+            "^（[^\n]{0,10}?TTS[^\n]{0,10}?）\\s*",
+            "^\\([^\n]{0,10}?语音[^\n]{0,10}?\\)\\s*",
+            "^【[^\n]{0,10}?语音[^\n]{0,10}?】\\s*",
+            "^\"用[^\n]{0,15}?声[^\n]{0,5}?\"\\s*",
+            "^语音版[：:]*\\s*",
+            "^语音回复[：:]*\\s*",
+        };
+        for (String p : prefixPatterns) {
+            r = r.replaceFirst(p, "");
+        }
+
+        // 去掉一些常见的开头（"好的，以下是..." 这类倒还自然，这里只去明显的 TTS 标记）
+        r = r.trim();
+        return r.isEmpty() ? reply : r;
+    }
+
+    /**
+     * 关键词触发语音生成：
+     *   ① 显式语音指令：语音、生成语音、发语音、读、念、朗读、说出来、说给我听
+     *   ② 音色指令（隐含要语音）：男声、女声、用男声、用女声、换成男声、换成女声
      */
     private boolean shouldTriggerTts(String userText) {
         if (userText == null) return false;
         String t = userText.trim();
-        return t.contains("语音")
-            || t.contains("读")
-            || t.contains("念")
-            || t.contains("朗读")
-            || t.contains("说出来")
-            || t.contains("说给我听");
+        // 显式语音词
+        if (t.contains("语音") || t.contains("读") || t.contains("念")
+            || t.contains("朗读") || t.contains("说出来") || t.contains("说给我听")) {
+            return true;
+        }
+        // 音色词（隐含要语音）
+        if (t.contains("男声") || t.contains("女声")) return true;
+        return false;
+    }
+
+    /**
+     * 根据用户消息关键词选择音色：
+     *   包含"男声" → Ethan（阳光温暖男声，qwen3-tts-flash 官方支持）
+     *   包含"女声" → Cherry（女声，默认）
+     *   其他情况 → Cherry（默认女声）
+     */
+    private String pickVoice(String userText) {
+        if (userText == null) return "Cherry";
+        String t = userText.trim();
+        if (t.contains("男声")) return "Ethan";
+        if (t.contains("女声")) return "Cherry";
+        return "Cherry";
     }
 
     /**
@@ -159,19 +235,36 @@ public class TextMessageHandler implements MessageHandler {
      *   "帮我生成一段杭州今天天气怎么样的语音" → "杭州今天天气怎么样的"
      *   "生成一段你好的语音" → "你好的"
      *   "读一下这段代码" → "这段代码"
+     *   "用男声生成一段介绍SpringBoot的语音" → "介绍SpringBoot的"
      */
     private String stripTtsKeywords(String userText) {
         if (userText == null) return "";
         String result = userText.trim();
 
-        // ===== 第 1 步：按长短语整体剥离 =====
+        // ===== 第 1 步：按长短语整体剥离（按长度从长到短，避免先被短的截断） =====
         String[] phrases = new String[] {
-            // "帮我..." 前缀（先判断，因为它们包含更短的 "生成一段/给我"）
-            "帮我生成一段", "给我生成一段", "帮我生成语音", "给我生成语音",
-            "帮我生成", "给我生成", "生成一段语音", "生成语音",
-            "帮我发语音", "给我发语音", "发语音",
-            "语音版的", "语音版", "语音回复", "语音回答",
-            // 读/念
+            // 音色 + 动作（最长优先）
+            "用男声生成一段", "用女声生成一段",
+            "用男声生成", "用女声生成",
+            "用男声说", "用女声说",
+            "用男声读", "用女声读",
+            "用男声念", "用女声念",
+            "换成男声", "换成女声",
+            "换男声", "换女声",
+            "用男声", "用女声",
+            // "帮我..." 前缀
+            "帮我生成一段语音", "给我生成一段语音",
+            "帮我生成语音", "给我生成语音",
+            "帮我生成一段", "给我生成一段",
+            "帮我生成", "给我生成",
+            "帮我发语音", "给我发语音",
+            "帮我语音", "给我语音",
+            "用语音",
+            "发语音", "生成语音",
+            "语音版的", "语音版",
+            "语音回复", "语音回答",
+            "语音介绍",
+            // 读/念（长的在前）
             "帮我读一下", "给我读一下", "帮我读", "给我读",
             "读一下", "读出来", "读给我听",
             "帮我念一下", "给我念一下", "帮我念", "给我念",
@@ -190,9 +283,8 @@ public class TextMessageHandler implements MessageHandler {
         }
 
         // ===== 第 2 步：逐词清理真正会误导 DeepSeek 的强关键词 =====
-        // 只清理"语音/生成/朗读"这些能让大模型以为自己在做 TTS 的词
         String[] triggerWords = new String[] {
-            "语音", "生成", "朗读",
+            "语音", "生成", "朗读", "男声", "女声", "说", "念", "读",
         };
 
         for (String w : triggerWords) {
@@ -205,6 +297,163 @@ public class TextMessageHandler implements MessageHandler {
             return "你好";
         }
         return result;
+    }
+
+    /** 从用户消息中剥离"生成PDF/生成Word/文档"等关键词，
+     *  让传给 DeepSeek 的内容更干净，避免它自作主张说"我不能生成PDF"。 */
+    private String stripDocKeywords(String userText) {
+        if (userText == null) return "你好";
+        String result = userText;
+
+        // 常见短语
+        String[] phrases = new String[] {
+            "生成PDF", "生成pdf", "生成PDF文件",
+            "导出PDF", "导出pdf", "生成Word", "生成word",
+            "导出Word", "导出word", "生成文档", "导出文档",
+            "用PDF", "用Word", "写成PDF", "写成Word",
+            "帮我生成PDF", "帮我生成Word", "帮我生成文档",
+        };
+        for (String p : phrases) {
+            result = result.replace(p, " ");
+        }
+
+        // 逐词清理
+        String[] triggerWords = new String[] {
+            "PDF", "pdf", "Word", "word", "文档", "生成", "导出",
+        };
+        for (String w : triggerWords) {
+            result = result.replace(w, " ");
+        }
+
+        result = result.replaceAll("\\s+", " ").trim();
+        if (result.isEmpty()) return "你好";
+        return result;
+    }
+
+    // ============================================================
+    // 文档生成
+    // ============================================================
+
+    /**
+     * 关键词触发生成文档：
+     *   生成PDF / 导出PDF / 生成pdf / 生成Word / 导出Word / 生成word / 生成文档
+     */
+    private boolean shouldTriggerDocGen(String userText) {
+        if (userText == null) return false;
+        String t = userText.trim().toLowerCase();
+        return t.contains("pdf")
+            || t.contains("word")
+            || t.contains("文档");
+    }
+
+    /**
+     * 处理文档生成：
+     *   1. 判断用户要 PDF 还是 Word
+     *   2. 提取文档内容（如果用户写了"生成PDF：xxx内容"，用 xxx；
+     *      如果只有"生成PDF"，把最近对话拼起来作为内容）
+     *   3. 调用 DocumentService 生成文件 → sendFile 发送
+     */
+    private void handleDocGen(ILinkClient client, String from, String userText) {
+        if (documentService == null) {
+            safeSendText(client, from, "⚠️ 文档服务还没配置好，暂时不能生成文档");
+            return;
+        }
+
+        // 1. 判断文件类型
+        String lower = userText.trim().toLowerCase();
+        boolean wantPdf = lower.contains("pdf");
+        boolean wantWord = lower.contains("word") || lower.contains("文档");
+        // 如果两个都没写（只写了"生成文档"），默认 PDF
+        if (!wantPdf && !wantWord) wantPdf = true;
+
+        // 2. 提取文档内容：用户写了"生成PDF：xxx" → 用 xxx；否则用最近对话
+        String content = extractDocContent(userText, wantPdf || wantWord);
+        String title = buildDocTitle(userText, wantPdf);
+
+        safeSendText(client, from, "📝 正在为你生成" + (wantPdf ? "PDF" : "Word")
+                + "文档（" + content.length() + "字）...");
+
+        try {
+            byte[] fileBytes;
+            String fileName;
+            String caption;
+            if (wantPdf) {
+                fileBytes = documentService.createPdf(title, content);
+                fileName = "bot-" + System.currentTimeMillis() + ".pdf";
+                caption = "📄 " + title + "（PDF，" + fileBytes.length + "字节）";
+            } else {
+                fileBytes = documentService.createWord(title, content);
+                fileName = "bot-" + System.currentTimeMillis() + ".docx";
+                caption = "📄 " + title + "（Word，" + fileBytes.length + "字节）";
+            }
+
+            // 3. 通过 sendFile 发送给用户
+            client.sendFile(from, fileBytes, fileName, caption);
+            System.out.println("[INFO] ✅ 文档已发送: " + fileName + " (" + fileBytes.length + " bytes)");
+
+            // 4. 把这次指令也算作一轮对话（让记忆更自然）
+            appendHistory(userText, "已为你生成" + (wantPdf ? "PDF" : "Word") + "文档");
+        } catch (Exception e) {
+            System.err.println("[ERROR] 文档生成失败: " + e.getMessage());
+            e.printStackTrace();
+            safeSendText(client, from, "❌ 生成文档失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 从用户消息里提取文档内容：
+     *   "生成PDF：介绍一下SpringBoot" → "介绍一下SpringBoot"
+     *   "导出Word：最近三天工作总结" → "最近三天工作总结"
+     *   "生成PDF"（没写内容）→ 把最近对话拼接起来
+     */
+    private String extractDocContent(String userText, boolean isDocGen) {
+        if (userText == null) return "";
+        String original = userText.trim();
+
+        // 尝试按分隔符拆分（冒号、中文冒号、空格）
+        String[] splitters = new String[] { "：", ":", " ", "　" };
+        for (String sp : splitters) {
+            int idx = original.indexOf(sp);
+            if (idx > 0 && idx < original.length() - 1) {
+                String before = original.substring(0, idx).trim().toLowerCase();
+                String after = original.substring(idx + 1).trim();
+                // 如果前半部分包含 pdf/word/文档 关键词，后半部分就是内容
+                if (before.contains("pdf") || before.contains("word")
+                        || before.contains("文档") || before.contains("生成")
+                        || before.contains("导出")) {
+                    if (!after.isEmpty()) return after;
+                }
+            }
+        }
+
+        // 用户没指定内容 → 把最近对话拼接起来（如果对话为空，给一个默认提示）
+        if (recentMessages.isEmpty()) {
+            return "（暂无对话内容，试着和我聊几句，然后再生成文档吧～）";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("【最近对话记录】\n\n");
+        for (int i = 0; i < recentMessages.size(); i += 2) {
+            String userMsg = recentMessages.get(i);
+            String botReply = (i + 1 < recentMessages.size())
+                    ? recentMessages.get(i + 1) : "（无回复）";
+            sb.append("用户: ").append(userMsg).append("\n");
+            sb.append("助手: ").append(botReply).append("\n\n");
+        }
+        return sb.toString();
+    }
+
+    /** 生成文档标题（根据用户指令里的内容或日期自动生成） */
+    private String buildDocTitle(String userText, boolean wantPdf) {
+        // 如果用户写了具体内容（如"生成PDF：介绍SpringBoot"），用内容的前几个字
+        String content = extractDocContent(userText, true);
+        if (!content.startsWith("【最近对话记录】")
+                && !content.startsWith("（暂无对话内容）")) {
+            int maxLen = Math.min(20, content.length());
+            return content.substring(0, maxLen).trim();
+        }
+        // 默认标题
+        return "聊天对话记录";
     }
 
     private boolean isCommand(String text) {
@@ -343,7 +592,7 @@ public class TextMessageHandler implements MessageHandler {
                     longTermSummary.append("\n");
                 }
                 longTermSummary.append(newSummary.trim());
-                System.out.println("[INFO] 记忆摘要已更新（第 " + turnCounter + " 轮）: " + newSummary.trim().replace("\n", " | "));
+                System.out.println("[INFO] 记忆摘要已更新（第 " + turnCounter + " 轮）");
             }
         } catch (Exception e) {
             System.err.println("[WARN] 记忆摘要更新失败（不影响对话）: " + e.getMessage());
@@ -361,11 +610,10 @@ public class TextMessageHandler implements MessageHandler {
                 String content = new String(Files.readAllBytes(path), "UTF-8");
                 if (content != null && !content.trim().isEmpty()) {
                     longTermSummary.append(content.trim());
-                    System.out.println("[INFO] 已加载长期记忆摘要 (" + content.trim().length() + " 字符)");
                 }
             }
-        } catch (IOException e) {
-            System.err.println("[WARN] 读取摘要文件失败: " + e.getMessage());
+        } catch (IOException ignored) {
+            // 摘要文件读取失败不影响，跳过即可
         }
 
         try {
@@ -383,11 +631,10 @@ public class TextMessageHandler implements MessageHandler {
                     }
                     // 然后按旧的逗号分隔方式解析
                     parseLegacyFormat(trimmed);
-                    System.out.println("[INFO] 已加载最近对话 (" + recentMessages.size() + " 条消息)");
                 }
             }
-        } catch (IOException e) {
-            System.err.println("[WARN] 读取对话文件失败: " + e.getMessage());
+        } catch (IOException ignored) {
+            // 对话文件读取失败不影响
         }
 
         try {
@@ -396,11 +643,10 @@ public class TextMessageHandler implements MessageHandler {
                 String content = new String(Files.readAllBytes(path), "UTF-8").trim();
                 if (!content.isEmpty()) {
                     turnCounter = Integer.parseInt(content);
-                    System.out.println("[INFO] 已加载对话轮数: turnCounter = " + turnCounter);
                 }
             }
-        } catch (Exception e) {
-            System.err.println("[WARN] 读取轮数文件失败: " + e.getMessage());
+        } catch (Exception ignored) {
+            // 轮数文件读取失败不影响，从 0 开始
         }
     }
 
