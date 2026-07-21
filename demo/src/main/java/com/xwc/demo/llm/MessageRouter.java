@@ -1,8 +1,5 @@
 package com.xwc.demo.llm;
 
-import com.xwc.demo.llm.vision.ImageGenerator;
-import com.xwc.demo.llm.vision.ImageReader;
-
 import java.util.regex.Pattern;
 
 public class MessageRouter {
@@ -74,11 +71,17 @@ public class MessageRouter {
     // ==================== 回复结果封装 ====================
 
     public static class ReplyResult {
-        enum Type { TEXT, IMAGE }
+        enum Type { TEXT, IMAGE, VOICE }
         Type type;
         String text;
         byte[] imageData;
         String caption;
+        /** TTS 音频数据 */
+        byte[] voiceData;
+        /** 音频文件名 */
+        String voiceFileName;
+        /** 音频播放时长（ms） */
+        int voicePlayTimeMs;
 
         static ReplyResult text(String content) {
             ReplyResult r = new ReplyResult();
@@ -92,6 +95,17 @@ public class MessageRouter {
             r.type = Type.IMAGE;
             r.imageData = data;
             r.caption = caption;
+            return r;
+        }
+
+        /** 语音回复（文字是降级兜底） */
+        static ReplyResult voice(byte[] audio, String fileName, int playTimeMs, String textFallback) {
+            ReplyResult r = new ReplyResult();
+            r.type = Type.VOICE;
+            r.voiceData = audio;
+            r.voiceFileName = fileName;
+            r.voicePlayTimeMs = playTimeMs;
+            r.text = textFallback;
             return r;
         }
     }

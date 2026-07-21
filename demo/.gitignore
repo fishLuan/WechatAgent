@@ -49,3 +49,8 @@ application-*.yml
 ### 敏感配置（包含 API Key，不要提交）
 application.properties
 config.properties
+
+### 运行时生成文件
+memory.json
+qrcode.html
+*.mp3

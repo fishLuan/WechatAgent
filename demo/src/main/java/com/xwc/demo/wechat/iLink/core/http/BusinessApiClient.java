@@ -25,12 +25,12 @@ public class BusinessApiClient {
   public <T> T post(
       LoginContext loginContext, String path, Object requestBody, Class<T> responseType)
       throws IOException {
-    String body = serializer.serialize(requestBody);
+    String body = serializer.serialize(requestBody);   // Java对象 → JSON字符串
     Map<String, String> headers =
         RequestHeaderFactory.businessHeaders(
             config, loginContext, body.getBytes(StandardCharsets.UTF_8));
-    String json = httpClientFacade.post(normalize(loginContext.getBaseUrl()) + path, headers, body);
-    T response = serializer.deserialize(json, responseType);
+    String json = httpClientFacade.post(normalize(loginContext.getBaseUrl()) + path, headers, body);    // HTTP POST, 拿回 JSON
+    T response = serializer.deserialize(json, responseType);    // JSON → GetUpdatesResponse
     if (response instanceof ApiResponse) {
       ApiResponse api = (ApiResponse) response;
       Integer err = api.getErrcode();

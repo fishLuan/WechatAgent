@@ -1,4 +1,4 @@
-package com.xwc.demo;
+package com.xwc.demo.weather;
 
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
@@ -41,7 +41,7 @@ public class WeatherQuery {
         }
 
         if (apiKey == null || apiKey.isEmpty() || "your-weather-api-key-here".equalsIgnoreCase(apiKey)) {
-            throw new RuntimeException("【配置错误】请在 application.properties 中设置 weather.api.key！");
+            throw new RuntimeException("【配置错误】请在 application.properties 中设置 weather.api-key！");
         }
 
         String url = String.format("%s?q=%s&appid=%s&units=metric&lang=zh_cn",

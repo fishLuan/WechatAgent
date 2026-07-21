@@ -212,13 +212,15 @@ public class MediaService {
     if (media.getAes_key() == null || media.getAes_key().trim().isEmpty()) {
       throw new MediaUploadException("media.aes_key is empty", null);
     }
-
+    // 1. 构造 CDN 下载 URL
     String url =
         CDN_BASE
             + "/download?encrypted_query_param="
             + URLEncoder.encode(media.getEncrypt_query_param(), StandardCharsets.UTF_8.name());
 
+    // 2. HTTP GET 下载加密数据
     byte[] encrypted = httpClientFacade.getBytes(url);
+    // 3. 解析 AES 密钥
     byte[] decoded = Base64.getDecoder().decode(media.getAes_key());
 
     byte[] key;
@@ -229,6 +231,7 @@ public class MediaService {
     }
 
     try {
+      // 4. AES-ECB 解密 → 得到原始语音字节
       return AesEcbUtil.decryptPkcs7(encrypted, key);
     } catch (Exception e) {
       throw new MediaUploadException("decrypt media failed", e);

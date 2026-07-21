@@ -1,6 +1,5 @@
 package com.xwc.demo.llm;
 
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -9,6 +8,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -16,13 +16,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-// 职责：纯文本对话 + 多轮记忆管理
 public class TextLlmService {
 
     private final String baseUrl;
     private final String apiKey;
     private final String model;
-
     private final Map<String, List<LlmMsg>> memory = new ConcurrentHashMap<>();
     private static final ObjectMapper mapper = new ObjectMapper();
 
@@ -31,24 +29,22 @@ public class TextLlmService {
         this.apiKey = apiKey;
         this.model = model;
     }
+
     public String chat(String userId, String text) throws Exception {
-        // 存入历史
         List<LlmMsg> history = memory.computeIfAbsent(userId, k -> new ArrayList<>());
         history.add(new LlmMsg("user", text));
-        trimHistory(history);
+        while (history.size() > 20) history.remove(0);
 
-        // 构造请求
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", model);
         body.put("messages", buildMessages(history));
 
         String json = mapper.writeValueAsString(body);
-        String resp = httpPost(json);
+        String resp = httpPost(baseUrl + "/chat/completions", json, apiKey);
         String reply = extractContent(resp);
 
-        // 存入回复
         history.add(new LlmMsg("assistant", reply));
-        trimHistory(history);
+        while (history.size() > 20) history.remove(0);
         return reply;
     }
 
@@ -67,11 +63,15 @@ public class TextLlmService {
         return msgs;
     }
 
-    private String httpPost(String jsonBody) throws Exception {
-        String url = baseUrl.endsWith("/") ? baseUrl + "chat/completions" : baseUrl + "/chat/completions";
-        HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
-        conn.setConnectTimeout(15000);
-        conn.setReadTimeout(60000);
+    public void clearMemory(String userId) { memory.remove(userId); }
+
+    // ---------- 通用工具方法 ----------
+
+    static String httpPost(String endpoint, String jsonBody, String apiKey) throws Exception {
+        URL url = URI.create(endpoint).toURL();
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setConnectTimeout(30000);
+        conn.setReadTimeout(120000);
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
         conn.setRequestProperty("Authorization", "Bearer " + apiKey);
@@ -80,27 +80,36 @@ public class TextLlmService {
             os.write(jsonBody.getBytes(StandardCharsets.UTF_8));
         }
         int code = conn.getResponseCode();
-        BufferedReader br = new BufferedReader(new InputStreamReader(
-                code >= 400 ? conn.getErrorStream() : conn.getInputStream(), StandardCharsets.UTF_8));
+        InputStreamReader isr = new InputStreamReader(
+                code >= 400 ? conn.getErrorStream() : conn.getInputStream(), StandardCharsets.UTF_8);
+        BufferedReader br = new BufferedReader(isr);
         StringBuilder sb = new StringBuilder();
         String line;
         while ((line = br.readLine()) != null) sb.append(line);
-        if (code < 200 || code >= 300) throw new RuntimeException("HTTP " + code + ": " + sb);
+        if (code < 200 || code >= 300) throw new Exception("HTTP " + code + ": " + sb);
         return sb.toString();
     }
 
-    private String extractContent(String json) throws Exception {
+    static String extractContent(String json) throws Exception {
         JsonNode root = mapper.readTree(json);
         return root.path("choices").get(0).path("message").path("content").asText("");
     }
 
-    private void trimHistory(List<LlmMsg> list) {
-        while (list.size() > 20) list.remove(0);  // 最多10轮
+    static byte[] downloadImage(String imageUrl) throws Exception {
+        URL url = new URL(imageUrl);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(60000);
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        try (java.io.InputStream is = conn.getInputStream()) {
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = is.read(buf)) != -1) baos.write(buf, 0, n);
+        }
+        return baos.toByteArray();
     }
 
-    public void clearMemory(String userId) { memory.remove(userId); }
-
-    public static class LlmMsg {
+    static class LlmMsg {
         final String role, content;
         LlmMsg(String role, String content) { this.role = role; this.content = content; }
     }

@@ -177,11 +177,11 @@ public class ILinkClient implements AutoCloseable {
     private List<WeixinMessage> pollAndDispatchMessages() throws IOException {
         final List<WeixinMessage> messages;
         synchronized (pollLock) {
-            messages = updateService.poll(requireLogin());
+            messages = updateService.poll(requireLogin());    // ← 调 UpdateService
         }
         if (messages != null && !messages.isEmpty()) {
             for (OnMessageListener l : listenerRegistry.getMessageListeners()) {
-                l.onMessages(messages);
+                l.onMessages(messages);     // ← 回调 WeChatBot
             }
         }
         return messages;
