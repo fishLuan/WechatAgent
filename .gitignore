@@ -61,3 +61,7 @@ keys/
 # 日志
 *.log
 logs/
+
+# 对话记忆（运行时数据，不提交到 git）
+data/
+chat-history.json

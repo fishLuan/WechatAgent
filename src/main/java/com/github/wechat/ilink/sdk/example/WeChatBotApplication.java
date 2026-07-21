@@ -10,7 +10,8 @@ import com.github.wechat.ilink.sdk.example.handler.ImageGenHandler;
 import com.github.wechat.ilink.sdk.example.handler.ImageMessageHandler;
 import com.github.wechat.ilink.sdk.example.handler.TextMessageHandler;
 import com.github.wechat.ilink.sdk.example.service.ChatService;
-import com.github.wechat.ilink.sdk.example.service.impl.AliyunDashscopeService;
+import com.github.wechat.ilink.sdk.example.service.SpeechSynthesisService;
+import com.github.wechat.ilink.sdk.example.service.impl.AliyunDashcodeService;
 import com.github.wechat.ilink.sdk.example.service.impl.DeepSeekChatService;
 import com.github.wechat.ilink.sdk.example.util.QrCodeDisplay;
 
@@ -54,13 +55,15 @@ public class WeChatBotApplication {
         // ============= 阶段二：初始化服务 =============
         ChatService chatService = new DeepSeekChatService(config);
         // 阿里云服务已经存在，实例化它（同时实现 VisionService 和 ImageGenService）
-        AliyunDashscopeService aliyunService = new AliyunDashscopeService(config.getDashscopeApiKey());
+        AliyunDashcodeService aliyunService = new AliyunDashcodeService(config.getDashscopeApiKey());
 
         // ============= 阶段三：注册所有 Handler =============
         List<MessageHandler> handlers = new ArrayList<>();
         handlers.add(new ImageMessageHandler(aliyunService));  // 优先级 10：图片 → 看图
         handlers.add(new ImageGenHandler(aliyunService));      // 优先级 50：画图指令 → 文生图
-        handlers.add(new TextMessageHandler(chatService));     // 优先级 100：其他文本 → DeepSeek 对话
+        // 有 DASHSCOPE_API_KEY 时，额外生成 MP3 语音文件发送
+        SpeechSynthesisService ttsService = config.isDashscopeConfigured() ? aliyunService : null;
+        handlers.add(new TextMessageHandler(chatService, ttsService));     // 优先级 100：文本/语音 → DeepSeek + 可选语音文件
 
         // 按 priority 从小到大排序（小的优先尝试）
         handlers.sort(Comparator.comparingInt(MessageHandler::priority));
@@ -74,8 +77,9 @@ public class WeChatBotApplication {
         try {
             // ============= 阶段四：构建客户端 =============
             System.out.println("[1/3] Building client...");
-            AtomicReference<ILinkClient> clientRef = new AtomicReference<>();
-            ILinkClient client = ILinkClient.builder()
+            AtomicReference<ILinkClient> clientRef = new AtomicReference<>(); //用clientref先占空位后面client构建好了再填充
+
+            ILinkClient client = ILinkClient.builder()   //搭建client客户端
                 .onLogin(new OnLoginListener() {
                     @Override
                     public void onLoginSuccess(LoginContext ctx) {

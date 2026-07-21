@@ -1,6 +1,7 @@
 package com.github.wechat.ilink.sdk.example.service.impl;
 
 import com.github.wechat.ilink.sdk.example.service.ImageGenService;
+import com.github.wechat.ilink.sdk.example.service.SpeechSynthesisService;
 import com.github.wechat.ilink.sdk.example.service.VisionService;
 
 import java.net.URI;
@@ -15,25 +16,38 @@ import java.util.Base64;
  * 阿里云百炼 (DashScope) API 服务封装
  *
  * 功能：
- *   1. 图片理解（看图 + 视觉问答） - 调用 qwen-vl-plus   (实现 VisionService)
- *   2. 文生图（根据文字描述生成图片） - 调用 wan2.6-t2i  (实现 ImageGenService)
+ *   1. 图片理解（看图 + 视觉问答） - 调用 qwen-vl-plus  (实现 VisionService)
+ *   2. 文生图（根据文字描述生成图片） - 调用 wan2.6-t2i (实现 ImageGenService)
+ *   3. 语音合成（文字 → WAV 音频文件） - 调用 qwen3-tts-flash (实现 SpeechSynthesisService)
+ *
+ * 说明：
+ *   - 微信 iLink Bot 协议限制机器人无法主动发送语音气泡消息，
+ *     因此语音合成生成的 WAV 通过 sendFile 作为文件发送。
+ *   - 注意：cosyvoice-v3-flash 只支持 WebSocket，不支持 HTTP REST API，
+ *     所以我们用 qwen3-tts-flash（支持 HTTP）。
+ *   - qwen3-tts-flash 使用和看图/生图相同的 multimodal-generation 端点。
  *
  * 使用方式：
  *   在环境变量中配置 DASHSCOPE_API_KEY = sk-xxxxxxxxxxxx
  *
  * 代码风格：Java 11+ HttpClient + 手动 JSON 处理
  */
-public class AliyunDashscopeService implements VisionService, ImageGenService {
+public class AliyunDashcodeService implements VisionService, ImageGenService, SpeechSynthesisService {
 
     // ===== API 基础配置 =====
     private static final String API_BASE = "https://dashscope.aliyuncs.com/api/v1";
-    // wan2.6-t2i 等新模型（文生图+看图）统一用 multimodal-generation 端点
+    // 统一用 multimodal-generation 端点（文生图 + 看图 + 语音合成都用它）
     private static final String MULTIMODAL_ENDPOINT = API_BASE + "/services/aigc/multimodal-generation/generation";
     private static final String TASK_ENDPOINT = API_BASE + "/tasks/";
 
     // 模型名称
     private static final String VISION_MODEL = "qwen-vl-plus";
     private static final String IMAGE_MODEL = "wan2.6-t2i";
+    // 语音合成用 qwen3-tts-flash（支持 HTTP REST API）。
+    // 注意：cosyvoice-v3-flash 只支持 WebSocket，不支持 HTTP 调用。
+    private static final String TTS_MODEL = "qwen3-tts-flash";
+    private static final String DEFAULT_VOICE = "Cherry";    // qwen3-tts 的音色名，还有 Dora/Echo/Ivy 等
+    private static final String AUDIO_FORMAT = "wav";         // WAV 兼容性最好（qwen3-tts-flash 支持）
 
     // 文生图默认参数
     private static final String DEFAULT_IMAGE_SIZE = "1024*1024";
@@ -51,7 +65,7 @@ public class AliyunDashscopeService implements VisionService, ImageGenService {
      * 构造器
      * @param apiKey 阿里云百炼 API Key（sk- 开头），传 null 或空字符串表示未配置
      */
-    public AliyunDashscopeService(String apiKey) {
+    public AliyunDashcodeService(String apiKey) {
         this.apiKey = (apiKey == null ? "" : apiKey.trim());
         this.http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(30))
@@ -282,6 +296,101 @@ public class AliyunDashscopeService implements VisionService, ImageGenService {
         }
 
         return downloadResp.body();
+    }
+
+    // ===================== 语音合成 =====================
+
+    /**
+     * 文字 → WAV 音频文件
+     *
+     * 调用 qwen3-tts-flash 模型（支持 HTTP REST API）。
+     * 微信 iLink Bot 协议限制机器人无法主动发送语音气泡消息，
+     * 因此生成的 WAV 通过 client.sendFile() 作为文件发送。
+     */
+    @Override
+    public byte[] synthesize(String text) throws Exception {
+        if (text == null || text.trim().isEmpty()) {
+            throw new IllegalArgumentException("合成文字不能为空");
+        }
+        // qwen3-tts-flash 单次请求字符数限制，截取前 500 字
+        if (text.length() > 500) text = text.substring(0, 500);
+
+        String body = "{"
+            + "\"model\":\"" + TTS_MODEL + "\","
+            + "\"input\":{"
+            +     "\"text\":" + jsonEscape(text) + ","
+            +     "\"voice\":" + jsonEscape(DEFAULT_VOICE) + ","
+            +     "\"format\":\"" + AUDIO_FORMAT + "\""
+            +   "}"
+            + "}";
+
+        System.out.println("  [百炼 TTS] 正在提交请求...");
+
+        // 注意：用的是和看图/生图相同的 multimodal-generation 端点
+        HttpRequest req = HttpRequest.newBuilder()
+            .uri(URI.create(MULTIMODAL_ENDPOINT))
+            .header("Content-Type", "application/json")
+            .header("Authorization", "Bearer " + apiKey)
+            .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+            .build();
+
+        HttpResponse<String> resp = http.send(req,
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+        if (resp.statusCode() != 200) {
+            String bodyPreview = resp.body();
+            if (bodyPreview.length() > 400) bodyPreview = bodyPreview.substring(0, 400) + "...";
+            throw new Exception("语音合成失败 HTTP " + resp.statusCode() + ": " + bodyPreview);
+        }
+
+        // 响应格式: {"output":{"audio":{"url":"http://..."}}}
+        String audioUrl = findFirstUrl(resp.body());
+        if (audioUrl == null || audioUrl.isEmpty()) {
+            throw new Exception("无法从响应中解析音频 URL: "
+                + (resp.body().length() > 300 ? resp.body().substring(0, 300) + "..." : resp.body()));
+        }
+
+        System.out.println("  [百炼 TTS] 下载音频: " + (audioUrl.length() > 80 ? audioUrl.substring(0, 80) + "..." : audioUrl));
+
+        // 下载音频文件
+        HttpRequest downloadReq = HttpRequest.newBuilder()
+            .uri(URI.create(audioUrl))
+            .header("User-Agent", "Mozilla/5.0")
+            .GET()
+            .build();
+
+        HttpResponse<byte[]> downloadResp = http.send(downloadReq,
+            HttpResponse.BodyHandlers.ofByteArray());
+
+        if (downloadResp.statusCode() != 200 || downloadResp.body() == null || downloadResp.body().length == 0) {
+            throw new Exception("音频下载失败: HTTP " + downloadResp.statusCode());
+        }
+
+        System.out.println("  [百炼 TTS] 音频大小: " + downloadResp.body().length + " 字节");
+        return downloadResp.body();
+    }
+
+    @Override
+    public String getFileExtension() {
+        return AUDIO_FORMAT;
+    }
+
+    /** 在 JSON 中找第一个 http(s) URL（按 URL 合法字符扫描） */
+    private static String findFirstUrl(String json) {
+        int start = json.indexOf("http");
+        if (start < 0) return null;
+        int end = start;
+        while (end < json.length()) {
+            char c = json.charAt(end);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                || c == ':' || c == '/' || c == '.' || c == '-' || c == '_'
+                || c == '?' || c == '=' || c == '&' || c == '%' || c == '~' || c == '+') {
+                end++;
+            } else {
+                break;
+            }
+        }
+        return end > start ? json.substring(start, end) : null;
     }
 
     // ============================================================
