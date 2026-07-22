@@ -1,4 +1,4 @@
-package com.Student.wechatbot.util;
+package com.clawbot.wechatbot.util;
 
 /**
  * JSON 工具类：把 SimpleBot 里散落的 JSON 处理方法集中在这里

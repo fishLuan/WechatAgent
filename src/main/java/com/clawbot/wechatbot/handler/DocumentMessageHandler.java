@@ -1,12 +1,12 @@
-package com.Student.wechatbot.handler;
+package com.clawbot.wechatbot.handler;
 
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.FileItem;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
-import com.Student.wechatbot.base.MessageHandler;
-import com.Student.wechatbot.service.ChatService;
-import com.Student.wechatbot.service.DocumentService;
+import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.service.ChatService;
+import com.clawbot.wechatbot.service.DocumentService;
 
 /**
  * 文档消息处理器：

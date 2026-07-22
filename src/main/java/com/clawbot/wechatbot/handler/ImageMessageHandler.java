@@ -1,10 +1,10 @@
-package com.Student.wechatbot.handler;
+package com.clawbot.wechatbot.handler;
 
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
-import com.Student.wechatbot.base.MessageHandler;
-import com.Student.wechatbot.service.VisionService;
+import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.service.VisionService;
 
 /**
  * 图片消息处理器 —— 用户发图片时，调用百炼视觉模型生成描述

@@ -13,6 +13,6 @@ package com.clawbot.wechatbot;
  */
 public class WeChatBotApplication {
     public static void main(String[] args) {
-        new com.Student.wechatbot.WeChatBot().start();
+        new com.clawbot.wechatbot.WeChatBot().start();
     }
 }

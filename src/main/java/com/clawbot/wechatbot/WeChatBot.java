@@ -1,21 +1,21 @@
-package com.Student.wechatbot;
+package com.clawbot.wechatbot;
 
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.listener.OnLoginListener;
 import com.github.wechat.ilink.sdk.core.login.LoginContext;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
-import com.Student.wechatbot.base.MessageHandler;
-import com.Student.wechatbot.config.BotConfig;
-import com.Student.wechatbot.handler.DocumentMessageHandler;
-import com.Student.wechatbot.handler.ImageGenHandler;
-import com.Student.wechatbot.handler.ImageMessageHandler;
-import com.Student.wechatbot.handler.TextMessageHandler;
-import com.Student.wechatbot.service.ChatService;
-import com.Student.wechatbot.service.DocumentService;
-import com.Student.wechatbot.service.SpeechSynthesisService;
-import com.Student.wechatbot.service.impl.AliyunDashcodeService;
-import com.Student.wechatbot.service.impl.DeepSeekChatService;
-import com.Student.wechatbot.util.QrCodeDisplay;
+import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.config.BotConfig;
+import com.clawbot.wechatbot.handler.DocumentMessageHandler;
+import com.clawbot.wechatbot.handler.ImageGenHandler;
+import com.clawbot.wechatbot.handler.ImageMessageHandler;
+import com.clawbot.wechatbot.handler.TextMessageHandler;
+import com.clawbot.wechatbot.service.ChatService;
+import com.clawbot.wechatbot.service.DocumentService;
+import com.clawbot.wechatbot.service.SpeechSynthesisService;
+import com.clawbot.wechatbot.service.impl.AliyunDashcodeService;
+import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
+import com.clawbot.wechatbot.util.QrCodeDisplay;
 
 import java.util.ArrayList;
 import java.util.Comparator;

@@ -1,10 +1,10 @@
-package com.Student.wechatbot.handler;
+package com.clawbot.wechatbot.handler;
 
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
-import com.Student.wechatbot.base.MessageHandler;
-import com.Student.wechatbot.service.ImageGenService;
+import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.service.ImageGenService;
 
 /**
  * 文生图指令处理器 —— 用户发"画图一只猫"、"来一张小猫图片"等，触发百炼文生图

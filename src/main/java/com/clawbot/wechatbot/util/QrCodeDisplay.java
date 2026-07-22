@@ -1,4 +1,4 @@
-package com.Student.wechatbot.util;
+package com.clawbot.wechatbot.util;
 
 import java.awt.Desktop;
 import java.io.File;

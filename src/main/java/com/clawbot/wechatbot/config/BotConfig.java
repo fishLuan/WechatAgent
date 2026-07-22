@@ -1,4 +1,4 @@
-package com.Student.wechatbot.config;
+package com.clawbot.wechatbot.config;
 
 /**
  * 机器人配置：集中管理所有外部配置（API Key、模型名、URL 等）

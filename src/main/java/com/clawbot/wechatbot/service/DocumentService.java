@@ -1,4 +1,4 @@
-package com.Student.wechatbot.service;
+package com.clawbot.wechatbot.service;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;

@@ -1,4 +1,4 @@
-package com.Student.wechatbot.base;
+package com.clawbot.wechatbot.base;
 
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;

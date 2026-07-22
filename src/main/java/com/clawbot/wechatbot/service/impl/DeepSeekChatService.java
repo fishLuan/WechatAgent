@@ -1,8 +1,8 @@
-package com.Student.wechatbot.service.impl;
+package com.clawbot.wechatbot.service.impl;
 
-import com.Student.wechatbot.config.BotConfig;
-import com.Student.wechatbot.service.ChatService;
-import com.Student.wechatbot.util.JsonUtils;
+import com.clawbot.wechatbot.config.BotConfig;
+import com.clawbot.wechatbot.service.ChatService;
+import com.clawbot.wechatbot.util.JsonUtils;
 
 import java.net.URI;
 import java.net.http.HttpClient;

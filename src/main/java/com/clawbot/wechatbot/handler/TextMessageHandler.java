@@ -1,14 +1,14 @@
-package com.Student.wechatbot.handler;
+package com.clawbot.wechatbot.handler;
 
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.VoiceItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
-import com.Student.wechatbot.base.MessageHandler;
-import com.Student.wechatbot.service.ChatService;
-import com.Student.wechatbot.service.DocumentService;
-import com.Student.wechatbot.service.SpeechSynthesisService;
-import com.Student.wechatbot.util.JsonUtils;
+import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.service.ChatService;
+import com.clawbot.wechatbot.service.DocumentService;
+import com.clawbot.wechatbot.service.SpeechSynthesisService;
+import com.clawbot.wechatbot.util.JsonUtils;
 
 import java.io.IOException;
 import java.nio.file.Files;

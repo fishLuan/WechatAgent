@@ -1,4 +1,4 @@
-package com.Student.wechatbot.service;
+package com.clawbot.wechatbot.service;
 
 /**
  * 语音合成服务接口 —— 把文字转成音频文件（MP3/WAV）

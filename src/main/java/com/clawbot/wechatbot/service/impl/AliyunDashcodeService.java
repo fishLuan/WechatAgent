@@ -1,8 +1,8 @@
-package com.Student.wechatbot.service.impl;
+package com.clawbot.wechatbot.service.impl;
 
-import com.Student.wechatbot.service.ImageGenService;
-import com.Student.wechatbot.service.SpeechSynthesisService;
-import com.Student.wechatbot.service.VisionService;
+import com.clawbot.wechatbot.service.ImageGenService;
+import com.clawbot.wechatbot.service.SpeechSynthesisService;
+import com.clawbot.wechatbot.service.VisionService;
 
 import java.net.URI;
 import java.net.http.HttpClient;

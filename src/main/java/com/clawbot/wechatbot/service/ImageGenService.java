@@ -1,4 +1,4 @@
-package com.Student.wechatbot.service;
+package com.clawbot.wechatbot.service;
 
 /**
  * 文生图服务 —— 接口层
