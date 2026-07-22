@@ -105,9 +105,11 @@ public class TextMessageHandler implements MessageHandler {
             //    - 文档指令：先正常对话，把回复写入 PDF/Word
             boolean wantVoice = shouldTriggerTts(userText);
             boolean wantDoc = shouldTriggerDocGen(userText);
+            boolean wantWebPage = shouldTriggerWebPageTool(userText);
             String textForChat = userText;
             if (wantVoice) textForChat = stripTtsKeywords(textForChat);
             if (wantDoc)   textForChat = stripDocKeywords(textForChat);
+            if (wantWebPage) textForChat = forceWebPageToolInstruction(textForChat);
 
             // 2. 传给大模型的内容 = 长期摘要 + 最近完整对话
             String context = buildContextForModel();
@@ -164,6 +166,30 @@ public class TextMessageHandler implements MessageHandler {
     // ============================================================
     // 工具方法
     // ============================================================
+
+    private boolean shouldTriggerWebPageTool(String userText) {
+        if (userText == null) return false;
+        String t = userText.trim().toLowerCase();
+        boolean hasUrl = t.contains("http://") || t.contains("https://");
+        boolean asksPage = t.contains("网页")
+            || t.contains("链接")
+            || t.contains("正文")
+            || t.contains("抓取")
+            || t.contains("提取")
+            || t.contains("总结")
+            || t.contains("概括")
+            || t.contains("看看")
+            || t.contains("阅读")
+            || t.contains("read this")
+            || t.contains("summarize")
+            || t.contains("extract");
+        return hasUrl && asksPage;
+    }
+
+    private String forceWebPageToolInstruction(String userText) {
+        return "这是一个网页内容请求。请必须通过 extract_web_page 工具获取网页标题和正文，"
+            + "再基于工具返回内容回答用户；不要凭空猜测链接内容。用户原始请求如下：\n" + userText;
+    }
 
     /**
      * 清理大模型的回复：当用户触发了语音/文档时，大模型可能自作主张在开头加

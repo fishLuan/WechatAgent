@@ -60,6 +60,10 @@ public class BotConfig {
         return getInt("deepseek.request-timeout-seconds");
     }
 
+    public int getWebPageExtractConnectTimeoutSeconds() { return getInt("webpage.extract.connect-timeout-seconds"); }
+    public int getWebPageExtractRequestTimeoutSeconds() { return getInt("webpage.extract.request-timeout-seconds"); }
+    public int getWebPageExtractMaxBodyChars() { return getInt("webpage.extract.max-body-chars"); }
+
     public String getDashscopeApiKey() {
         return get("dashscope.api.key");
     }

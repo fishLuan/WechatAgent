@@ -32,9 +32,13 @@ public class FunctionToolRegistry {
         FunctionTool tool = tools.get(name);
         if (tool == null) return error("未知工具：" + name);
         try {
+            System.out.println("[TOOL_CALL] name=" + name + ", arguments=" + summarize(rawArguments, 500));
             JsonNode arguments = mapper.readTree(rawArguments == null ? "{}" : rawArguments);
-            return tool.execute(arguments);
+            String result = tool.execute(arguments);
+            System.out.println("[TOOL_RESULT] name=" + name + ", result=" + summarize(result, 500));
+            return result;
         } catch (Exception e) {
+            System.err.println("[TOOL_ERROR] name=" + name + ", error=" + e.getMessage());
             return error("工具执行失败：" + e.getMessage());
         }
     }
@@ -48,5 +52,11 @@ public class FunctionToolRegistry {
         } catch (Exception ignored) {
             return "{\"success\":false}";
         }
+    }
+
+    private String summarize(String text, int maxLength) {
+        if (text == null) return "{}";
+        String oneLine = text.replace("\r", "\\r").replace("\n", "\\n");
+        return oneLine.length() <= maxLength ? oneLine : oneLine.substring(0, maxLength) + "...";
     }
 }
