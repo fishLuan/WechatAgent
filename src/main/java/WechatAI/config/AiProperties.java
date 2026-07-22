@@ -1,5 +1,8 @@
 package WechatAI.config;
 
+/**
+ * 应用配置快照，启动时由 config.properties 和环境变量解析生成。
+ */
 public class AiProperties {
 
     private final String textApiKey;

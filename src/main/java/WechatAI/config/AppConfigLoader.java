@@ -8,6 +8,9 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 
+/**
+ * 配置加载器，负责 UTF-8 读取配置文件、解析占位符并做启动前校验。
+ */
 public class AppConfigLoader {
 
     private static final String CONFIG_FILE = "config.properties";

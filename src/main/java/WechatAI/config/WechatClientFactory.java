@@ -5,6 +5,9 @@ import com.github.wechat.ilink.sdk.core.config.ILinkConfig;
 import com.github.wechat.ilink.sdk.core.listener.OnLoginListener;
 import com.github.wechat.ilink.sdk.core.login.LoginContext;
 
+/**
+ * 微信客户端工厂，集中维护 SDK 初始化参数和登录监听逻辑。
+ */
 public class WechatClientFactory {
 
     private WechatClientFactory() {
