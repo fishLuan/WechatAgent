@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md"],
+  "command": {
+    "build": {
+      "description": "Compile the project with Maven",
+      "template": "cd /Users/lienqi/Downloads/AIdp && chmod +x mvnw && ./mvnw clean compile"
+    }
+  }
+}
