@@ -28,38 +28,27 @@
 
 ### 核心原则
 1. **Master 分支**：唯一稳定主干，禁止直接 Push
-2. **每个人一个自己的分支**，直接在个人分支上增加工具类，不新建 Feature 分支
+2. **功能隔离**：一人一分支，直接在个人分支上增加工具类
 3. **准入机制**：仅 PR/MR 合并
 
-### 标准开发流程
+### 开发流程
 ```bash
-# 1. 同步主干最新代码
-git checkout master
+# 1. 从 master 拉取最新代码到自己的开发分支
+git checkout co-lienqi
 git pull origin master
-git checkout 自己的分支
-git merge master
 
-# 2. 在自己的分支上开发，增加工具类
+# 2. 在 co-lienqi 上开发工具类，完善功能
 # 写代码...
 
-# 3. 提交并推送到个人分支
-git add .
-git commit -m "完成xxx工具开发"
-git push origin 自己的分支
+# 3. 完成后退回 lienqi，推送代码
+git checkout lienqi
+git merge co-lienqi            # 把开发分支合进来
+git push origin lienqi
 
-# 4. 在 GitHub 网页端提交 PR/MR → Master
-# 5. 等待审核通过后合并
-# 6. 任意功能合并后，全员同步：
-git checkout master
-git pull origin master
+# 4. 在 GitHub 提交 PR：lienqi → master
+# 由项目组长审核合并到 master
 ```
 
 ### 冲突处理
-- 仅当前功能开发者本人处理冲突
+- 仅功能开发者本人处理冲突
 - 解决后重新提交、完成合并
-
-### 硬性约束
-1. 开启 Master 分支保护，关闭直接 Push 权限
-2. 禁止多人共用一个分支开发
-3. 禁止在 Master 分支直接写业务代码
-4. 功能合并后可删除远程废弃分支
