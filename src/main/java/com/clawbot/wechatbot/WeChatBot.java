@@ -21,7 +21,8 @@ import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
 import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
 import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
-import com.clawbot.wechatbot.tools.AmapWeatherTool;
+import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
+import com.clawbot.wechatbot.tools.weathertool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 
@@ -71,6 +72,11 @@ public class WeChatBot {
             System.out.println("       请配置环境变量 AMAP_WEATHER_API_KEY 后重启");
             System.out.println();
         }
+        if (!config.isTianApiConfigured()) {
+            System.out.println("[WARN] 天行数据 API Key 未配置，新闻查询功能不可用");
+            System.out.println("       请配置环境变量 TIANAPI_API_KEY 后重启");
+            System.out.println();
+        }
 
         DeepSeekClient deepSeekClient = new DeepSeekClient(
             config.getDeepSeekApiKey(), config.getDeepSeekModel(), config.getDeepSeekUrl(),
@@ -79,7 +85,8 @@ public class WeChatBot {
         FunctionToolRegistry toolRegistry = new FunctionToolRegistry(deepSeekClient.mapper())
             .register(new AmapWeatherTool(
                 config.getAmapWeatherApiKey(), config.getAmapWeatherEndpoint(),
-                config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds()));
+                config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds()))
+            .register(new TianNewsTool(config.getTianApiKey()));
         ChatService chatService = new DeepSeekChatService(
             deepSeekClient, toolRegistry, config.getSystemPrompt(), config.getDeepSeekMaxToolRounds());
 

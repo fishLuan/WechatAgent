@@ -117,6 +117,14 @@ public class BotConfig {
         return !getAmapWeatherApiKey().isBlank();
     }
 
+    public String getTianApiKey() {
+        return get("tianapi.api.key");
+    }
+
+    public boolean isTianApiConfigured() {
+        return !getTianApiKey().isBlank();
+    }
+
     private String get(String key) {
         // JVM -D 参数优先级最高，便于部署时临时覆盖 application.properties。
         String systemValue = System.getProperty(key);

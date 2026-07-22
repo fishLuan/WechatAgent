@@ -54,11 +54,12 @@ public class DeepSeekClient {
             body.put("tool_choice", "auto");
         }
 
+        String requestBody = mapper.writeValueAsString(body);
         HttpRequest request = HttpRequest.newBuilder().uri(URI.create(apiUrl))
             .timeout(requestTimeout)
             .header("Content-Type", "application/json")
             .header("Authorization", "Bearer " + apiKey)
-            .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body), StandardCharsets.UTF_8))
+            .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
             .build();
         HttpResponse<String> response = http.send(request,
             HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));

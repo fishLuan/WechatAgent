@@ -33,7 +33,8 @@ public class DeepSeekChatService implements ChatService {
         messages.add(message("user", userText));
 
         for (int round = 0; round <= maxToolRounds; round++) {
-            JsonNode response = client.chat(messages, toolRegistry.definitions());
+            ArrayNode tools = toolRegistry.definitions();
+            JsonNode response = client.chat(messages, tools);
             JsonNode assistant = response.path("choices").path(0).path("message");
             if (assistant.isMissingNode()) throw new Exception("模型响应中缺少 choices[0].message");
 
