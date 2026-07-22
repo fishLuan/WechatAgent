@@ -1,77 +1,79 @@
 package com.clawbot.wechatbot.service.impl;
 
-import com.clawbot.wechatbot.config.BotConfig;
 import com.clawbot.wechatbot.service.ChatService;
-import com.clawbot.wechatbot.util.JsonUtils;
+import com.clawbot.wechatbot.service.client.DeepSeekClient;
+import com.clawbot.wechatbot.tools.FunctionToolRegistry;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-
-/**
- * DeepSeek 文本对话 —— ChatService 的实现类
- * 负责构造请求、调用 API、解析响应
- */
+/** 负责对话和 function-calling 流程，不再承担 HTTP 或具体工具执行细节。 */
 public class DeepSeekChatService implements ChatService {
-
-    private final String apiKey;
-    private final String model;
-    private final String apiUrl;
+    private final DeepSeekClient client;
+    private final FunctionToolRegistry toolRegistry;
     private final String systemPrompt;
-    private final HttpClient http;
+    private final int maxToolRounds;
+    private final ObjectMapper mapper;
 
-    public DeepSeekChatService(BotConfig config) {
-        this.apiKey = config.getDeepSeekApiKey();
-        this.model = config.getDeepSeekModel();
-        this.apiUrl = config.getDeepSeekUrl();
-        this.systemPrompt = config.getSystemPrompt();
-        this.http = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
-            .build();
+    public DeepSeekChatService(DeepSeekClient client, FunctionToolRegistry toolRegistry,
+                               String systemPrompt, int maxToolRounds) {
+        this.client = client;
+        this.toolRegistry = toolRegistry;
+        this.systemPrompt = systemPrompt;
+        this.maxToolRounds = maxToolRounds;
+        this.mapper = client.mapper();
     }
 
     @Override
     public String chat(String userText, String history) throws Exception {
-        String messages =
-            "[{\"role\":\"system\",\"content\":" + JsonUtils.escape(systemPrompt) + "}"
-            + (history != null && !history.isEmpty() ? "," + history : "")
-            + ",{\"role\":\"user\",\"content\":" + JsonUtils.escape(userText) + "}]";
+        ArrayNode messages = mapper.createArrayNode();
+        messages.add(message("system", systemPrompt));
+        appendHistory(messages, history);
+        messages.add(message("user", userText));
 
-        String body = "{"
-            + "\"model\":\"" + model + "\","
-            + "\"messages\":" + messages + ","
-            + "\"temperature\":0.8,"
-            + "\"max_tokens\":1024"
-            + "}";
+        for (int round = 0; round <= maxToolRounds; round++) {
+            JsonNode response = client.chat(messages, toolRegistry.definitions());
+            JsonNode assistant = response.path("choices").path(0).path("message");
+            if (assistant.isMissingNode()) throw new Exception("模型响应中缺少 choices[0].message");
 
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(apiUrl))
-            .header("Content-Type", "application/json")
-            .header("Authorization", "Bearer " + apiKey)
-            .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
-            .build();
+            JsonNode toolCalls = assistant.path("tool_calls");
+            if (!toolCalls.isArray() || toolCalls.isEmpty()) {
+                String content = assistant.path("content").asText("").trim();
+                if (content.isEmpty()) throw new Exception("模型未返回文本内容");
+                return content;
+            }
+            if (round == maxToolRounds) throw new Exception("工具调用次数超过限制");
 
-        HttpResponse<String> response = http.send(request,
-            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-
-        if (response.statusCode() != 200) {
-            String body200 = response.body();
-            throw new Exception("HTTP " + response.statusCode()
-                + ": " + (body200.length() > 200 ? body200.substring(0, 200) + "..." : body200));
+            messages.add(assistant.deepCopy());
+            for (JsonNode call : toolCalls) {
+                String callId = call.path("id").asText();
+                String toolName = call.path("function").path("name").asText();
+                String arguments = call.path("function").path("arguments").asText("{}");
+                ObjectNode toolMessage = message("tool", toolRegistry.execute(toolName, arguments));
+                toolMessage.put("tool_call_id", callId);
+                toolMessage.put("name", toolName);
+                messages.add(toolMessage);
+            }
         }
+        throw new Exception("工具调用流程异常结束");
+    }
 
-        String content = JsonUtils.extractContent(response.body());
-        if (content == null || content.trim().isEmpty()) {
-            throw new Exception("Could not parse response JSON");
-        }
-        return content.trim();
+    private void appendHistory(ArrayNode messages, String history) throws Exception {
+        if (history == null || history.isBlank()) return;
+        JsonNode parsed = mapper.readTree("[" + history + "]");
+        if (parsed.isArray()) parsed.forEach(messages::add);
+    }
+
+    private ObjectNode message(String role, String content) {
+        ObjectNode node = mapper.createObjectNode();
+        node.put("role", role);
+        node.put("content", content == null ? "" : content);
+        return node;
     }
 
     @Override
     public boolean isConfigured() {
-        return apiKey != null && !apiKey.trim().isEmpty();
+        return client.isConfigured();
     }
 }
