@@ -1,0 +1,173 @@
+package com.github.wechat.ilink.sdk.example;
+
+import com.github.wechat.ilink.sdk.ILinkClient;
+import com.github.wechat.ilink.sdk.core.listener.OnLoginListener;
+import com.github.wechat.ilink.sdk.core.login.LoginContext;
+import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
+import com.github.wechat.ilink.sdk.example.base.MessageHandler;
+import com.github.wechat.ilink.sdk.example.config.BotConfig;
+import com.github.wechat.ilink.sdk.example.handler.DocumentMessageHandler;
+import com.github.wechat.ilink.sdk.example.handler.ImageGenHandler;
+import com.github.wechat.ilink.sdk.example.handler.ImageMessageHandler;
+import com.github.wechat.ilink.sdk.example.handler.TextMessageHandler;
+import com.github.wechat.ilink.sdk.example.service.ChatService;
+import com.github.wechat.ilink.sdk.example.service.DocumentService;
+import com.github.wechat.ilink.sdk.example.service.SpeechSynthesisService;
+import com.github.wechat.ilink.sdk.example.service.impl.AliyunDashcodeService;
+import com.github.wechat.ilink.sdk.example.service.impl.DeepSeekChatService;
+import com.github.wechat.ilink.sdk.example.util.QrCodeDisplay;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+
+/**
+ * 机器人核心 —— 负责装配（配置/服务/处理器）和运行（登录+轮询）
+ *
+ * 设计：
+ *   - 构造器 initialize()：加载配置、初始化服务、注册 Handler
+ *   - start()：构建客户端、扫码登录、进入轮询循环
+ *   - routeMessages()：消息分发（按 priority 依次匹配）
+ *
+ * 启动入口在 WeChatBotApplication，只做 new WeChatBot().start();
+ */
+public class WeChatBot {
+
+    private BotConfig config;
+    private List<MessageHandler> handlers;
+
+    public WeChatBot() {
+        initialize();
+    }
+
+    // ========== 阶段一 ~ 阶段三：装配 ==========
+
+    private void initialize() {
+        DocumentService.silencePdfLogs();
+        printBanner();
+
+        config = new BotConfig();
+        if (!config.isDeepSeekConfigured()) {
+            System.out.println("[WARN] DeepSeek API Key 未配置，文本对话将使用 Echo 模式");
+            System.out.println("       请配置环境变量 DEEPSEEK_API_KEY 后重启");
+            System.out.println();
+        }
+        if (!config.isDashscopeConfigured()) {
+            System.out.println("[WARN] 阿里云百炼 API Key 未配置，看图/画图功能不可用");
+            System.out.println("       请配置环境变量 DASHSCOPE_API_KEY 后重启");
+            System.out.println();
+        }
+
+        ChatService chatService = new DeepSeekChatService(config);
+        AliyunDashcodeService aliyunService = new AliyunDashcodeService(config.getDashscopeApiKey());
+        DocumentService documentService = new DocumentService();
+
+        handlers = new ArrayList<>();
+        handlers.add(new ImageMessageHandler(aliyunService));
+        handlers.add(new ImageGenHandler(aliyunService));
+        handlers.add(new DocumentMessageHandler(chatService, documentService));
+        SpeechSynthesisService ttsService = config.isDashscopeConfigured() ? aliyunService : null;
+        handlers.add(new TextMessageHandler(chatService, ttsService, documentService));
+
+        handlers.sort(Comparator.comparingInt(MessageHandler::priority));
+
+        System.out.println("[INFO] 已注册 " + handlers.size() + " 个消息处理器：");
+        for (MessageHandler h : handlers) {
+            System.out.println("       - " + h.getClass().getSimpleName() + " (priority=" + h.priority() + ")");
+        }
+        System.out.println();
+    }
+
+    // ========== 阶段四 ~ 阶段六：登录+轮询 ==========
+
+    public void start() {
+        try {
+            System.out.println("[1/3] Building client...");
+            AtomicReference<ILinkClient> clientRef = new AtomicReference<>();
+
+            ILinkClient client = ILinkClient.builder()
+                .onLogin(new OnLoginListener() {
+                    @Override
+                    public void onLoginSuccess(LoginContext ctx) {
+                        System.out.println();
+                        System.out.println("[OK] 登录成功!");
+                        System.out.println("       Bot ID: " + ctx.getBotId());
+                        System.out.println("       User ID: " + ctx.getUserId());
+                        System.out.println("       现在可以在微信里给机器人发消息了");
+                        System.out.println();
+                    }
+                    @Override
+                    public void onLoginFailure(Throwable th) {
+                        System.err.println("[ERROR] 登录失败: " + th.getMessage());
+                    }
+                })
+                .onMessage(messages -> routeMessages(clientRef.get(), messages))
+                .build();
+            clientRef.set(client);
+
+            System.out.println("[2/3] Getting QR code...");
+            String qrContent = client.executeLogin();
+            System.out.println();
+
+            System.out.println("[3/3] Displaying QR code...");
+            QrCodeDisplay.display(qrContent);
+
+            System.out.println("[INFO] 请用微信扫码，等待登录...");
+            System.out.println();
+
+            while (!client.isLoggedIn()) {
+                try { Thread.sleep(1000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+            }
+
+            System.out.println("[INFO] 机器人运行中，按 Ctrl+C 退出");
+            System.out.println();
+
+            while (true) {
+                try {
+                    if (client.isLoggedIn()) {
+                        client.getUpdates();
+                    }
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (Exception e) {
+                    String msg = e.getMessage();
+                    if (msg == null || !msg.toLowerCase().contains("not logged")) {
+                        System.err.println("[WARN] " + msg);
+                    }
+                    Thread.sleep(3000);
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[FATAL] " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    // ========== 消息路由 ==========
+
+    private void routeMessages(ILinkClient client, List<WeixinMessage> messages) {
+        if (client == null || messages == null || messages.isEmpty()) return;
+        for (WeixinMessage msg : messages) {
+            if (msg == null) continue;
+            for (MessageHandler handler : handlers) {
+                if (handler.canHandle(msg)) {
+                    handler.handle(client, msg);
+                    break;
+                }
+            }
+        }
+    }
+
+    // ========== 工具 ==========
+
+    private void printBanner() {
+        System.out.println();
+        System.out.println("========================================");
+        System.out.println("   WeChat iLink Bot - 分层架构版");
+        System.out.println("========================================");
+        System.out.println();
+    }
+}
