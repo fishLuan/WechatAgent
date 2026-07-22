@@ -30,7 +30,7 @@ public class FunctionToolRegistry {
 
     public String execute(String name, String rawArguments) {
         FunctionTool tool = tools.get(name);
-        if (tool == null) return error("未知工具：" + name);
+        if (tool == null) return error("未知的工具：" + name);
         try {
             System.out.println("[TOOL_CALL] name=" + name + ", arguments=" + summarize(rawArguments, 500));
             JsonNode arguments = mapper.readTree(rawArguments == null ? "{}" : rawArguments);
