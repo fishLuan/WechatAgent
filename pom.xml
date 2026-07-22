@@ -37,16 +37,11 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- ============ 微信 iLink SDK 依赖 ============ -->
+        <!-- ============ 微信 iLink SDK（从 Maven 拉取，不再保留源码） ============ -->
         <dependency>
-            <groupId>com.squareup.okhttp3</groupId>
-            <artifactId>okhttp</artifactId>
-            <version>4.12.0</version>
-        </dependency>
-        <dependency>
-            <groupId>com.google.code.gson</groupId>
-            <artifactId>gson</artifactId>
-            <version>2.10.1</version>
+            <groupId>io.github.lith0924</groupId>
+            <artifactId>wechat-ilink-sdk</artifactId>
+            <version>2.3.3</version>
         </dependency>
 
         <!-- ============ 文档处理（PDF/Word） ============ -->
@@ -86,7 +81,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.1.1</version>
                 <configuration>
-                    <mainClass>com.github.wechat.ilink.sdk.example.WeChatBotApplication</mainClass>
+                    <mainClass>com.Student.wechatbot.WeChatBotApplication</mainClass>
                 </configuration>
             </plugin>
         </plugins>
