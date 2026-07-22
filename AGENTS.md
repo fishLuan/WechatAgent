@@ -28,7 +28,7 @@
 
 ### 核心原则
 1. **Master 分支**：唯一稳定主干，禁止直接 Push
-2. **功能隔离**：一人一分支
+2. **每个人一个自己的分支**，直接在个人分支上增加工具类，不新建 Feature 分支
 3. **准入机制**：仅 PR/MR 合并
 
 ### 标准开发流程
@@ -36,16 +36,18 @@
 # 1. 同步主干最新代码
 git checkout master
 git pull origin master
+git checkout 自己的分支
+git merge master
 
-# 2. 创建个人独立功能分支（命名规范: feature/工具名-tool）
-git checkout -b feature/xxx-tool
+# 2. 在自己的分支上开发，增加工具类
+# 写代码...
 
-# 3. 独立开发，提交并推送
+# 3. 提交并推送到个人分支
 git add .
 git commit -m "完成xxx工具开发"
-git push origin feature/xxx-tool
+git push origin 自己的分支
 
-# 4. 在 GitHub/GitLab 网页端提交 PR/MR → Master
+# 4. 在 GitHub 网页端提交 PR/MR → Master
 # 5. 等待审核通过后合并
 # 6. 任意功能合并后，全员同步：
 git checkout master
@@ -58,6 +60,6 @@ git pull origin master
 
 ### 硬性约束
 1. 开启 Master 分支保护，关闭直接 Push 权限
-2. 禁止多人共用一个功能分支开发
+2. 禁止多人共用一个分支开发
 3. 禁止在 Master 分支直接写业务代码
-4. 功能合并上线后，删除远程废弃 Feature 分支
+4. 功能合并后可删除远程废弃分支
