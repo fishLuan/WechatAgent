@@ -21,7 +21,8 @@ import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
 import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
 import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
-import com.clawbot.wechatbot.tools.AmapWeatherTool;
+import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
+import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 
@@ -71,7 +72,11 @@ public class WeChatBot {
             System.out.println("       请配置环境变量 AMAP_WEATHER_API_KEY 后重启");
             System.out.println();
         }
-
+        if (!config.isJuheExchangeConfigured()) {
+            System.out.println("[WARN] 聚合数据汇率 API Key 未配置，汇率 function-calling 将返回配置提示");
+            System.out.println("       请配置环境变量 JUHE_EXCHANGE_API_KEY 后重启");
+            System.out.println();
+        }
         DeepSeekClient deepSeekClient = new DeepSeekClient(
             config.getDeepSeekApiKey(), config.getDeepSeekModel(), config.getDeepSeekUrl(),
             config.getDeepSeekTemperature(), config.getDeepSeekMaxTokens(),
@@ -79,7 +84,11 @@ public class WeChatBot {
         FunctionToolRegistry toolRegistry = new FunctionToolRegistry(deepSeekClient.mapper())
             .register(new AmapWeatherTool(
                 config.getAmapWeatherApiKey(), config.getAmapWeatherEndpoint(),
-                config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds()));
+                config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds()))
+            .register(new ExchangeRateTool(
+                config.getJuheExchangeApiKey(), config.getJuheExchangeEndpoint(),
+                config.getJuheExchangeVersion(), config.getJuheExchangeConnectTimeoutSeconds(),
+                config.getJuheExchangeRequestTimeoutSeconds()));
         ChatService chatService = new DeepSeekChatService(
             deepSeekClient, toolRegistry, config.getSystemPrompt(), config.getDeepSeekMaxToolRounds());
 
