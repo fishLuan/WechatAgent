@@ -24,7 +24,12 @@ import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
 import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
+
 import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
+import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
+import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
+import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
+import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 
 import java.util.ArrayList;
@@ -83,6 +88,12 @@ public class WeChatBot {
             System.out.println("       （申请博查AI Key: https://open.bochaai.com");
             System.out.println();
         }
+        if (!config.isTianapiConfigured()) {
+            System.out.println("[WARN] 天行数据 API Key 未配置，新闻查询 function-calling 将返回配置提示");
+            System.out.println("       请配置环境变量 TIANAPI_API_KEY 后重启");
+            System.out.println();
+        }
+        TianNewsTool tianNewsTool = new TianNewsTool(config.getTianapiApiKey());
         DeepSeekClient deepSeekClient = new DeepSeekClient(
             config.getDeepSeekApiKey(), config.getDeepSeekModel(), config.getDeepSeekUrl(),
             config.getDeepSeekTemperature(), config.getDeepSeekMaxTokens(),
@@ -98,6 +109,9 @@ public class WeChatBot {
             .register(new WebSearchTool(
                 config.getBochaApiKey(), config.getBochaEndpoint(),
                 config.getBochaConnectTimeoutSeconds(), config.getBochaRequestTimeoutSeconds()));
+            .register(tianNewsTool)
+            .register(createWebPageExtractTool())
+            .register(new UrlSafetyChecker(deepSeekClient.mapper()));
         ChatService chatService = new DeepSeekChatService(
             deepSeekClient, toolRegistry, config.getSystemPrompt(), config.getDeepSeekMaxToolRounds());
 
@@ -119,7 +133,7 @@ public class WeChatBot {
         handlers.add(new ImageGenHandler(imageGenService));
         handlers.add(new DocumentMessageHandler(chatService, documentService));
         SpeechSynthesisService ttsService = config.isDashscopeConfigured() ? speechService : null;
-        handlers.add(new TextMessageHandler(chatService, ttsService, documentService));
+        handlers.add(new TextMessageHandler(chatService, ttsService, documentService, tianNewsTool));
 
         handlers.sort(Comparator.comparingInt(MessageHandler::priority));
 
@@ -213,6 +227,14 @@ public class WeChatBot {
     }
 
     // ========== 工具 ==========
+
+    private WebPageExtractTool createWebPageExtractTool() {
+        return new WebPageExtractTool(
+            config.getWebPageExtractConnectTimeoutSeconds(),
+            config.getWebPageExtractRequestTimeoutSeconds(),
+            config.getWebPageExtractMaxBodyChars()
+        );
+    }
 
     private void printBanner() {
         System.out.println();
