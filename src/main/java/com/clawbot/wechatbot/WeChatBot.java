@@ -26,6 +26,8 @@ import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
+import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
+import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 
 import java.util.ArrayList;
@@ -97,8 +99,9 @@ public class WeChatBot {
                 config.getJuheExchangeApiKey(), config.getJuheExchangeEndpoint(),
                 config.getJuheExchangeVersion(), config.getJuheExchangeConnectTimeoutSeconds(),
                 config.getJuheExchangeRequestTimeoutSeconds()))
-            .register(tianNewsTool)  // 可供 DeepSeek 主动调用
-            .register(createWebPageExtractTool());
+            .register(tianNewsTool)
+            .register(createWebPageExtractTool())
+            .register(new UrlSafetyChecker(deepSeekClient.mapper()));
         ChatService chatService = new DeepSeekChatService(
             deepSeekClient, toolRegistry, config.getSystemPrompt(), config.getDeepSeekMaxToolRounds());
 
