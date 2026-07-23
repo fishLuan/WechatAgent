@@ -127,6 +127,18 @@ public class BotConfig {
         return !getJuheExchangeApiKey().isBlank();
     }
 
+    public int getWebPageExtractConnectTimeoutSeconds() {
+        return getInt("webpage.extract.connect-timeout-seconds");
+    }
+
+    public int getWebPageExtractRequestTimeoutSeconds() {
+        return getInt("webpage.extract.request-timeout-seconds");
+    }
+
+    public int getWebPageExtractMaxBodyChars() {
+        return getInt("webpage.extract.max-body-chars");
+    }
+
     private String get(String key) {
         // JVM -D 参数优先级最高，便于部署时临时覆盖 application.properties。
         String systemValue = System.getProperty(key);
