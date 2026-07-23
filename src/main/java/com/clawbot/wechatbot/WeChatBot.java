@@ -50,7 +50,7 @@ public class WeChatBot {
         initialize();
     }
 
-    // ========== 闃舵涓€ ~ 闃舵涓夛細瑁呴厤 ==========
+    // ========== 阶段一 ~ 阶段三：装配 ==========
 
     private void initialize() {
         DocumentService.silencePdfLogs();
