@@ -139,6 +139,12 @@ public class BotConfig {
         return getInt("webpage.extract.max-body-chars");
     }
 
+    public String getTianapiApiKey() { return get("tianapi.api.key"); }
+
+    public boolean isTianapiConfigured() {
+        return !getTianapiApiKey().isBlank();
+    }
+
     private String get(String key) {
         // JVM -D 参数优先级最高，便于部署时临时覆盖 application.properties。
         String systemValue = System.getProperty(key);
