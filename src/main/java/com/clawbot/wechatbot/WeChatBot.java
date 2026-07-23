@@ -21,7 +21,10 @@ import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
 import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
 import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
-import com.clawbot.wechatbot.tools.searchWeatherTool.AmapWeatherTool;
+import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
+import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
+import com.clawbot.wechatbot.tools.FunctionToolRegistry;
+import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
 import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
@@ -72,7 +75,11 @@ public class WeChatBot {
             System.out.println("       请配置环境变量 AMAP_WEATHER_API_KEY 后重启");
             System.out.println();
         }
-
+        if (!config.isJuheExchangeConfigured()) {
+            System.out.println("[WARN] 聚合数据汇率 API Key 未配置，汇率 function-calling 将返回配置提示");
+            System.out.println("       请配置环境变量 JUHE_EXCHANGE_API_KEY 后重启");
+            System.out.println();
+        }
         DeepSeekClient deepSeekClient = new DeepSeekClient(
             config.getDeepSeekApiKey(), config.getDeepSeekModel(), config.getDeepSeekUrl(),
             config.getDeepSeekTemperature(), config.getDeepSeekMaxTokens(),
@@ -81,6 +88,11 @@ public class WeChatBot {
             .register(new AmapWeatherTool(
                 config.getAmapWeatherApiKey(), config.getAmapWeatherEndpoint(),
                 config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds()))
+            .register(new ExchangeRateTool(
+                config.getJuheExchangeApiKey(), config.getJuheExchangeEndpoint(),
+                config.getJuheExchangeVersion(), config.getJuheExchangeConnectTimeoutSeconds(),
+                config.getJuheExchangeRequestTimeoutSeconds()))
+            .register(createWebPageExtractTool())
             .register(new UrlSafetyChecker(deepSeekClient.mapper()));
         ChatService chatService = new DeepSeekChatService(
             deepSeekClient, toolRegistry, config.getSystemPrompt(), config.getDeepSeekMaxToolRounds());
@@ -122,23 +134,23 @@ public class WeChatBot {
             AtomicReference<ILinkClient> clientRef = new AtomicReference<>();
 
             ILinkClient client = ILinkClient.builder()
-                    .onLogin(new OnLoginListener() {
-                        @Override
-                        public void onLoginSuccess(LoginContext ctx) {
-                            System.out.println();
-                            System.out.println("[OK] 登录成功!");
-                            System.out.println("       Bot ID: " + ctx.getBotId());
-                            System.out.println("       User ID: " + ctx.getUserId());
-                            System.out.println("       现在可以在微信里给机器人发消息了");
-                            System.out.println();
-                        }
-                        @Override
-                        public void onLoginFailure(Throwable th) {
-                            System.err.println("[ERROR] 登录失败: " + th.getMessage());
-                        }
-                    })
-                    .onMessage(messages -> routeMessages(clientRef.get(), messages))
-                    .build();
+                .onLogin(new OnLoginListener() {
+                    @Override
+                    public void onLoginSuccess(LoginContext ctx) {
+                        System.out.println();
+                        System.out.println("[OK] 登录成功!");
+                        System.out.println("       Bot ID: " + ctx.getBotId());
+                        System.out.println("       User ID: " + ctx.getUserId());
+                        System.out.println("       现在可以在微信里给机器人发消息了");
+                        System.out.println();
+                    }
+                    @Override
+                    public void onLoginFailure(Throwable th) {
+                        System.err.println("[ERROR] 登录失败: " + th.getMessage());
+                    }
+                })
+                .onMessage(messages -> routeMessages(clientRef.get(), messages))
+                .build();
             clientRef.set(client);
 
             System.out.println("[2/3] Getting QR code...");
@@ -198,6 +210,14 @@ public class WeChatBot {
 
     // ========== 工具 ==========
 
+    private WebPageExtractTool createWebPageExtractTool() {
+        return new WebPageExtractTool(
+            config.getWebPageExtractConnectTimeoutSeconds(),
+            config.getWebPageExtractRequestTimeoutSeconds(),
+            config.getWebPageExtractMaxBodyChars()
+        );
+    }
+
     private void printBanner() {
         System.out.println();
         System.out.println("========================================");
@@ -206,4 +226,3 @@ public class WeChatBot {
         System.out.println();
     }
 }
-
