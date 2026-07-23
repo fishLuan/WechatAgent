@@ -117,12 +117,14 @@ public class BotConfig {
         return !getAmapWeatherApiKey().isBlank();
     }
 
-    public String getTianApiKey() {
-        return get("tianapi.api.key");
-    }
+    public String getJuheExchangeApiKey() { return get("juhe.exchange.api.key"); }
+    public String getJuheExchangeEndpoint() { return get("juhe.exchange.url"); }
+    public String getJuheExchangeVersion() { return get("juhe.exchange.version"); }
+    public int getJuheExchangeConnectTimeoutSeconds() { return getInt("juhe.exchange.connect-timeout-seconds"); }
+    public int getJuheExchangeRequestTimeoutSeconds() { return getInt("juhe.exchange.request-timeout-seconds"); }
 
-    public boolean isTianApiConfigured() {
-        return !getTianApiKey().isBlank();
+    public boolean isJuheExchangeConfigured() {
+        return !getJuheExchangeApiKey().isBlank();
     }
 
     private String get(String key) {
