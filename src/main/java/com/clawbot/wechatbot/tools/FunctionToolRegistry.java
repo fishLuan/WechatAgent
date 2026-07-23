@@ -13,15 +13,9 @@ import java.util.Objects;
 public class FunctionToolRegistry {
     private final Map<String, FunctionTool> tools = new LinkedHashMap<>();
     private final ObjectMapper mapper;
-    private final FunctionToolLogger logger;
 
     public FunctionToolRegistry(ObjectMapper mapper) {
-        this(mapper, FunctionToolLogger.CONSOLE);
-    }
-
-    public FunctionToolRegistry(ObjectMapper mapper, FunctionToolLogger logger) {
         this.mapper = mapper == null ? new ObjectMapper() : mapper;
-        this.logger = logger == null ? FunctionToolLogger.NOOP : logger;
     }
 
     public static Builder builder() {
@@ -44,11 +38,9 @@ public class FunctionToolRegistry {
         FunctionTool tool = tools.get(name);
         if (tool == null) return error("未知的工具：" + name);
         try {
-            logger.log("[TOOL_CALL] name=" + name + ", arguments=" + summarize(rawArguments, 500));
             JsonNode arguments = mapper.readTree(rawArguments == null ? "{}" : rawArguments);
             return execute(name, arguments);
         } catch (Exception e) {
-            logger.log("[TOOL_ERROR] name=" + name + ", error=" + e.getMessage());
             return error("工具执行失败：" + e.getMessage());
         }
     }
@@ -57,12 +49,8 @@ public class FunctionToolRegistry {
         FunctionTool tool = tools.get(name);
         if (tool == null) return error("未知的工具：" + name);
         try {
-            logger.log("[TOOL_CALL] name=" + name + ", arguments=" + summarize(arguments == null ? "{}" : arguments.toString(), 500));
-            String result = tool.execute(arguments == null ? mapper.createObjectNode() : arguments);
-            logger.log("[TOOL_RESULT] name=" + name + ", result=" + summarize(result, 500));
-            return result;
+            return tool.execute(arguments == null ? mapper.createObjectNode() : arguments);
         } catch (Exception e) {
-            logger.log("[TOOL_ERROR] name=" + name + ", error=" + e.getMessage());
             return error("工具执行失败：" + e.getMessage());
         }
     }
@@ -78,24 +66,12 @@ public class FunctionToolRegistry {
         }
     }
 
-    private String summarize(String text, int maxLength) {
-        if (text == null) return "{}";
-        String oneLine = text.replace("\r", "\\r").replace("\n", "\\n");
-        return oneLine.length() <= maxLength ? oneLine : oneLine.substring(0, maxLength) + "...";
-    }
-
     public static class Builder {
         private ObjectMapper mapper = new ObjectMapper();
-        private FunctionToolLogger logger = FunctionToolLogger.NOOP;
-        private final FunctionToolRegistry registry = new FunctionToolRegistry(mapper, logger);
+        private final FunctionToolRegistry registry = new FunctionToolRegistry(mapper);
 
         public Builder mapper(ObjectMapper mapper) {
             this.mapper = mapper == null ? new ObjectMapper() : mapper;
-            return this;
-        }
-
-        public Builder logger(FunctionToolLogger logger) {
-            this.logger = logger == null ? FunctionToolLogger.NOOP : logger;
             return this;
         }
 
@@ -105,7 +81,7 @@ public class FunctionToolRegistry {
         }
 
         public FunctionToolRegistry build() {
-            FunctionToolRegistry result = new FunctionToolRegistry(mapper, logger);
+            FunctionToolRegistry result = new FunctionToolRegistry(mapper);
             registry.tools.values().forEach(result::register);
             return result;
         }

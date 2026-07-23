@@ -21,7 +21,7 @@ import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
 import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
 import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
-import com.clawbot.wechatbot.tools.searchWeatherTool.AmapWeatherTool;
+import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
 import com.clawbot.wechatbot.util.QrCodeDisplay;

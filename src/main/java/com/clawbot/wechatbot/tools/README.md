@@ -9,7 +9,6 @@ ObjectMapper mapper = new ObjectMapper();
 
 FunctionToolRegistry registry = FunctionToolRegistry.builder()
     .mapper(mapper)
-    .logger(FunctionToolLogger.NOOP)
     .register(new WebPageExtractTool(10, 15, 6000))
     .register(new AmapWeatherTool(System.getenv("AMAP_WEATHER_API_KEY")))
     .build();
@@ -20,15 +19,13 @@ String toolResult = registry.execute("extract_web_page", "{\"url\":\"https://exa
 
 ## Custom dependencies
 
-外部项目如果已经有自己的 `ObjectMapper`、`HttpClient`、超时配置或日志系统，可以直接注入，避免工具类反向依赖本项目配置。
+外部项目如果已经有自己的 `ObjectMapper`、`HttpClient` 或超时配置，可以直接注入，避免工具类反向依赖本项目配置。
 
 ```java
 HttpClient httpClient = HttpClient.newBuilder()
     .connectTimeout(Duration.ofSeconds(5))
     .followRedirects(HttpClient.Redirect.NORMAL)
     .build();
-
-FunctionToolLogger logger = message -> yourLogger.info(message);
 
 WebPageExtractClient pageClient = new WebPageExtractClient(
     httpClient,
@@ -37,7 +34,7 @@ WebPageExtractClient pageClient = new WebPageExtractClient(
     "YourApp-WebPageTool/1.0"
 );
 
-FunctionTool pageTool = new WebPageExtractTool(pageClient, mapper, 8000, logger);
+FunctionTool pageTool = new WebPageExtractTool(pageClient, mapper, 8000);
 ```
 
 ## Contract
