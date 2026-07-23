@@ -108,7 +108,7 @@ public class WeChatBot {
                 config.getJuheExchangeRequestTimeoutSeconds()))
             .register(new WebSearchTool(
                 config.getBochaApiKey(), config.getBochaEndpoint(),
-                config.getBochaConnectTimeoutSeconds(), config.getBochaRequestTimeoutSeconds()));
+                config.getBochaConnectTimeoutSeconds(), config.getBochaRequestTimeoutSeconds()))
             .register(tianNewsTool)
             .register(createWebPageExtractTool())
             .register(new UrlSafetyChecker(deepSeekClient.mapper()));
