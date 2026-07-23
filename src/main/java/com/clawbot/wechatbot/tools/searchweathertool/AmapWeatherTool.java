@@ -1,4 +1,4 @@
-package com.clawbot.wechatbot.tools.weathertool;
+package com.clawbot.wechatbot.tools.searchweathertool;
 
 import com.clawbot.wechatbot.tools.FunctionTool;
 
