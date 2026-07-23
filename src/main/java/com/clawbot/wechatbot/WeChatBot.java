@@ -24,6 +24,8 @@ import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
 import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
+
+import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
 import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
@@ -81,6 +83,11 @@ public class WeChatBot {
             System.out.println("       请配置环境变量 JUHE_EXCHANGE_API_KEY 后重启");
             System.out.println();
         }
+        if (!config.isBochaConfigured()) {
+            System.out.println("[WARN] 博查AI搜索 API Key 未配置，联网搜索 function-calling 将自动降级到必应HTML搜索");
+            System.out.println("       （申请博查AI Key: https://open.bochaai.com");
+            System.out.println();
+        }
         if (!config.isTianapiConfigured()) {
             System.out.println("[WARN] 天行数据 API Key 未配置，新闻查询 function-calling 将返回配置提示");
             System.out.println("       请配置环境变量 TIANAPI_API_KEY 后重启");
@@ -99,6 +106,9 @@ public class WeChatBot {
                 config.getJuheExchangeApiKey(), config.getJuheExchangeEndpoint(),
                 config.getJuheExchangeVersion(), config.getJuheExchangeConnectTimeoutSeconds(),
                 config.getJuheExchangeRequestTimeoutSeconds()))
+            .register(new WebSearchTool(
+                config.getBochaApiKey(), config.getBochaEndpoint(),
+                config.getBochaConnectTimeoutSeconds(), config.getBochaRequestTimeoutSeconds()));
             .register(tianNewsTool)
             .register(createWebPageExtractTool())
             .register(new UrlSafetyChecker(deepSeekClient.mapper()));
