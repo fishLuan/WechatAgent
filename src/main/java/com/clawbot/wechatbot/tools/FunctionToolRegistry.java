@@ -37,17 +37,12 @@ public class FunctionToolRegistry {
     }
 
     public String execute(String name, String rawArguments) {
-        System.out.println("[TOOL] 调用工具: " + name);
         FunctionTool tool = tools.get(name);
-        if (tool == null) {
-            System.out.println("[TOOL] 失败: 未知工具 " + name);
-            return error("未知工具：" + name);
-        }
+        if (tool == null) return error("未知工具：" + name);
         try {
             JsonNode arguments = mapper.readTree(rawArguments == null ? "{}" : rawArguments);
             return tool.execute(arguments);
         } catch (Exception e) {
-            System.out.println("[TOOL] 失败: " + name + " → " + e.getMessage());
             return error("工具执行失败：" + e.getMessage());
         }
     }

@@ -76,6 +76,13 @@ public class BotConfig {
         return getInt("dashscope.request-timeout-seconds");
     }
 
+    // 博查AI Web 搜索
+    public String getBochaApiKey() { return get("bocha.api.key"); }
+    public String getBochaEndpoint() { return get("bocha.web-search.url"); }
+    public int getBochaConnectTimeoutSeconds() { return getInt("bocha.connect-timeout-seconds"); }
+    public int getBochaRequestTimeoutSeconds() { return getInt("bocha.request-timeout-seconds"); }
+    public boolean isBochaConfigured() { return !getBochaApiKey().isBlank(); }
+
     public String getVisionModel() { return get("dashscope.vision.model"); }
     public String getVisionDefaultQuestion() { return get("dashscope.vision.default-question"); }
     public String getImageModel() { return get("dashscope.image.model"); }
@@ -96,13 +103,6 @@ public class BotConfig {
     public int getAmapConnectTimeoutSeconds() { return getInt("amap.weather.connect-timeout-seconds"); }
     public int getAmapRequestTimeoutSeconds() { return getInt("amap.weather.request-timeout-seconds"); }
 
-    // 博查AI Web 搜索
-    public String getBochaApiKey() { return get("bocha.api.key"); }
-    public String getBochaEndpoint() { return get("bocha.web-search.url"); }
-    public int getBochaConnectTimeoutSeconds() { return getInt("bocha.connect-timeout-seconds"); }
-    public int getBochaRequestTimeoutSeconds() { return getInt("bocha.request-timeout-seconds"); }
-    public boolean isBochaConfigured() { return !getBochaApiKey().isBlank(); }
-
     public int getLoginTimeoutMs() {
         String value = get("wechat.login.timeout-ms");
         try {
@@ -122,6 +122,16 @@ public class BotConfig {
 
     public boolean isAmapWeatherConfigured() {
         return !getAmapWeatherApiKey().isBlank();
+    }
+
+    public String getJuheExchangeApiKey() { return get("juhe.exchange.api.key"); }
+    public String getJuheExchangeEndpoint() { return get("juhe.exchange.url"); }
+    public String getJuheExchangeVersion() { return get("juhe.exchange.version"); }
+    public int getJuheExchangeConnectTimeoutSeconds() { return getInt("juhe.exchange.connect-timeout-seconds"); }
+    public int getJuheExchangeRequestTimeoutSeconds() { return getInt("juhe.exchange.request-timeout-seconds"); }
+
+    public boolean isJuheExchangeConfigured() {
+        return !getJuheExchangeApiKey().isBlank();
     }
 
     private String get(String key) {

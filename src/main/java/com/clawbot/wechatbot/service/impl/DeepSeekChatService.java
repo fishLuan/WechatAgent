@@ -8,15 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-/**
- * 负责对话和 function-calling 流程（通用调度器，不与任何具体工具耦合）。
- *
- * 工具的增删/配置/提示词全部在外部完成：
- *   - application.properties 的 systemPrompt
- *   - WeChatBot.initialize() 里的 .register(...)
- *
- * 本类只负责：按 OpenAI/DeepSeek 协议，正确组装 messages、循环执行 tool_calls 直到模型输出文本。
- */
+/** 负责对话和 function-calling 流程，不再承担 HTTP 或具体工具执行细节。 */
 public class DeepSeekChatService implements ChatService {
     private final DeepSeekClient client;
     private final FunctionToolRegistry toolRegistry;
@@ -36,7 +28,7 @@ public class DeepSeekChatService implements ChatService {
     @Override
     public String chat(String userText, String history) throws Exception {
         ArrayNode messages = mapper.createArrayNode();
-        messages.add(message("system", systemPrompt == null ? "" : systemPrompt));
+        messages.add(message("system", systemPrompt));
         appendHistory(messages, history);
         messages.add(message("user", userText));
 
