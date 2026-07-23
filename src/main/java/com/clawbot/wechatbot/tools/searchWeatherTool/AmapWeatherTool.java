@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.tools.searchWeatherTool;
 
 import com.clawbot.wechatbot.tools.FunctionTool;
+import com.clawbot.wechatbot.tools.FunctionToolLogger;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -22,25 +23,33 @@ public class AmapWeatherTool implements FunctionTool {
     private final HttpClient http;
     private final ObjectMapper mapper;
     private final Duration requestTimeout;
+    private final FunctionToolLogger logger;
 
     public AmapWeatherTool(String apiKey) {
         this(apiKey, DEFAULT_ENDPOINT, HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10)).build(), new ObjectMapper(), Duration.ofSeconds(15));
+            .connectTimeout(Duration.ofSeconds(10)).build(), new ObjectMapper(), Duration.ofSeconds(15),
+            FunctionToolLogger.NOOP);
     }
 
     public AmapWeatherTool(String apiKey, String endpoint, int connectTimeoutSeconds, int requestTimeoutSeconds) {
         this(apiKey, endpoint, HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds)).build(),
-            new ObjectMapper(), Duration.ofSeconds(requestTimeoutSeconds));
+            new ObjectMapper(), Duration.ofSeconds(requestTimeoutSeconds), FunctionToolLogger.NOOP);
     }
 
-    AmapWeatherTool(String apiKey, String endpoint, HttpClient http, ObjectMapper mapper,
-                    Duration requestTimeout) {
+    public AmapWeatherTool(String apiKey, String endpoint, HttpClient http, ObjectMapper mapper,
+                           Duration requestTimeout) {
+        this(apiKey, endpoint, http, mapper, requestTimeout, FunctionToolLogger.NOOP);
+    }
+
+    public AmapWeatherTool(String apiKey, String endpoint, HttpClient http, ObjectMapper mapper,
+                           Duration requestTimeout, FunctionToolLogger logger) {
         this.apiKey = apiKey == null ? "" : apiKey.trim();
-        this.endpoint = endpoint;
-        this.http = http;
-        this.mapper = mapper;
-        this.requestTimeout = requestTimeout;
+        this.endpoint = endpoint == null || endpoint.isBlank() ? DEFAULT_ENDPOINT : endpoint;
+        this.http = http == null ? HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build() : http;
+        this.mapper = mapper == null ? new ObjectMapper() : mapper;
+        this.requestTimeout = requestTimeout == null ? Duration.ofSeconds(15) : requestTimeout;
+        this.logger = logger == null ? FunctionToolLogger.NOOP : logger;
     }
 
     @Override
@@ -80,6 +89,7 @@ public class AmapWeatherTool implements FunctionTool {
         String extensions = arguments == null ? "base" : arguments.path("extensions").asText("base");
         if (city.isEmpty()) return error("city 参数不能为空");
         if (!"base".equals(extensions) && !"all".equals(extensions)) extensions = "base";
+        logger.log("[AMAP_WEATHER_TOOL] city=" + city + ", extensions=" + extensions);
 
         String url = endpoint + "?key=" + encode(apiKey)
             + "&city=" + encode(city) + "&extensions=" + extensions + "&output=JSON";

@@ -21,14 +21,29 @@ public class WebPageExtractClient {
     private final HttpClient http;
     private final Duration requestTimeout;
     private final int defaultMaxBodyChars;
+    private final String userAgent;
 
     public WebPageExtractClient(int connectTimeoutSeconds, int requestTimeoutSeconds, int defaultMaxBodyChars) {
-        this.http = HttpClient.newBuilder()
+        this(HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds))
             .followRedirects(HttpClient.Redirect.NORMAL)
-            .build();
-        this.requestTimeout = Duration.ofSeconds(requestTimeoutSeconds);
+            .build(), Duration.ofSeconds(requestTimeoutSeconds), defaultMaxBodyChars,
+            "ClawBot-WebPageExtractTool/1.0");
+    }
+
+    public WebPageExtractClient(HttpClient http, Duration requestTimeout, int defaultMaxBodyChars) {
+        this(http, requestTimeout, defaultMaxBodyChars, "ClawBot-WebPageExtractTool/1.0");
+    }
+
+    public WebPageExtractClient(HttpClient http, Duration requestTimeout, int defaultMaxBodyChars,
+                                String userAgent) {
+        this.http = http == null ? HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build() : http;
+        this.requestTimeout = requestTimeout == null ? Duration.ofSeconds(15) : requestTimeout;
         this.defaultMaxBodyChars = defaultMaxBodyChars;
+        this.userAgent = userAgent == null || userAgent.isBlank()
+            ? "ClawBot-WebPageExtractTool/1.0" : userAgent;
     }
 
     public WebPageExtractResult extract(WebPageExtractRequest request) throws Exception {
@@ -42,7 +57,7 @@ public class WebPageExtractClient {
 
         HttpRequest httpRequest = HttpRequest.newBuilder(uri)
             .timeout(requestTimeout)
-            .header("User-Agent", "ClawBot-WebPageExtractTool/1.0")
+            .header("User-Agent", userAgent)
             .header("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5")
             .GET()
             .build();

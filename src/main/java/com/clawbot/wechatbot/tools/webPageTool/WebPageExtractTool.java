@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.tools.webPageTool;
 
 import com.clawbot.wechatbot.tools.FunctionTool;
+import com.clawbot.wechatbot.tools.FunctionToolLogger;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -8,12 +9,27 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 /** OpenAI Function Calling 范式的网页正文抓取工具。 */
 public class WebPageExtractTool implements FunctionTool {
     private final WebPageExtractClient client;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
     private final int defaultMaxBodyChars;
+    private final FunctionToolLogger logger;
 
     public WebPageExtractTool(int connectTimeoutSeconds, int requestTimeoutSeconds, int defaultMaxBodyChars) {
-        this.client = new WebPageExtractClient(connectTimeoutSeconds, requestTimeoutSeconds, defaultMaxBodyChars);
+        this(new WebPageExtractClient(connectTimeoutSeconds, requestTimeoutSeconds, defaultMaxBodyChars),
+            new ObjectMapper(), defaultMaxBodyChars, FunctionToolLogger.NOOP);
+    }
+
+    public WebPageExtractTool(WebPageExtractClient client, ObjectMapper mapper, int defaultMaxBodyChars) {
+        this(client, mapper, defaultMaxBodyChars, FunctionToolLogger.NOOP);
+    }
+
+    public WebPageExtractTool(WebPageExtractClient client, ObjectMapper mapper, int defaultMaxBodyChars,
+                              FunctionToolLogger logger) {
+        this.client = client == null
+            ? new WebPageExtractClient(10, 15, defaultMaxBodyChars)
+            : client;
+        this.mapper = mapper == null ? new ObjectMapper() : mapper;
         this.defaultMaxBodyChars = defaultMaxBodyChars;
+        this.logger = logger == null ? FunctionToolLogger.NOOP : logger;
     }
 
     @Override
@@ -50,7 +66,7 @@ public class WebPageExtractTool implements FunctionTool {
     public String execute(JsonNode arguments) throws Exception {
         String url = arguments == null ? "" : arguments.path("url").asText("");
         int maxBodyChars = arguments == null ? defaultMaxBodyChars : arguments.path("max_body_chars").asInt(defaultMaxBodyChars);
-        System.out.println("[WEBPAGE_TOOL] executing url=" + url + ", maxBodyChars=" + maxBodyChars);
+        logger.log("[WEBPAGE_TOOL] executing url=" + url + ", maxBodyChars=" + maxBodyChars);
 
         WebPageExtractResult result = client.extract(new WebPageExtractRequest(url, maxBodyChars));
         ObjectNode output = mapper.createObjectNode();

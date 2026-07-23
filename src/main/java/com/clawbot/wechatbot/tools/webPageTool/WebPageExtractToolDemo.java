@@ -1,6 +1,5 @@
 package com.clawbot.wechatbot.tools.webPageTool;
 
-import com.clawbot.wechatbot.config.BotConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -8,16 +7,13 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 public class WebPageExtractToolDemo {
     public static void main(String[] args) throws Exception {
         String url = args.length > 0 ? args[0] : "https://example.com";
-        BotConfig config = new BotConfig();
-        WebPageExtractTool tool = new WebPageExtractTool(
-            config.getWebPageExtractConnectTimeoutSeconds(),
-            config.getWebPageExtractRequestTimeoutSeconds(),
-            config.getWebPageExtractMaxBodyChars());
+        int maxBodyChars = args.length > 1 ? Integer.parseInt(args[1]) : 6000;
+        WebPageExtractTool tool = new WebPageExtractTool(10, 15, maxBodyChars);
 
         ObjectMapper mapper = new ObjectMapper();
         ObjectNode argumentsNode = mapper.createObjectNode();
         argumentsNode.put("url", url);
-        argumentsNode.put("max_body_chars", config.getWebPageExtractMaxBodyChars());
+        argumentsNode.put("max_body_chars", maxBodyChars);
         System.out.println(tool.execute(argumentsNode));
     }
 }
