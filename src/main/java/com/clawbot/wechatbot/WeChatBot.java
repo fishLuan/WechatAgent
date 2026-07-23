@@ -12,9 +12,18 @@ import com.clawbot.wechatbot.handler.ImageMessageHandler;
 import com.clawbot.wechatbot.handler.TextMessageHandler;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
+import com.clawbot.wechatbot.service.ImageGenService;
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
-import com.clawbot.wechatbot.service.impl.AliyunDashcodeService;
+import com.clawbot.wechatbot.service.VisionService;
+import com.clawbot.wechatbot.service.client.DashScopeClient;
+import com.clawbot.wechatbot.service.client.DeepSeekClient;
+import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
+import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
+import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
+import com.clawbot.wechatbot.tools.AmapWeatherTool;
+import com.clawbot.wechatbot.tools.FunctionToolRegistry;
+import com.clawbot.wechatbot.tools.WebSearchTool;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 
 import java.util.ArrayList;
@@ -58,16 +67,53 @@ public class WeChatBot {
             System.out.println("       请配置环境变量 DASHSCOPE_API_KEY 后重启");
             System.out.println();
         }
+        if (!config.isAmapWeatherConfigured()) {
+            System.out.println("[WARN] 高德天气 API Key 未配置，天气 function-calling 将返回配置提示");
+            System.out.println("       请配置环境变量 AMAP_WEATHER_API_KEY 后重启");
+            System.out.println();
+        }
+        if (!config.isBochaConfigured()) {
+            System.out.println("[WARN] 博查AI搜索 API Key 未配置，联网搜索 function-calling 将返回配置提示");
+            System.out.println("       请配置环境变量 BOCHA_API_KEY 后重启");
+            System.out.println("       注册：https://open.bochaai.com");
+            System.out.println();
+        }
 
-        ChatService chatService = new DeepSeekChatService(config);
-        AliyunDashcodeService aliyunService = new AliyunDashcodeService(config.getDashscopeApiKey());
+        DeepSeekClient deepSeekClient = new DeepSeekClient(
+            config.getDeepSeekApiKey(), config.getDeepSeekModel(), config.getDeepSeekUrl(),
+            config.getDeepSeekTemperature(), config.getDeepSeekMaxTokens(),
+            config.getDeepSeekConnectTimeoutSeconds(), config.getDeepSeekRequestTimeoutSeconds());
+        FunctionToolRegistry toolRegistry = new FunctionToolRegistry(deepSeekClient.mapper())
+            .register(new AmapWeatherTool(
+                config.getAmapWeatherApiKey(), config.getAmapWeatherEndpoint(),
+                config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds()))
+            .register(new WebSearchTool(
+                config.getBochaApiKey(), config.getBochaEndpoint(),
+                config.getBochaConnectTimeoutSeconds(), config.getBochaRequestTimeoutSeconds()));
+        System.out.println("[INFO] 已注册 " + toolRegistry.size() + " 个 function-calling 工具: "
+            + toolRegistry.registeredNames());
+        System.out.println();
+        ChatService chatService = new DeepSeekChatService(
+            deepSeekClient, toolRegistry, config.getSystemPrompt(), config.getDeepSeekMaxToolRounds());
+
+        DashScopeClient dashScopeClient = new DashScopeClient(
+            config.getDashscopeApiKey(), config.getDashscopeEndpoint(),
+            config.getDashscopeConnectTimeoutSeconds(), config.getDashscopeRequestTimeoutSeconds());
+        VisionService visionService = new DashScopeVisionService(
+            dashScopeClient, config.getVisionModel(), config.getVisionDefaultQuestion());
+        ImageGenService imageGenService = new DashScopeImageGenService(
+            dashScopeClient, config.getImageModel(), config.getImageDefaultSize(),
+            config.getImageDefaultCount(), config.isImagePromptExtend(), config.isImageWatermark());
+        SpeechSynthesisService speechService = new DashScopeSpeechSynthesisService(
+            dashScopeClient, config.getTtsModel(), config.getTtsDefaultVoice(),
+            config.getTtsFormat(), config.getTtsMaxTextLength());
         DocumentService documentService = new DocumentService();
 
         handlers = new ArrayList<>();
-        handlers.add(new ImageMessageHandler(aliyunService));
-        handlers.add(new ImageGenHandler(aliyunService));
+        handlers.add(new ImageMessageHandler(visionService));
+        handlers.add(new ImageGenHandler(imageGenService));
         handlers.add(new DocumentMessageHandler(chatService, documentService));
-        SpeechSynthesisService ttsService = config.isDashscopeConfigured() ? aliyunService : null;
+        SpeechSynthesisService ttsService = config.isDashscopeConfigured() ? speechService : null;
         handlers.add(new TextMessageHandler(chatService, ttsService, documentService));
 
         handlers.sort(Comparator.comparingInt(MessageHandler::priority));
