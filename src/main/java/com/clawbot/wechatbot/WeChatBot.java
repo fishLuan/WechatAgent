@@ -23,7 +23,7 @@ import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
 import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
-import com.clawbot.wechatbot.tools.WebSearchTool;
+import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 
 import java.util.ArrayList;
@@ -89,9 +89,6 @@ public class WeChatBot {
             .register(new WebSearchTool(
                 config.getBochaApiKey(), config.getBochaEndpoint(),
                 config.getBochaConnectTimeoutSeconds(), config.getBochaRequestTimeoutSeconds()));
-        System.out.println("[INFO] 已注册 " + toolRegistry.size() + " 个 function-calling 工具: "
-            + toolRegistry.registeredNames());
-        System.out.println();
         ChatService chatService = new DeepSeekChatService(
             deepSeekClient, toolRegistry, config.getSystemPrompt(), config.getDeepSeekMaxToolRounds());
 
