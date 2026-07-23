@@ -34,7 +34,6 @@ public class WebSearchTool implements FunctionTool {
 
     private static final String DEFAULT_ENDPOINT = "https://api.bochaai.com/v1/web-search";
     private static final String BING_URL = "https://cn.bing.com/search";
-    // 模拟真实浏览器，避免 Bing 拒绝请求
     private static final String BROWSER_UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         + "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
@@ -106,7 +105,6 @@ public class WebSearchTool implements FunctionTool {
 
     @Override
     public String execute(JsonNode arguments) throws Exception {
-        System.out.println("[SEARCH] 开始联网搜索...");
         String query = arguments == null ? "" : arguments.path("query").asText("").trim();
         int count = arguments == null ? DEFAULT_COUNT
             : arguments.path("count").asInt(DEFAULT_COUNT);
@@ -116,27 +114,17 @@ public class WebSearchTool implements FunctionTool {
         if (query.isEmpty()) {
             return error("搜索关键词 query 不能为空");
         }
-        System.out.println("[SEARCH] 关键词: \"" + query + "\"，条数: " + count);
 
-        // ============ 策略 1：博查AI API（需要 API Key） ============
         if (!apiKey.isEmpty()) {
-            System.out.println("[SEARCH] 尝试博查AI API...");
             try {
                 String result = searchByBochaApi(query, count);
                 if (result != null) return result;
-            } catch (Exception e) {
-                System.out.println("[SEARCH] 博查AI异常: " + e.getMessage() + "，尝试降级到必应搜索");
+            } catch (Exception ignored) {
             }
-        } else {
-            System.out.println("[SEARCH] 未配置 BOCHA_API_KEY，跳过博查AI");
         }
 
-        // ============ 策略 2：降级到必应国内版 HTML 搜索 ============
-        System.out.println("[SEARCH] 降级到必应国内版 HTML 搜索");
         return searchByBing(query, count);
     }
-
-    // ==================== 博查AI API ====================
 
     private String searchByBochaApi(String query, int count) throws Exception {
         ObjectNode body = mapper.createObjectNode();
@@ -154,32 +142,15 @@ public class WebSearchTool implements FunctionTool {
                 mapper.writeValueAsString(body), StandardCharsets.UTF_8))
             .build();
 
-        long t0 = System.currentTimeMillis();
         HttpResponse<String> response = http.send(request,
             HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        long elapsed = System.currentTimeMillis() - t0;
-        System.out.println("[SEARCH] 博查AI: HTTP " + response.statusCode() + "，耗时 " + elapsed + "ms");
 
-        if (response.statusCode() == 403) {
-            System.out.println("[SEARCH] 博查AI 无额度（403），降级到必应搜索");
-            return null; // 触发降级
-        }
         if (response.statusCode() != 200) {
-            System.out.println("[SEARCH] 博查AI 失败（HTTP " + response.statusCode() + "），降级到必应搜索");
-            return null; // 触发降级
+            return null;
         }
 
         JsonNode root = mapper.readTree(response.body());
-        // 调试：打印博查AI返回的JSON结构，看看字段名对不对
-        String rawJson = mapper.writeValueAsString(root);
-        if (rawJson.length() > 500) {
-            System.out.println("[SEARCH] 博查AI JSON 前500字符: " + rawJson.substring(0, 500));
-        } else {
-            System.out.println("[SEARCH] 博查AI JSON: " + rawJson);
-        }
-
         JsonNode webPages = root.path("webPages").path("value");
-        // 兜底：有些API可能用 webPages / data / list / value 等不同字段名
         if (!webPages.isArray() || webPages.size() == 0) {
             for (String[] path : new String[][] {
                 {"webPages", "value"},
@@ -193,7 +164,6 @@ public class WebSearchTool implements FunctionTool {
                 for (String p : path) tmp = tmp.path(p);
                 if (tmp.isArray() && tmp.size() > 0) {
                     webPages = tmp;
-                    System.out.println("[SEARCH] 博查AI 在路径 " + String.join(".", path) + " 找到结果数组");
                     break;
                 }
             }
@@ -203,7 +173,6 @@ public class WebSearchTool implements FunctionTool {
         if (webPages.isArray()) {
             for (JsonNode item : webPages) {
                 if (items.size() >= count) break;
-                // 同时尝试多个可能的字段名：name/title 和 snippet/description/summary 和 url/link
                 String title = firstNonEmpty(item, "name", "title");
                 String snippet = firstNonEmpty(item, "snippet", "description", "summary", "text");
                 String link = firstNonEmpty(item, "url", "link", "href");
@@ -212,15 +181,11 @@ public class WebSearchTool implements FunctionTool {
             }
         }
         if (items.isEmpty()) {
-            System.out.println("[SEARCH] 博查AI 解析到 0 条有效结果，降级到必应搜索");
             return null;
         }
 
-        System.out.println("[SEARCH] ✓ 博查AI 成功，返回 " + items.size() + " 条结果");
         return buildSuccessResponse(query, items);
     }
-
-    // ==================== 必应国内版 HTML 搜索 ====================
 
     private String searchByBing(String query, int count) throws Exception {
         String url = BING_URL + "?q=" + URLEncoder.encode(query, StandardCharsets.UTF_8);
@@ -233,13 +198,8 @@ public class WebSearchTool implements FunctionTool {
             .GET()
             .build();
 
-        System.out.println("[SEARCH] 请求必应: " + url.substring(0, Math.min(url.length(), 80)) + "...");
-        long t0 = System.currentTimeMillis();
         HttpResponse<String> response = http.send(request,
             HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        long elapsed = System.currentTimeMillis() - t0;
-        System.out.println("[SEARCH] 必应响应: HTTP " + response.statusCode() + "，耗时 " + elapsed + "ms，HTML "
-            + response.body().length() + " 字符");
 
         if (response.statusCode() != 200) {
             return error("必应搜索返回 HTTP " + response.statusCode());
@@ -250,21 +210,15 @@ public class WebSearchTool implements FunctionTool {
             return error("必应搜索未能解析到有效结果，请尝试其他关键词");
         }
 
-        System.out.println("[SEARCH] ✓ 必应搜索成功，解析到 " + items.size() + " 条结果");
         return buildSuccessResponse(query, items);
     }
 
-    // ============ Bing HTML 解析：定位 <li class="b_algo"> 块，提取标题/链接/摘要 ============
-
     private static List<SearchResult> parseBingHtml(String html, int count) {
         List<SearchResult> results = new ArrayList<>();
-
-        // 1. 切出所有 <li class="b_algo"> 块（必应每条搜索结果都包在这个标签里）
         Matcher blockMatcher = BING_ALGO_BLOCK.matcher(html);
         while (blockMatcher.find() && results.size() < count) {
             String block = blockMatcher.group(1);
 
-            // 2. 在块内找 <h2><a href="URL">title</a></h2>
             String title = "";
             String link = "";
             Matcher titleMatcher = BING_TITLE.matcher(block);
@@ -273,7 +227,6 @@ public class WebSearchTool implements FunctionTool {
                 title = stripHtmlTags(titleMatcher.group(2)).trim();
             }
 
-            // 3. 在块内找摘要（class 包含 b_snippet / snippet / b_caption 之一）
             String snippet = "";
             Matcher snippetMatcher = BING_SNIPPET.matcher(block);
             if (snippetMatcher.find()) {
@@ -289,16 +242,12 @@ public class WebSearchTool implements FunctionTool {
 
     private static String stripHtmlTags(String s) {
         if (s == null) return "";
-        // 去掉所有 HTML 标签，解码常见的 HTML 实体
         String t = s.replaceAll("<[^>]+>", "");
         t = t.replace("&nbsp;", " ").replace("&amp;", "&")
             .replace("&lt;", "<").replace("&gt;", ">")
             .replace("&quot;", "\"").replace("&#39;", "'");
-        // 压缩多余空白
         return t.replaceAll("\\s+", " ").trim();
     }
-
-    // ==================== 工具方法 ====================
 
     private String buildSuccessResponse(String query, List<SearchResult> items) throws Exception {
         ObjectNode result = mapper.createObjectNode();
@@ -316,14 +265,12 @@ public class WebSearchTool implements FunctionTool {
     }
 
     private String error(String message) throws Exception {
-        System.out.println("[SEARCH] ✗ " + message);
         ObjectNode result = mapper.createObjectNode();
         result.put("success", false);
         result.put("error", message);
         return mapper.writeValueAsString(result);
     }
 
-    // 从一个 JSON 对象中按顺序尝试多个字段名，返回第一个非空文本
     private static String firstNonEmpty(JsonNode node, String... fieldNames) {
         for (String name : fieldNames) {
             String v = node.path(name).asText("");

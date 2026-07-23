@@ -52,9 +52,6 @@ public class DeepSeekClient {
         if (tools != null && !tools.isEmpty()) {
             body.set("tools", tools);
             body.put("tool_choice", "auto");
-            System.out.println("[API] 本次请求携带 " + tools.size() + " 个工具定义");
-        } else {
-            System.out.println("[API] 本次请求没有携带工具定义");
         }
 
         HttpRequest request = HttpRequest.newBuilder().uri(URI.create(apiUrl))

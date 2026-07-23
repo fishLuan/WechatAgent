@@ -32,7 +32,6 @@ public class DeepSeekChatService implements ChatService {
     @Override
     public String chat(String userText, String history) throws Exception {
         ArrayNode messages = mapper.createArrayNode();
-        // 在系统 prompt 最前面注入真实当前日期/星期/时间，彻底解决模型的"日期幻觉"
         LocalDate today = LocalDate.now();
         int year = today.getYear();
         int month = today.getMonthValue();
@@ -45,12 +44,8 @@ public class DeepSeekChatService implements ChatService {
         String fullSystem = (systemPrompt == null ? "" : systemPrompt) + "\n" + dateInject;
         messages.add(message("system", fullSystem));
         appendHistory(messages, history);
-        // 在用户消息前加一句强提示，鼓励模型调用搜索工具
-        String hint = "[内部提示：当用户询问实时新闻、汇率、或你不确定的事实时，请调用 web_search 搜索工具。不要编造信息。]";
+        String hint = "[内部提示：当用户询问实时新闻、汇率、或你不确定的事实时，请调用合适的工具。不要编造信息。]";
         messages.add(message("user", hint + "\n" + userText));
-        System.out.println("[CHAT] 注入日期: " + year + "年" + month + "月" + day + "日 " + weekday);
-        System.out.println("[CHAT] 用户输入: \"" + userText + "\"");
-        System.out.println("[CHAT] 系统 prompt: " + (fullSystem.length() > 100 ? fullSystem.substring(0, 100) + "..." : fullSystem));
 
         for (int round = 0; round <= maxToolRounds; round++) {
             JsonNode response = client.chat(messages, toolRegistry.definitions());
@@ -61,7 +56,6 @@ public class DeepSeekChatService implements ChatService {
             if (!toolCalls.isArray() || toolCalls.isEmpty()) {
                 String content = assistant.path("content").asText("").trim();
                 if (content.isEmpty()) throw new Exception("模型未返回文本内容");
-                System.out.println("[CHAT] 模型直接回答（未调用工具）");
                 return content;
             }
             if (round == maxToolRounds) throw new Exception("工具调用次数超过限制");

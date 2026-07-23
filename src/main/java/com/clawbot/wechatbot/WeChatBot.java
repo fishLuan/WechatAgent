@@ -73,9 +73,8 @@ public class WeChatBot {
             System.out.println();
         }
         if (!config.isBochaConfigured()) {
-            System.out.println("[WARN] 博查AI搜索 API Key 未配置，联网搜索 function-calling 将返回配置提示");
-            System.out.println("       请配置环境变量 BOCHA_API_KEY 后重启");
-            System.out.println("       注册：https://open.bochaai.com");
+            System.out.println("[WARN] 博查AI搜索 API Key 未配置，联网搜索 function-calling 将自动降级到必应HTML搜索");
+            System.out.println("       （申请博查AI Key: https://open.bochaai.com");
             System.out.println();
         }
 
