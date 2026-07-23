@@ -24,6 +24,7 @@ import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
 import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
+import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 
 import java.util.ArrayList;
@@ -88,7 +89,8 @@ public class WeChatBot {
             .register(new ExchangeRateTool(
                 config.getJuheExchangeApiKey(), config.getJuheExchangeEndpoint(),
                 config.getJuheExchangeVersion(), config.getJuheExchangeConnectTimeoutSeconds(),
-                config.getJuheExchangeRequestTimeoutSeconds()));
+                config.getJuheExchangeRequestTimeoutSeconds()))
+            .register(createWebPageExtractTool());
         ChatService chatService = new DeepSeekChatService(
             deepSeekClient, toolRegistry, config.getSystemPrompt(), config.getDeepSeekMaxToolRounds());
 
@@ -204,6 +206,14 @@ public class WeChatBot {
     }
 
     // ========== 工具 ==========
+
+    private WebPageExtractTool createWebPageExtractTool() {
+        return new WebPageExtractTool(
+            config.getWebPageExtractConnectTimeoutSeconds(),
+            config.getWebPageExtractRequestTimeoutSeconds(),
+            config.getWebPageExtractMaxBodyChars()
+        );
+    }
 
     private void printBanner() {
         System.out.println();
