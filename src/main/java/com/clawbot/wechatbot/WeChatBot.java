@@ -1,157 +1,58 @@
 package com.clawbot.wechatbot;
 
+import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.config.BotConfig;
+import com.clawbot.wechatbot.util.QrCodeDisplay;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.listener.OnLoginListener;
 import com.github.wechat.ilink.sdk.core.login.LoginContext;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
-import com.clawbot.wechatbot.base.MessageHandler;
-import com.clawbot.wechatbot.config.BotConfig;
-import com.clawbot.wechatbot.handler.DocumentMessageHandler;
-import com.clawbot.wechatbot.handler.ImageGenHandler;
-import com.clawbot.wechatbot.handler.ImageMessageHandler;
-import com.clawbot.wechatbot.handler.TextMessageHandler;
-import com.clawbot.wechatbot.service.ChatService;
-import com.clawbot.wechatbot.service.DocumentService;
-import com.clawbot.wechatbot.service.ImageGenService;
-import com.clawbot.wechatbot.service.SpeechSynthesisService;
-import com.clawbot.wechatbot.service.VisionService;
-import com.clawbot.wechatbot.service.client.DashScopeClient;
-import com.clawbot.wechatbot.service.client.DeepSeekClient;
-import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
-import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
-import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
-import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
-import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
-import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
-import com.clawbot.wechatbot.tools.FunctionToolRegistry;
-
-import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
-import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
-import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
-import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
-import com.clawbot.wechatbot.tools.FunctionToolRegistry;
-import com.clawbot.wechatbot.util.QrCodeDisplay;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.SmartLifecycle;
+import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * 机器人核心 —— 负责装配（配置/服务/处理器）和运行（登录+轮询）
+ * 微信机器人运行时。
  *
- * 设计：
- *   - 构造器 initialize()：加载配置、初始化服务、注册 Handler
- *   - start()：构建客户端、扫码登录、进入轮询循环
- *   - routeMessages()：消息分发（按 priority 依次匹配）
- *
- * 启动入口在 WeChatBotApplication，只做 new WeChatBot().start();
+ * 所有依赖由 Spring 构造器注入；SmartLifecycle 负责随应用上下文启动和优雅关闭。
  */
-public class WeChatBot {
+@Component
+@ConditionalOnProperty(name = "wechat.bot.enabled", havingValue = "true", matchIfMissing = true)
+public class WeChatBot implements SmartLifecycle {
+    private final BotConfig config;
+    private final List<MessageHandler> handlers;
 
-    private BotConfig config;
-    private List<MessageHandler> handlers;
+    private volatile boolean running;
+    private volatile ILinkClient client;
+    private Thread pollingThread;
 
-    public WeChatBot() {
-        initialize();
+    public WeChatBot(BotConfig config, List<MessageHandler> handlers) {
+        this.config = config;
+        this.handlers = new ArrayList<>(handlers);
+        this.handlers.sort(Comparator.comparingInt(MessageHandler::priority));
     }
 
-    // ========== 阶段一 ~ 阶段三：装配 ==========
-
-    private void initialize() {
-        DocumentService.silencePdfLogs();
+    @Override
+    public synchronized void start() {
+        if (running) return;
+        running = true;
         printBanner();
+        printConfigurationWarnings();
+        printRegisteredHandlers();
 
-        config = new BotConfig();
-        if (!config.isDeepSeekConfigured()) {
-            System.out.println("[WARN] DeepSeek API Key 未配置，文本对话将使用 Echo 模式");
-            System.out.println("       请配置环境变量 DEEPSEEK_API_KEY 后重启");
-            System.out.println();
-        }
-        if (!config.isDashscopeConfigured()) {
-            System.out.println("[WARN] 阿里云百炼 API Key 未配置，看图/画图功能不可用");
-            System.out.println("       请配置环境变量 DASHSCOPE_API_KEY 后重启");
-            System.out.println();
-        }
-        if (!config.isAmapWeatherConfigured()) {
-            System.out.println("[WARN] 高德天气 API Key 未配置，天气 function-calling 将返回配置提示");
-            System.out.println("       请配置环境变量 AMAP_WEATHER_API_KEY 后重启");
-            System.out.println();
-        }
-        if (!config.isJuheExchangeConfigured()) {
-            System.out.println("[WARN] 聚合数据汇率 API Key 未配置，汇率 function-calling 将返回配置提示");
-            System.out.println("       请配置环境变量 JUHE_EXCHANGE_API_KEY 后重启");
-            System.out.println();
-        }
-        if (!config.isBochaConfigured()) {
-            System.out.println("[WARN] 博查AI搜索 API Key 未配置，联网搜索 function-calling 将自动降级到必应HTML搜索");
-            System.out.println("       （申请博查AI Key: https://open.bochaai.com");
-            System.out.println();
-        }
-        if (!config.isTianapiConfigured()) {
-            System.out.println("[WARN] 天行数据 API Key 未配置，新闻查询 function-calling 将返回配置提示");
-            System.out.println("       请配置环境变量 TIANAPI_API_KEY 后重启");
-            System.out.println();
-        }
-        TianNewsTool tianNewsTool = new TianNewsTool(config.getTianapiApiKey());
-        DeepSeekClient deepSeekClient = new DeepSeekClient(
-            config.getDeepSeekApiKey(), config.getDeepSeekModel(), config.getDeepSeekUrl(),
-            config.getDeepSeekTemperature(), config.getDeepSeekMaxTokens(),
-            config.getDeepSeekConnectTimeoutSeconds(), config.getDeepSeekRequestTimeoutSeconds());
-        FunctionToolRegistry toolRegistry = new FunctionToolRegistry(deepSeekClient.mapper())
-            .register(new AmapWeatherTool(
-                config.getAmapWeatherApiKey(), config.getAmapWeatherEndpoint(),
-                config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds()))
-            .register(new ExchangeRateTool(
-                config.getJuheExchangeApiKey(), config.getJuheExchangeEndpoint(),
-                config.getJuheExchangeVersion(), config.getJuheExchangeConnectTimeoutSeconds(),
-                config.getJuheExchangeRequestTimeoutSeconds()))
-            .register(new WebSearchTool(
-                config.getBochaApiKey(), config.getBochaEndpoint(),
-                config.getBochaConnectTimeoutSeconds(), config.getBochaRequestTimeoutSeconds()))
-            .register(tianNewsTool)
-            .register(createWebPageExtractTool())
-            .register(new UrlSafetyChecker(deepSeekClient.mapper()));
-        ChatService chatService = new DeepSeekChatService(
-            deepSeekClient, toolRegistry, config.getSystemPrompt(), config.getDeepSeekMaxToolRounds());
-
-        DashScopeClient dashScopeClient = new DashScopeClient(
-            config.getDashscopeApiKey(), config.getDashscopeEndpoint(),
-            config.getDashscopeConnectTimeoutSeconds(), config.getDashscopeRequestTimeoutSeconds());
-        VisionService visionService = new DashScopeVisionService(
-            dashScopeClient, config.getVisionModel(), config.getVisionDefaultQuestion());
-        ImageGenService imageGenService = new DashScopeImageGenService(
-            dashScopeClient, config.getImageModel(), config.getImageDefaultSize(),
-            config.getImageDefaultCount(), config.isImagePromptExtend(), config.isImageWatermark());
-        SpeechSynthesisService speechService = new DashScopeSpeechSynthesisService(
-            dashScopeClient, config.getTtsModel(), config.getTtsDefaultVoice(),
-            config.getTtsFormat(), config.getTtsMaxTextLength());
-        DocumentService documentService = new DocumentService();
-
-        handlers = new ArrayList<>();
-        handlers.add(new ImageMessageHandler(visionService));
-        handlers.add(new ImageGenHandler(imageGenService));
-        handlers.add(new DocumentMessageHandler(chatService, documentService));
-        SpeechSynthesisService ttsService = config.isDashscopeConfigured() ? speechService : null;
-        handlers.add(new TextMessageHandler(chatService, ttsService, documentService, tianNewsTool));
-
-        handlers.sort(Comparator.comparingInt(MessageHandler::priority));
-
-        System.out.println("[INFO] 已注册 " + handlers.size() + " 个消息处理器：");
-        for (MessageHandler h : handlers) {
-            System.out.println("       - " + h.getClass().getSimpleName() + " (priority=" + h.priority() + ")");
-        }
-        System.out.println();
+        pollingThread = new Thread(this::runBot, "wechat-bot-polling");
+        pollingThread.setDaemon(false);
+        pollingThread.start();
     }
 
-    // ========== 阶段四 ~ 阶段六：登录+轮询 ==========
-
-    public void start() {
+    private void runBot() {
         try {
             System.out.println("[1/3] Building client...");
-            AtomicReference<ILinkClient> clientRef = new AtomicReference<>();
-
-            ILinkClient client = ILinkClient.builder()
+            ILinkClient builtClient = ILinkClient.builder()
                 .onLogin(new OnLoginListener() {
                     @Override
                     public void onLoginSuccess(LoginContext ctx) {
@@ -162,84 +63,158 @@ public class WeChatBot {
                         System.out.println("       现在可以在微信里给机器人发消息了");
                         System.out.println();
                     }
+
                     @Override
                     public void onLoginFailure(Throwable th) {
                         System.err.println("[ERROR] 登录失败: " + th.getMessage());
                     }
                 })
-                .onMessage(messages -> routeMessages(clientRef.get(), messages))
+                .onMessage(messages -> routeMessages(client, messages))
                 .build();
-            clientRef.set(client);
+            client = builtClient;
 
             System.out.println("[2/3] Getting QR code...");
-            String qrContent = client.executeLogin();
+            String qrContent = builtClient.executeLogin();
             System.out.println();
 
             System.out.println("[3/3] Displaying QR code...");
             QrCodeDisplay.display(qrContent);
-
             System.out.println("[INFO] 请用微信扫码，等待登录...");
             System.out.println();
 
-            while (!client.isLoggedIn()) {
-                try { Thread.sleep(1000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+            while (running && !builtClient.isLoggedIn()) {
+                Thread.sleep(1000);
             }
+            if (!running) return;
 
             System.out.println("[INFO] 机器人运行中，按 Ctrl+C 退出");
             System.out.println();
 
-            while (true) {
+            while (running) {
                 try {
-                    if (client.isLoggedIn()) {
-                        client.getUpdates();
+                    if (builtClient.isLoggedIn()) {
+                        builtClient.getUpdates();
                     }
                     Thread.sleep(1000);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
                 } catch (Exception e) {
-                    String msg = e.getMessage();
-                    if (msg == null || !msg.toLowerCase().contains("not logged")) {
-                        System.err.println("[WARN] " + msg);
+                    if (!running) break;
+                    String message = e.getMessage();
+                    if (message == null || !message.toLowerCase().contains("not logged")) {
+                        System.err.println("[WARN] " + message);
                     }
                     Thread.sleep(3000);
                 }
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         } catch (Exception e) {
-            System.err.println("[FATAL] " + e.getMessage());
-            e.printStackTrace();
+            if (running) {
+                System.err.println("[FATAL] " + e.getMessage());
+                e.printStackTrace();
+            }
+        } finally {
+            running = false;
+            closeClient();
         }
     }
 
-    // ========== 消息路由 ==========
-
-    private void routeMessages(ILinkClient client, List<WeixinMessage> messages) {
-        if (client == null || messages == null || messages.isEmpty()) return;
-        for (WeixinMessage msg : messages) {
-            if (msg == null) continue;
+    private void routeMessages(ILinkClient currentClient, List<WeixinMessage> messages) {
+        if (currentClient == null || messages == null || messages.isEmpty()) return;
+        for (WeixinMessage message : messages) {
+            if (message == null) continue;
             for (MessageHandler handler : handlers) {
-                if (handler.canHandle(msg)) {
-                    handler.handle(client, msg);
+                if (handler.canHandle(message)) {
+                    handler.handle(currentClient, message);
                     break;
                 }
             }
         }
     }
 
-    // ========== 工具 ==========
+    @Override
+    public synchronized void stop() {
+        running = false;
+        closeClient();
+        if (pollingThread != null) pollingThread.interrupt();
+    }
 
-    private WebPageExtractTool createWebPageExtractTool() {
-        return new WebPageExtractTool(
-            config.getWebPageExtractConnectTimeoutSeconds(),
-            config.getWebPageExtractRequestTimeoutSeconds(),
-            config.getWebPageExtractMaxBodyChars()
-        );
+    @Override
+    public void stop(Runnable callback) {
+        stop();
+        callback.run();
+    }
+
+    private void closeClient() {
+        ILinkClient current = client;
+        client = null;
+        if (current != null) {
+            try {
+                current.close();
+            } catch (Exception e) {
+                System.err.println("[WARN] 关闭微信客户端失败: " + e.getMessage());
+            }
+        }
+    }
+
+    @Override
+    public boolean isRunning() {
+        return running;
+    }
+
+    @Override
+    public boolean isAutoStartup() {
+        return true;
+    }
+
+    @Override
+    public int getPhase() {
+        return Integer.MAX_VALUE;
+    }
+
+    private void printConfigurationWarnings() {
+        if (!config.isDeepSeekConfigured()) {
+            warn("DeepSeek API Key 未配置，文本对话将使用 Echo 模式", "DEEPSEEK_API_KEY");
+        }
+        if (!config.isDashscopeConfigured()) {
+            warn("阿里云百炼 API Key 未配置，看图/画图功能不可用", "DASHSCOPE_API_KEY");
+        }
+        if (!config.isAmapWeatherConfigured()) {
+            warn("高德天气 API Key 未配置，天气工具将返回配置提示", "AMAP_WEATHER_API_KEY");
+        }
+        if (!config.isJuheExchangeConfigured()) {
+            warn("聚合数据汇率 API Key 未配置，汇率工具将返回配置提示", "JUHE_EXCHANGE_API_KEY");
+        }
+        if (!config.isBochaConfigured()) {
+            System.out.println("[WARN] 博查AI搜索 API Key 未配置，将自动降级到必应 HTML 搜索");
+            System.out.println();
+        }
+        if (!config.isTianapiConfigured()) {
+            warn("天行数据 API Key 未配置，新闻工具将返回配置提示", "TIANAPI_API_KEY");
+        }
+    }
+
+    private void warn(String message, String environmentVariable) {
+        System.out.println("[WARN] " + message);
+        System.out.println("       请配置环境变量 " + environmentVariable + " 后重启");
+        System.out.println();
+    }
+
+    private void printRegisteredHandlers() {
+        System.out.println("[INFO] Spring 已注入 " + handlers.size() + " 个消息处理器：");
+        for (MessageHandler handler : handlers) {
+            System.out.println("       - " + handler.getClass().getSimpleName()
+                + " (priority=" + handler.priority() + ")");
+        }
+        System.out.println();
     }
 
     private void printBanner() {
         System.out.println();
         System.out.println("========================================");
-        System.out.println("   WeChat iLink Bot - 分层架构版");
+        System.out.println("   WeChat iLink Bot - Spring Boot");
         System.out.println("========================================");
         System.out.println();
     }

@@ -33,21 +33,7 @@
 
 ### 开发流程
 ```bash
-# 1. 从 master 拉取最新代码到自己的开发分支
-git checkout co-lienqi
-git pull origin master
 
-# 2. 在 co-lienqi 上开发工具类，完善功能
-# 写代码...
-
-# 3. 完成后退回 lienqi，推送代码
-git checkout lienqi
-git merge co-lienqi            # 把开发分支合进来
-git push origin lienqi
-
-# 4. 在 GitHub 提交 PR：lienqi → master
-# 由项目组长审核合并到 master
-```
 
 ### 冲突处理
 - 仅功能开发者本人处理冲突
