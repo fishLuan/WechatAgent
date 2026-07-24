@@ -5,6 +5,9 @@ import com.clawbot.wechatbot.handler.DocumentMessageHandler;
 import com.clawbot.wechatbot.handler.ImageGenHandler;
 import com.clawbot.wechatbot.handler.ImageMessageHandler;
 import com.clawbot.wechatbot.handler.TextMessageHandler;
+import com.clawbot.wechatbot.notification.DingTalkNotificationService;
+import com.clawbot.wechatbot.notification.NoOpNotificationService;
+import com.clawbot.wechatbot.notification.NotificationService;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.service.ImageGenService;
@@ -41,6 +44,19 @@ public class BotBeanConfiguration {
     @Bean
     ObjectMapper objectMapper() {
         return new ObjectMapper();
+    }
+
+    @Bean(destroyMethod = "close")
+    NotificationService notificationService(BotConfig config, ObjectMapper mapper) {
+        if (!config.isDingTalkNotificationConfigured()) {
+            return new NoOpNotificationService();
+        }
+        return new DingTalkNotificationService(
+            config.getDingTalkWebhook(),
+            config.getDingTalkSecret(),
+            config.getDingTalkTimeoutSeconds(),
+            config.getDingTalkErrorDeduplicateSeconds(),
+            mapper);
     }
 
     @Bean

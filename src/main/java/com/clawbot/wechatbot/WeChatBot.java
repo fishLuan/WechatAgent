@@ -2,6 +2,7 @@ package com.clawbot.wechatbot;
 
 import com.clawbot.wechatbot.base.MessageHandler;
 import com.clawbot.wechatbot.config.BotConfig;
+import com.clawbot.wechatbot.notification.NotificationService;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.listener.OnLoginListener;
@@ -25,15 +26,18 @@ import java.util.List;
 public class WeChatBot implements SmartLifecycle {
     private final BotConfig config;
     private final List<MessageHandler> handlers;
+    private final NotificationService notifications;
 
     private volatile boolean running;
     private volatile ILinkClient client;
     private Thread pollingThread;
 
-    public WeChatBot(BotConfig config, List<MessageHandler> handlers) {
+    public WeChatBot(BotConfig config, List<MessageHandler> handlers,
+                     NotificationService notifications) {
         this.config = config;
         this.handlers = new ArrayList<>(handlers);
         this.handlers.sort(Comparator.comparingInt(MessageHandler::priority));
+        this.notifications = notifications;
     }
 
     @Override
@@ -62,11 +66,13 @@ public class WeChatBot implements SmartLifecycle {
                         System.out.println("       User ID: " + ctx.getUserId());
                         System.out.println("       现在可以在微信里给机器人发消息了");
                         System.out.println();
+                        notifications.notifyLoginSuccess(ctx.getBotId(), ctx.getUserId());
                     }
 
                     @Override
                     public void onLoginFailure(Throwable th) {
                         System.err.println("[ERROR] 登录失败: " + th.getMessage());
+                        notifications.notifyError("微信登录", th);
                     }
                 })
                 .onMessage(messages -> routeMessages(client, messages))
@@ -75,6 +81,7 @@ public class WeChatBot implements SmartLifecycle {
 
             System.out.println("[2/3] Getting QR code...");
             String qrContent = builtClient.executeLogin();
+            notifications.notifyLoginRequired(qrContent);
             System.out.println();
 
             System.out.println("[3/3] Displaying QR code...");
@@ -104,6 +111,7 @@ public class WeChatBot implements SmartLifecycle {
                     String message = e.getMessage();
                     if (message == null || !message.toLowerCase().contains("not logged")) {
                         System.err.println("[WARN] " + message);
+                        notifications.notifyError("微信消息轮询", e);
                     }
                     Thread.sleep(3000);
                 }
@@ -114,6 +122,7 @@ public class WeChatBot implements SmartLifecycle {
             if (running) {
                 System.err.println("[FATAL] " + e.getMessage());
                 e.printStackTrace();
+                notifications.notifyError("微信机器人主线程", e);
             }
         } finally {
             running = false;
@@ -126,8 +135,15 @@ public class WeChatBot implements SmartLifecycle {
         for (WeixinMessage message : messages) {
             if (message == null) continue;
             for (MessageHandler handler : handlers) {
-                if (handler.canHandle(message)) {
-                    handler.handle(currentClient, message);
+                try {
+                    if (handler.canHandle(message)) {
+                        handler.handle(currentClient, message);
+                        break;
+                    }
+                } catch (Exception e) {
+                    notifications.notifyError(
+                        "消息处理器/" + handler.getClass().getSimpleName(), e);
+                    System.err.println("[ERROR] 消息处理失败: " + e.getMessage());
                     break;
                 }
             }
@@ -155,6 +171,7 @@ public class WeChatBot implements SmartLifecycle {
                 current.close();
             } catch (Exception e) {
                 System.err.println("[WARN] 关闭微信客户端失败: " + e.getMessage());
+                notifications.notifyError("关闭微信客户端", e);
             }
         }
     }
@@ -175,6 +192,10 @@ public class WeChatBot implements SmartLifecycle {
     }
 
     private void printConfigurationWarnings() {
+        if (config.isDingTalkNotificationEnabled()
+            && config.getDingTalkWebhook().isBlank()) {
+            warn("钉钉通知已启用，但机器人 Webhook 未配置", "DINGTALK_WEBHOOK");
+        }
         if (!config.isDeepSeekConfigured()) {
             warn("DeepSeek API Key 未配置，文本对话将使用 Echo 模式", "DEEPSEEK_API_KEY");
         }
