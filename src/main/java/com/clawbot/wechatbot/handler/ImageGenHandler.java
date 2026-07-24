@@ -170,7 +170,7 @@ public class ImageGenHandler implements MessageHandler {
         }
         // 去掉末尾的 "图片" / "的图片"
         String trimmed = s;
-        if (trimmed.endsWith("的图片")) trimmed = trimmed.substring(0, trimmed.length() - 4).trim();
+        if (trimmed.endsWith("的图片")) trimmed = trimmed.substring(0, trimmed.length() - 3).trim();
         if (trimmed.endsWith("图片")) trimmed = trimmed.substring(0, trimmed.length() - 2).trim();
         return trimmed;
     }

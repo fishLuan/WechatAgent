@@ -8,6 +8,7 @@ import com.clawbot.wechatbot.base.MessageHandler;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
+import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.util.JsonUtils;
 
 import java.io.IOException;
@@ -45,6 +46,7 @@ public class TextMessageHandler implements MessageHandler {
     private final ChatService chatService;
     private final SpeechSynthesisService tts;
     private final DocumentService documentService;
+    private final TianNewsTool tianNewsTool;
     private final StringBuilder longTermSummary = new StringBuilder();
     private final List<String> recentMessages = new ArrayList<>();
     private int turnCounter = 0;
@@ -58,12 +60,18 @@ public class TextMessageHandler implements MessageHandler {
         this(chatService, tts, null);
     }
 
-    public TextMessageHandler(ChatService chatService, SpeechSynthesisService tts, DocumentService documentService) {
+    public TextMessageHandler(ChatService chatService, SpeechSynthesisService tts, DocumentService documentService, TianNewsTool tianNewsTool) {
         this.chatService = chatService;
         this.tts = tts;
         this.documentService = documentService;
+        this.tianNewsTool = tianNewsTool;
         DocumentService.silencePdfLogs();  // 屏蔽 PDF 库的噪音日志
         loadMemoryFromFile();  // 启动时从磁盘读回：摘要 + 最近对话
+    }
+
+    // 旧构造函数保留兼容
+    public TextMessageHandler(ChatService chatService, SpeechSynthesisService tts, DocumentService documentService) {
+        this(chatService, tts, documentService, null);
     }
 
     @Override
@@ -109,9 +117,30 @@ public class TextMessageHandler implements MessageHandler {
             if (wantVoice) textForChat = stripTtsKeywords(textForChat);
             if (wantDoc)   textForChat = stripDocKeywords(textForChat);
 
-            // 2. 传给大模型的内容 = 长期摘要 + 最近完整对话
+            // 2. 新闻关键词检测：如果用户问新闻，直接调 TianNewsTool 获取实时数据
+            String newsData = null;
+            if (tianNewsTool != null && isNewsQuery(textForChat)) {
+                try {
+                    String result = tianNewsTool.execute(null);
+                    if (result != null && !result.contains("\"success\":false")) {
+                        newsData = result;
+                    }
+                } catch (Exception ignored) {
+                    // 新闻工具失败不影响正常对话
+                }
+            }
+
+            // 3. 传给大模型的内容 = 长期摘要 + 最近完整对话
             String context = buildContextForModel();
-            String reply = chatService.chat(textForChat, context.isEmpty() ? "" : context);
+            // 如果有实时新闻数据，直接拼到用户消息前面
+            String chatInput;
+            if (newsData != null) {
+                chatInput = "【以下是最新实时新闻，请据此回答】\n\n"
+                    + newsData + "\n\n---\n用户问题：" + textForChat;
+            } else {
+                chatInput = textForChat;
+            }
+            String reply = chatService.chat(chatInput, context.isEmpty() ? "" : context);
 
             // 3. 发送文字回复（清理大模型可能自作主张加的"（用男声）"等标记）
             String textReply = cleanBotReply(reply);
@@ -454,6 +483,19 @@ public class TextMessageHandler implements MessageHandler {
         }
         // 默认标题
         return "聊天对话记录";
+    }
+
+    /** 检测用户消息是否为新闻查询 */
+    private boolean isNewsQuery(String text) {
+        if (text == null || text.isEmpty()) return false;
+        String t = text.trim().toLowerCase();
+        String[] keywords = {"新闻", "大事", "热点", "最近", "发生了什么",
+            "有什么", "头条", "资讯", "时事", "今天", "昨天",
+            "科技", "体育", "娱乐", "财经", "国际", "社会"};
+        for (String kw : keywords) {
+            if (t.contains(kw)) return true;
+        }
+        return false;
     }
 
     private boolean isCommand(String text) {
