@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /** function-calling 工具的注册、schema 汇总和安全执行入口。 */
@@ -15,6 +16,11 @@ public class FunctionToolRegistry {
 
     public FunctionToolRegistry(ObjectMapper mapper) {
         this.mapper = mapper;
+    }
+
+    public FunctionToolRegistry(ObjectMapper mapper, List<FunctionTool> tools) {
+        this(mapper);
+        tools.forEach(this::register);
     }
 
     public FunctionToolRegistry register(FunctionTool tool) {

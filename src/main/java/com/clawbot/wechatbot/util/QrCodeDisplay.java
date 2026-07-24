@@ -25,7 +25,7 @@ public final class QrCodeDisplay {
 
         String content = qrContent.trim();
         System.out.println();
-        System.out.println("       扫码链接: " + content);
+        System.out.println("扫码链接: " + content);
         System.out.println();
 
         // 直接是 URL → 在浏览器打开
@@ -51,7 +51,7 @@ public final class QrCodeDisplay {
                 + "<p>用微信扫一扫确认登录</p></body></html>";
             java.nio.file.Files.write(htmlFile.toPath(), html.getBytes(StandardCharsets.UTF_8));
             Desktop.getDesktop().open(htmlFile);
-            System.out.println("       \uD83C\uDF10 已在浏览器打开扫码页面");
+            System.out.println("\uD83C\uDF10 已在浏览器打开扫码页面");
         } catch (Exception e) {
             System.err.println("[ERROR] 二维码显示失败: " + e.getMessage());
         }
@@ -62,12 +62,12 @@ public final class QrCodeDisplay {
         if (Desktop.isDesktopSupported()) {
             try {
                 Desktop.getDesktop().browse(new URI(url));
-                System.out.println("       \uD83C\uDF10 已在浏览器打开，请用微信扫码或在页面中确认登录");
+                System.out.println("\uD83C\uDF10 已在浏览器打开，请用微信扫码或在页面中确认登录");
             } catch (Exception e) {
-                System.out.println("       打开失败，请手动访问上面的链接");
+                System.out.println("打开失败，请手动访问上面的链接");
             }
         } else {
-            System.out.println("       请手动在浏览器中打开上面的链接");
+            System.out.println("请手动在浏览器中打开上面的链接");
         }
     }
 
