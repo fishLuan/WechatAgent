@@ -5,6 +5,9 @@ import com.clawbot.wechatbot.handler.DocumentMessageHandler;
 import com.clawbot.wechatbot.handler.ImageGenHandler;
 import com.clawbot.wechatbot.handler.ImageMessageHandler;
 import com.clawbot.wechatbot.handler.TextMessageHandler;
+import com.clawbot.wechatbot.notification.DingTalkNotificationService;
+import com.clawbot.wechatbot.notification.NoOpNotificationService;
+import com.clawbot.wechatbot.notification.NotificationService;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.service.ImageGenService;
@@ -21,10 +24,12 @@ import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
 import com.clawbot.wechatbot.tools.FunctionTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
+import com.clawbot.wechatbot.tools.bazitool.BaziFortuneTool;
 import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
 import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
 import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
+import com.clawbot.wechatbot.tools.currenttimetool.CurrentTimeTool;
 import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;
@@ -41,6 +46,19 @@ public class BotBeanConfiguration {
     @Bean
     ObjectMapper objectMapper() {
         return new ObjectMapper();
+    }
+
+    @Bean(destroyMethod = "close")
+    NotificationService notificationService(BotConfig config, ObjectMapper mapper) {
+        if (!config.isDingTalkNotificationConfigured()) {
+            return new NoOpNotificationService();
+        }
+        return new DingTalkNotificationService(
+            config.getDingTalkWebhook(),
+            config.getDingTalkSecret(),
+            config.getDingTalkTimeoutSeconds(),
+            config.getDingTalkErrorDeduplicateSeconds(),
+            mapper);
     }
 
     @Bean
@@ -74,6 +92,11 @@ public class BotBeanConfiguration {
     }
 
     @Bean
+    BaziFortuneTool baziFortuneTool(ObjectMapper mapper) {
+        return new BaziFortuneTool(mapper);
+    }
+
+    @Bean
     WebSearchTool webSearchTool(BotConfig config) {
         return new WebSearchTool(
             config.getBochaApiKey(), config.getBochaEndpoint(),
@@ -96,6 +119,11 @@ public class BotBeanConfiguration {
     @Bean
     UrlSafetyChecker urlSafetyChecker(ObjectMapper mapper) {
         return new UrlSafetyChecker(mapper);
+    }
+
+    @Bean
+    CurrentTimeTool currentTimeTool(ObjectMapper mapper) {
+        return new CurrentTimeTool(mapper);
     }
 
     @Bean

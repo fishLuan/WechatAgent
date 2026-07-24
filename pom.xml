@@ -44,6 +44,13 @@
             <version>2.3.3</version>
         </dependency>
 
+        <!-- ============ Chinese calendar and BaZi calculation ============ -->
+        <dependency>
+            <groupId>cn.6tail</groupId>
+            <artifactId>lunar</artifactId>
+            <version>1.7.7</version>
+        </dependency>
+
         <!-- ============ 文档处理（PDF/Word） ============ -->
         <!-- PDF 读写 -->
         <dependency>

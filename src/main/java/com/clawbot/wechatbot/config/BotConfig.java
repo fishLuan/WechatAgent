@@ -74,12 +74,27 @@ public class BotConfig {
     public String getTianapiApiKey() { return get("tianapi.api.key"); }
     public int getLoginTimeoutMs() { return getInt("wechat.login.timeout-ms"); }
 
+    public boolean isDingTalkNotificationEnabled() {
+        return getBoolean("notification.dingtalk.enabled");
+    }
+    public String getDingTalkWebhook() { return get("notification.dingtalk.webhook"); }
+    public String getDingTalkSecret() { return get("notification.dingtalk.secret"); }
+    public int getDingTalkTimeoutSeconds() {
+        return getInt("notification.dingtalk.timeout-seconds");
+    }
+    public int getDingTalkErrorDeduplicateSeconds() {
+        return getInt("notification.dingtalk.error-deduplicate-seconds");
+    }
+
     public boolean isDeepSeekConfigured() { return !getDeepSeekApiKey().isBlank(); }
     public boolean isDashscopeConfigured() { return !getDashscopeApiKey().isBlank(); }
     public boolean isAmapWeatherConfigured() { return !getAmapWeatherApiKey().isBlank(); }
     public boolean isJuheExchangeConfigured() { return !getJuheExchangeApiKey().isBlank(); }
     public boolean isBochaConfigured() { return !getBochaApiKey().isBlank(); }
     public boolean isTianapiConfigured() { return !getTianapiApiKey().isBlank(); }
+    public boolean isDingTalkNotificationConfigured() {
+        return isDingTalkNotificationEnabled() && !getDingTalkWebhook().isBlank();
+    }
 
     private String get(String key) {
         String value = environment.getProperty(key);
