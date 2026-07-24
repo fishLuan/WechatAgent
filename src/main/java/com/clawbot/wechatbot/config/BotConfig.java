@@ -73,6 +73,7 @@ public class BotConfig {
 
     public String getTianapiApiKey() { return get("tianapi.api.key"); }
     public int getLoginTimeoutMs() { return getInt("wechat.login.timeout-ms"); }
+    public int getMaxSessions() { return getInt("wechat.max-sessions"); }
 
     public boolean isDingTalkNotificationEnabled() {
         return getBoolean("notification.dingtalk.enabled");

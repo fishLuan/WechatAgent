@@ -16,9 +16,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 文本消息处理器 —— 处理用户发来的普通文本/语音，调用 DeepSeek 对话
@@ -50,7 +50,7 @@ public class TextMessageHandler implements MessageHandler {
     private final StringBuilder longTermSummary = new StringBuilder();
     private final List<String> recentMessages = new ArrayList<>();
     private int turnCounter = 0;
-    private final Set<Long> processedMsgIds = new HashSet<>();
+    private final Set<Long> processedMsgIds = ConcurrentHashMap.newKeySet();
 
     public TextMessageHandler(ChatService chatService) {
         this(chatService, null, null);
@@ -575,7 +575,7 @@ public class TextMessageHandler implements MessageHandler {
     /**
      * 构建传给大模型的 context = 长期摘要 + 最近完整对话
      */
-    private String buildContextForModel() {
+    private synchronized String buildContextForModel() {
         StringBuilder sb = new StringBuilder();
         if (longTermSummary.length() > 0) {
             sb.append("{\"role\":\"system\",\"content\":")
@@ -592,7 +592,7 @@ public class TextMessageHandler implements MessageHandler {
     /**
      * 追加一轮对话，并在必要时触发摘要压缩
      */
-    private void appendHistory(String userText, String assistantReply) {
+    private synchronized void appendHistory(String userText, String assistantReply) {
         recentMessages.add("{\"role\":\"user\",\"content\":" + JsonUtils.escape(userText) + "}");
         recentMessages.add("{\"role\":\"assistant\",\"content\":" + JsonUtils.escape(assistantReply) + "}");
 
@@ -611,7 +611,7 @@ public class TextMessageHandler implements MessageHandler {
     /**
      * 调用大模型把最近对话压缩成摘要，追加到 longTermSummary
      */
-    private void updateSummaryWithLLM() {
+    private synchronized void updateSummaryWithLLM() {
         try {
             int messagesToSummarize = Math.min(SUMMARY_EVERY * 2, recentMessages.size());
             List<String> toCompress = recentMessages.subList(
@@ -645,7 +645,7 @@ public class TextMessageHandler implements MessageHandler {
     // 文件持久化
     // ============================================================
 
-    private void loadMemoryFromFile() {
+    private synchronized void loadMemoryFromFile() {
         try {
             Path path = Paths.get(SUMMARY_FILE);
             if (Files.exists(path)) {
@@ -692,7 +692,7 @@ public class TextMessageHandler implements MessageHandler {
         }
     }
 
-    private void parseLegacyFormat(String content) {
+    private synchronized void parseLegacyFormat(String content) {
         int idx = 0;
         while (idx < content.length()) {
             int start = content.indexOf("{\"role\"", idx);
@@ -706,7 +706,7 @@ public class TextMessageHandler implements MessageHandler {
         }
     }
 
-    private void saveMemoryToFile() {
+    private synchronized void saveMemoryToFile() {
         try {
             Path dataDir = Paths.get("data");
             if (!Files.exists(dataDir)) {
@@ -727,7 +727,7 @@ public class TextMessageHandler implements MessageHandler {
         }
     }
 
-    private void deleteHistoryFile() {
+    private synchronized void deleteHistoryFile() {
         try {
             Path path = Paths.get(HISTORY_FILE);
             if (Files.exists(path)) {
@@ -738,7 +738,7 @@ public class TextMessageHandler implements MessageHandler {
         }
     }
 
-    private void deleteSummaryFile() {
+    private synchronized void deleteSummaryFile() {
         try {
             Path path = Paths.get(SUMMARY_FILE);
             if (Files.exists(path)) {
