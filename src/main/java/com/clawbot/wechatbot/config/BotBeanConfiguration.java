@@ -24,6 +24,7 @@ import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
 import com.clawbot.wechatbot.tools.FunctionTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
+import com.clawbot.wechatbot.tools.bazitool.BaziFortuneTool;
 import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
 import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
 import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
@@ -87,6 +88,11 @@ public class BotBeanConfiguration {
             config.getJuheExchangeApiKey(), config.getJuheExchangeEndpoint(),
             config.getJuheExchangeVersion(), config.getJuheExchangeConnectTimeoutSeconds(),
             config.getJuheExchangeRequestTimeoutSeconds());
+    }
+
+    @Bean
+    BaziFortuneTool baziFortuneTool(ObjectMapper mapper) {
+        return new BaziFortuneTool(mapper);
     }
 
     @Bean
