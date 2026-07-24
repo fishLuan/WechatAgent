@@ -28,9 +28,11 @@ class ApplicationTests {
 
     @Test
     void contextLoads() {
-        assertEquals(6, toolRegistry.size());
+        assertEquals(7, toolRegistry.size());
         assertEquals(4, handlers.size());
         assertTrue(toolRegistry.definitions().findValuesAsText("name").contains("convert_currency"));
+        assertTrue(toolRegistry.definitions().findValuesAsText("name")
+            .contains("calculate_bazi_fortune"));
     }
 
 }
