@@ -22,6 +22,7 @@ import com.clawbot.wechatbot.tools.FunctionTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
 import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
+import com.clawbot.wechatbot.tools.idcardtool.IdCardTool;
 import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
 import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
@@ -96,6 +97,11 @@ public class BotBeanConfiguration {
     @Bean
     UrlSafetyChecker urlSafetyChecker(ObjectMapper mapper) {
         return new UrlSafetyChecker(mapper);
+    }
+
+    @Bean
+    IdCardTool idCardTool(ObjectMapper mapper) {
+        return new IdCardTool(mapper);
     }
 
     @Bean
