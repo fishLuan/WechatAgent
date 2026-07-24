@@ -29,6 +29,7 @@ import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
 import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
 import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
+import com.clawbot.wechatbot.tools.currenttimetool.CurrentTimeTool;
 import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;
@@ -118,6 +119,11 @@ public class BotBeanConfiguration {
     @Bean
     UrlSafetyChecker urlSafetyChecker(ObjectMapper mapper) {
         return new UrlSafetyChecker(mapper);
+    }
+
+    @Bean
+    CurrentTimeTool currentTimeTool(ObjectMapper mapper) {
+        return new CurrentTimeTool(mapper);
     }
 
     @Bean
