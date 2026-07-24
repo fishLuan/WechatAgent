@@ -76,6 +76,13 @@ public class BotConfig {
         return getInt("dashscope.request-timeout-seconds");
     }
 
+    // 博查AI Web 搜索
+    public String getBochaApiKey() { return get("bocha.api.key"); }
+    public String getBochaEndpoint() { return get("bocha.web-search.url"); }
+    public int getBochaConnectTimeoutSeconds() { return getInt("bocha.connect-timeout-seconds"); }
+    public int getBochaRequestTimeoutSeconds() { return getInt("bocha.request-timeout-seconds"); }
+    public boolean isBochaConfigured() { return !getBochaApiKey().isBlank(); }
+
     public String getVisionModel() { return get("dashscope.vision.model"); }
     public String getVisionDefaultQuestion() { return get("dashscope.vision.default-question"); }
     public String getImageModel() { return get("dashscope.image.model"); }

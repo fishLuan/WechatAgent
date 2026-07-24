@@ -22,6 +22,14 @@ public class FunctionToolRegistry {
         return this;
     }
 
+    public String registeredNames() {
+        return String.join(", ", tools.keySet());
+    }
+
+    public int size() {
+        return tools.size();
+    }
+
     public ArrayNode definitions() {
         ArrayNode result = mapper.createArrayNode();
         tools.values().forEach(tool -> result.add(tool.definition()));
