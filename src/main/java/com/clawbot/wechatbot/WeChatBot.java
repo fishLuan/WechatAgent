@@ -5,6 +5,8 @@ import com.clawbot.wechatbot.config.BotConfig;
 import com.clawbot.wechatbot.notification.NotificationService;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 import com.github.wechat.ilink.sdk.ILinkClient;
+import com.github.wechat.ilink.sdk.core.config.ConfigLoader;
+import com.github.wechat.ilink.sdk.core.config.ILinkConfig;
 import com.github.wechat.ilink.sdk.core.listener.OnLoginListener;
 import com.github.wechat.ilink.sdk.core.login.LoginContext;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
@@ -15,6 +17,8 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * 微信机器人运行时。
@@ -27,10 +31,12 @@ public class WeChatBot implements SmartLifecycle {
     private final BotConfig config;
     private final List<MessageHandler> handlers;
     private final NotificationService notifications;
+    private final List<BotSession> sessions = new CopyOnWriteArrayList<>();
+    private final String routeNamespace = "clawbot-" + UUID.randomUUID();
 
     private volatile boolean running;
-    private volatile ILinkClient client;
-    private Thread pollingThread;
+    private int maxSessions;
+    private int nextSessionIndex = 1;
 
     public WeChatBot(BotConfig config, List<MessageHandler> handlers,
                      NotificationService notifications) {
@@ -48,45 +54,48 @@ public class WeChatBot implements SmartLifecycle {
         printConfigurationWarnings();
         printRegisteredHandlers();
 
-        pollingThread = new Thread(this::runBot, "wechat-bot-polling");
-        pollingThread.setDaemon(false);
-        pollingThread.start();
+        maxSessions = Math.max(1, config.getMaxSessions());
+        startNextLoginSession();
     }
 
-    private void runBot() {
+    private void runBot(BotSession session) {
         try {
-            System.out.println("[1/3] Building client...");
+            System.out.println(session.prefix() + " [1/3] Building client...");
             ILinkClient builtClient = ILinkClient.builder()
+                .config(createSessionConfig(session))
                 .onLogin(new OnLoginListener() {
                     @Override
                     public void onLoginSuccess(LoginContext ctx) {
                         System.out.println();
-                        System.out.println("[OK] 登录成功!");
+                        System.out.println(session.prefix() + " [OK] 登录成功!");
                         System.out.println("       Bot ID: " + ctx.getBotId());
                         System.out.println("       User ID: " + ctx.getUserId());
                         System.out.println("       现在可以在微信里给机器人发消息了");
                         System.out.println();
                         notifications.notifyLoginSuccess(ctx.getBotId(), ctx.getUserId());
+                        startNextLoginSession();
                     }
 
                     @Override
                     public void onLoginFailure(Throwable th) {
-                        System.err.println("[ERROR] 登录失败: " + th.getMessage());
-                        notifications.notifyError("微信登录", th);
+                        System.err.println(session.prefix() + " [ERROR] 登录失败: " + th.getMessage());
+                        notifications.notifyError("微信登录/" + session.name(), th);
                     }
                 })
-                .onMessage(messages -> routeMessages(client, messages))
+                .onMessage(messages -> routeMessages(session.client, messages))
                 .build();
-            client = builtClient;
+            session.client = builtClient;
 
-            System.out.println("[2/3] Getting QR code...");
+            System.out.println(session.prefix() + " [2/3] Getting QR code...");
             String qrContent = builtClient.executeLogin();
             notifications.notifyLoginRequired(qrContent);
             System.out.println();
 
-            System.out.println("[3/3] Displaying QR code...");
-            QrCodeDisplay.display(qrContent);
-            System.out.println("[INFO] 请用微信扫码，等待登录...");
+            System.out.println(session.prefix() + " [3/3] Displaying QR code...");
+            QrCodeDisplay.display(qrContent,
+                "qrcode-" + session.index + "-" + System.currentTimeMillis() + ".html",
+                "微信扫码登录 #" + session.index);
+            System.out.println(session.prefix() + " [INFO] 请用微信扫码，等待登录...");
             System.out.println();
 
             while (running && !builtClient.isLoggedIn()) {
@@ -94,7 +103,7 @@ public class WeChatBot implements SmartLifecycle {
             }
             if (!running) return;
 
-            System.out.println("[INFO] 机器人运行中，按 Ctrl+C 退出");
+            System.out.println(session.prefix() + " [INFO] 机器人运行中，按 Ctrl+C 退出");
             System.out.println();
 
             while (running) {
@@ -110,8 +119,8 @@ public class WeChatBot implements SmartLifecycle {
                     if (!running) break;
                     String message = e.getMessage();
                     if (message == null || !message.toLowerCase().contains("not logged")) {
-                        System.err.println("[WARN] " + message);
-                        notifications.notifyError("微信消息轮询", e);
+                        System.err.println(session.prefix() + " [WARN] " + message);
+                        notifications.notifyError("微信消息轮询/" + session.name(), e);
                     }
                     Thread.sleep(3000);
                 }
@@ -120,13 +129,12 @@ public class WeChatBot implements SmartLifecycle {
             Thread.currentThread().interrupt();
         } catch (Exception e) {
             if (running) {
-                System.err.println("[FATAL] " + e.getMessage());
+                System.err.println(session.prefix() + " [FATAL] " + e.getMessage());
                 e.printStackTrace();
-                notifications.notifyError("微信机器人主线程", e);
+                notifications.notifyError("微信机器人主线程/" + session.name(), e);
             }
         } finally {
-            running = false;
-            closeClient();
+            session.close();
         }
     }
 
@@ -153,27 +161,16 @@ public class WeChatBot implements SmartLifecycle {
     @Override
     public synchronized void stop() {
         running = false;
-        closeClient();
-        if (pollingThread != null) pollingThread.interrupt();
+        for (BotSession session : sessions) {
+            session.stop();
+        }
+        sessions.clear();
     }
 
     @Override
     public void stop(Runnable callback) {
         stop();
         callback.run();
-    }
-
-    private void closeClient() {
-        ILinkClient current = client;
-        client = null;
-        if (current != null) {
-            try {
-                current.close();
-            } catch (Exception e) {
-                System.err.println("[WARN] 关闭微信客户端失败: " + e.getMessage());
-                notifications.notifyError("关闭微信客户端", e);
-            }
-        }
     }
 
     @Override
@@ -230,6 +227,90 @@ public class WeChatBot implements SmartLifecycle {
                 + " (priority=" + handler.priority() + ")");
         }
         System.out.println();
+    }
+
+    private synchronized void startNextLoginSession() {
+        if (!running || nextSessionIndex > maxSessions) return;
+
+        BotSession session = new BotSession(nextSessionIndex++);
+        sessions.add(session);
+        session.start();
+
+        if (session.index > 1) {
+            System.out.println(session.prefix() + " [INFO] 上一个账号已登录，正在生成新的扫码登录二维码");
+        }
+    }
+
+    private ILinkConfig createSessionConfig(BotSession session) {
+        ILinkConfig defaults = ConfigLoader.loadDefault();
+        String configuredRouteTag = defaults.getRouteTag();
+        String routeTagPrefix = configuredRouteTag == null || configuredRouteTag.isBlank()
+            ? routeNamespace : configuredRouteTag.trim();
+
+        return ILinkConfig.builder()
+            .connectTimeoutMs(defaults.getConnectTimeoutMs())
+            .readTimeoutMs(defaults.getReadTimeoutMs())
+            .writeTimeoutMs(defaults.getWriteTimeoutMs())
+            .httpMaxRetries(defaults.getHttpMaxRetries())
+            .retryBaseDelayMs(defaults.getRetryBaseDelayMs())
+            .retryMaxDelayMs(defaults.getRetryMaxDelayMs())
+            .retryJitterEnabled(defaults.isRetryJitterEnabled())
+            .loginTimeoutMs(defaults.getLoginTimeoutMs())
+            .heartbeatEnabled(defaults.isHeartbeatEnabled())
+            .heartbeatIntervalMs(defaults.getHeartbeatIntervalMs())
+            .reconnectMaxAttempts(defaults.getReconnectMaxAttempts())
+            .reconnectBaseDelayMs(defaults.getReconnectBaseDelayMs())
+            .reconnectMaxDelayMs(defaults.getReconnectMaxDelayMs())
+            .ioCoreThreads(defaults.getIoCoreThreads())
+            .ioMaxThreads(defaults.getIoMaxThreads())
+            .schedulerThreads(defaults.getSchedulerThreads())
+            .queueCapacity(defaults.getQueueCapacity())
+            .channelVersion(defaults.getChannelVersion())
+            .autoReconnectEnabled(defaults.isAutoReconnectEnabled())
+            .routeTag(routeTagPrefix + "-session-" + session.index)
+            .build();
+    }
+
+    private final class BotSession {
+        private final int index;
+        private volatile ILinkClient client;
+        private Thread pollingThread;
+
+        private BotSession(int index) {
+            this.index = index;
+        }
+
+        private void start() {
+            pollingThread = new Thread(() -> runBot(this), "wechat-bot-polling-" + index);
+            pollingThread.setDaemon(false);
+            pollingThread.start();
+        }
+
+        private void stop() {
+            close();
+            if (pollingThread != null) pollingThread.interrupt();
+        }
+
+        private void close() {
+            ILinkClient current = client;
+            client = null;
+            if (current != null) {
+                try {
+                    current.close();
+                } catch (Exception e) {
+                    System.err.println(prefix() + " [WARN] 关闭微信客户端失败: " + e.getMessage());
+                    notifications.notifyError("关闭微信客户端/" + name(), e);
+                }
+            }
+        }
+
+        private String name() {
+            return "session-" + index;
+        }
+
+        private String prefix() {
+            return "[SESSION " + index + "]";
+        }
     }
 
     private void printBanner() {
