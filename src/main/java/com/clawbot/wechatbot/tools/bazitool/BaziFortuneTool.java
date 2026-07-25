@@ -13,7 +13,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.List;
 import java.util.Map;
 
-/** Function-calling tool for traditional BaZi calculation and annual analysis. */
+/** 用于传统八字排盘和流年分析的函数调用工具 */
 public final class BaziFortuneTool implements FunctionTool {
     private final ObjectMapper mapper;
     private final BaziCalculator calculator;
