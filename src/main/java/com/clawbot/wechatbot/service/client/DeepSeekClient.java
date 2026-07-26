@@ -44,10 +44,15 @@ public class DeepSeekClient {
     }
 
     public JsonNode chat(ArrayNode messages, ArrayNode tools) throws Exception {
+        return chat(messages, tools, temperature);
+    }
+
+    public JsonNode chat(ArrayNode messages, ArrayNode tools,
+                         double requestTemperature) throws Exception {
         ObjectNode body = mapper.createObjectNode();
         body.put("model", model);
         body.set("messages", messages);
-        body.put("temperature", temperature);
+        body.put("temperature", requestTemperature);
         body.put("max_tokens", maxTokens);
         if (tools != null && !tools.isEmpty()) {
             body.set("tools", tools);
