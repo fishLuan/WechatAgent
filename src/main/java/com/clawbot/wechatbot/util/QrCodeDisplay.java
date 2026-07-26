@@ -18,6 +18,10 @@ public final class QrCodeDisplay {
     private QrCodeDisplay() {}
 
     public static void display(String qrContent) {
+        display(qrContent, "qrcode.html", "微信扫码登录");
+    }
+
+    public static void display(String qrContent, String fileName, String title) {
         if (qrContent == null || qrContent.trim().isEmpty()) {
             System.out.println("[WARN] 没有获取到二维码");
             return;
@@ -42,11 +46,12 @@ public final class QrCodeDisplay {
         }
         String base64Img = "data:image/png;base64," + Base64.getEncoder().encodeToString(imageBytes);
         try {
-            File htmlFile = new File("qrcode.html");
-            String html = "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>微信扫码登录</title>"
+            File htmlFile = new File(fileName == null || fileName.isBlank() ? "qrcode.html" : fileName);
+            String pageTitle = title == null || title.isBlank() ? "微信扫码登录" : title;
+            String html = "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>" + pageTitle + "</title>"
                 + "<style>body{text-align:center;padding:40px;font-family:sans-serif;background:#f5f5f5;}"
                 + "h2{color:#07c160;}img{width:300px;height:300px;border:1px solid #ddd;padding:10px;background:white;}"
-                + "</style></head><body><h2>微信扫码登录</h2>"
+                + "</style></head><body><h2>" + pageTitle + "</h2>"
                 + "<img src=\"" + base64Img + "\"/>"
                 + "<p>用微信扫一扫确认登录</p></body></html>";
             java.nio.file.Files.write(htmlFile.toPath(), html.getBytes(StandardCharsets.UTF_8));

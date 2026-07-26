@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Transparent rule-based relations for a selected traditional fortune year. */
+/** 针对所选传统生肖年份的透明规则化关联关系 */
 final class BaziFortuneAnalyzer {
     private static final Set<String> BRANCH_COMBINES = Set.of(
         "子丑", "寅亥", "卯戌", "辰酉", "巳申", "午未");
