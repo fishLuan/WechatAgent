@@ -5,6 +5,8 @@ import com.clawbot.wechatbot.handler.DocumentMessageHandler;
 import com.clawbot.wechatbot.handler.ImageGenHandler;
 import com.clawbot.wechatbot.handler.ImageMessageHandler;
 import com.clawbot.wechatbot.handler.TextMessageHandler;
+import com.clawbot.wechatbot.memory.ConversationMemoryService;
+import com.clawbot.wechatbot.memory.MemoryProperties;
 import com.clawbot.wechatbot.notification.DingTalkNotificationService;
 import com.clawbot.wechatbot.notification.NoOpNotificationService;
 import com.clawbot.wechatbot.notification.NotificationService;
@@ -207,8 +209,17 @@ public class BotBeanConfiguration {
     @Bean
     MessageHandler textMessageHandler(ChatService chat, SpeechSynthesisService speech,
                                       DocumentService documents, TianNewsTool news,
-                                      BotConfig config) {
+                                      BotConfig config,
+                                      ConversationMemoryService memoryService,
+                                      MemoryProperties memoryProperties) {
         SpeechSynthesisService optionalSpeech = config.isDashscopeConfigured() ? speech : null;
-        return new TextMessageHandler(chat, optionalSpeech, documents, news);
+        return new TextMessageHandler(
+            chat,
+            optionalSpeech,
+            documents,
+            news,
+            memoryService,
+            memoryProperties
+        );
     }
 }

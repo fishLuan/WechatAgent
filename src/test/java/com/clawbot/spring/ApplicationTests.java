@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
     classes = WeChatBotApplication.class,
     properties = {
         "wechat.bot.enabled=false",
+        "clawbot.memory.enabled=false",
         "spring.main.web-application-type=none"
     }
 )
