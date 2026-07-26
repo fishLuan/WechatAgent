@@ -24,6 +24,15 @@ public class BotConfig {
     public double getDeepSeekTemperature() { return getDouble("deepseek.temperature"); }
     public int getDeepSeekMaxTokens() { return getInt("deepseek.max-tokens"); }
     public int getDeepSeekMaxToolRounds() { return getInt("deepseek.max-tool-rounds"); }
+    public boolean isDeepSeekMultiTaskEnabled() {
+        return getBoolean("deepseek.multi-task.enabled");
+    }
+    public int getDeepSeekMultiTaskMaxTasks() {
+        return getInt("deepseek.multi-task.max-tasks");
+    }
+    public int getDeepSeekMultiTaskMaxParallelism() {
+        return getInt("deepseek.multi-task.max-parallelism");
+    }
     public int getDeepSeekConnectTimeoutSeconds() { return getInt("deepseek.connect-timeout-seconds"); }
     public int getDeepSeekRequestTimeoutSeconds() { return getInt("deepseek.request-timeout-seconds"); }
 

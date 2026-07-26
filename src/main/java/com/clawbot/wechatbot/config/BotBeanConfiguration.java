@@ -21,6 +21,9 @@ import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
 import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
 import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
+import com.clawbot.wechatbot.service.multitask.LlmTaskPlanner;
+import com.clawbot.wechatbot.service.multitask.MultiTaskChatService;
+import com.clawbot.wechatbot.service.multitask.TaskPlanner;
 import com.clawbot.wechatbot.tools.FunctionTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
@@ -33,6 +36,7 @@ import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 import java.util.List;
 
@@ -126,9 +130,26 @@ public class BotBeanConfiguration {
     }
 
     @Bean
-    ChatService chatService(DeepSeekClient client, FunctionToolRegistry registry, BotConfig config) {
+    DeepSeekChatService singleTaskChatService(
+        DeepSeekClient client, FunctionToolRegistry registry, BotConfig config) {
         return new DeepSeekChatService(
             client, registry, config.getSystemPrompt(), config.getDeepSeekMaxToolRounds());
+    }
+
+    @Bean
+    TaskPlanner taskPlanner(DeepSeekClient client, BotConfig config) {
+        return new LlmTaskPlanner(client, config.getDeepSeekMultiTaskMaxTasks());
+    }
+
+    @Bean(destroyMethod = "close")
+    @Primary
+    ChatService chatService(DeepSeekChatService singleTaskChatService,
+                            TaskPlanner taskPlanner, BotConfig config) {
+        return new MultiTaskChatService(
+            singleTaskChatService,
+            taskPlanner,
+            config.isDeepSeekMultiTaskEnabled(),
+            config.getDeepSeekMultiTaskMaxParallelism());
     }
 
     @Bean
@@ -178,8 +199,9 @@ public class BotBeanConfiguration {
     }
 
     @Bean
-    MessageHandler documentMessageHandler(ChatService chat, DocumentService documents) {
-        return new DocumentMessageHandler(chat, documents);
+    MessageHandler documentMessageHandler(DeepSeekChatService singleTaskChatService,
+                                          DocumentService documents) {
+        return new DocumentMessageHandler(singleTaskChatService, documents);
     }
 
     @Bean
