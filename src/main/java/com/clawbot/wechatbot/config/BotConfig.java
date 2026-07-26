@@ -79,6 +79,15 @@ public class BotConfig {
     public int getWebPageExtractMaxBodyChars() {
         return getInt("webpage.extract.max-body-chars");
     }
+    public int getWebPageExtractMaxResponseBytes() {
+        return getInt("webpage.extract.max-response-bytes");
+    }
+    public int getWebPageExtractMaxRedirects() {
+        return getInt("webpage.extract.max-redirects");
+    }
+    public String getWebPageExtractAllowedPorts() {
+        return get("webpage.extract.allowed-ports");
+    }
 
     public String getTianapiApiKey() { return get("tianapi.api.key"); }
     public int getLoginTimeoutMs() { return getInt("wechat.login.timeout-ms"); }

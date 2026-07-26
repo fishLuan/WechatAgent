@@ -35,11 +35,15 @@ class ApplicationTests {
 
     @Test
     void contextLoads() {
-        assertEquals(7, toolRegistry.size());
+        assertEquals(9, toolRegistry.size());
         assertEquals(4, handlers.size());
         assertTrue(toolRegistry.definitions().findValuesAsText("name").contains("convert_currency"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name")
             .contains("calculate_bazi_fortune"));
+        assertTrue(toolRegistry.definitions().findValuesAsText("name")
+            .contains("get_current_time"));
+        assertTrue(toolRegistry.definitions().findValuesAsText("name")
+            .contains("validate_id_card"));
         assertInstanceOf(MultiTaskChatService.class, chatService);
     }
 

@@ -36,13 +36,21 @@ import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
 import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.tools.currenttimetool.CurrentTimeTool;
+import com.clawbot.wechatbot.tools.webaccess.SafeHttpFetcher;
+import com.clawbot.wechatbot.tools.webaccess.UrlAccessPolicy;
+import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractClient;
 import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 应用对象装配中心。业务类保持纯 Java 构造器，生命周期和依赖关系由 Spring 管理。
@@ -116,16 +124,48 @@ public class BotBeanConfiguration {
     }
 
     @Bean
-    WebPageExtractTool webPageExtractTool(BotConfig config) {
-        return new WebPageExtractTool(
-            config.getWebPageExtractConnectTimeoutSeconds(),
-            config.getWebPageExtractRequestTimeoutSeconds(),
-            config.getWebPageExtractMaxBodyChars());
+    UrlAccessPolicy urlAccessPolicy(BotConfig config) {
+        Set<Integer> allowedPorts = Arrays.stream(
+                config.getWebPageExtractAllowedPorts().split(","))
+            .map(String::trim)
+            .filter(value -> !value.isEmpty())
+            .map(Integer::parseInt)
+            .collect(Collectors.toUnmodifiableSet());
+        return new UrlAccessPolicy(allowedPorts);
     }
 
     @Bean
-    UrlSafetyChecker urlSafetyChecker(ObjectMapper mapper) {
-        return new UrlSafetyChecker(mapper);
+    SafeHttpFetcher safeHttpFetcher(BotConfig config, UrlAccessPolicy accessPolicy) {
+        HttpClient http = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(
+                config.getWebPageExtractConnectTimeoutSeconds()))
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build();
+        return new SafeHttpFetcher(
+            http,
+            accessPolicy,
+            Duration.ofSeconds(config.getWebPageExtractRequestTimeoutSeconds()),
+            config.getWebPageExtractMaxResponseBytes(),
+            config.getWebPageExtractMaxRedirects(),
+            "ClawBot-SafeHttpFetcher/1.0"
+        );
+    }
+
+    @Bean
+    WebPageExtractTool webPageExtractTool(
+        BotConfig config, SafeHttpFetcher fetcher, ObjectMapper mapper
+    ) {
+        WebPageExtractClient client =
+            new WebPageExtractClient(fetcher, config.getWebPageExtractMaxBodyChars());
+        return new WebPageExtractTool(
+            client, mapper, config.getWebPageExtractMaxBodyChars());
+    }
+
+    @Bean
+    UrlSafetyChecker urlSafetyChecker(
+        ObjectMapper mapper, SafeHttpFetcher safeHttpFetcher
+    ) {
+        return new UrlSafetyChecker(mapper, safeHttpFetcher);
     }
 
     @Bean

@@ -45,7 +45,7 @@ public class WebPageExtractTool implements FunctionTool {
             .put("description", "需要抓取的网页 URL，必须是 http 或 https 链接。");
         properties.putObject("max_body_chars")
             .put("type", "integer")
-            .put("description", "最多返回多少个正文字符；默认使用系统配置。");
+            .put("description", "最多返回多少个正文字符；不能超过系统配置的硬上限。");
         parameters.putArray("required").add("url");
 
         ObjectNode tool = mapper.createObjectNode();

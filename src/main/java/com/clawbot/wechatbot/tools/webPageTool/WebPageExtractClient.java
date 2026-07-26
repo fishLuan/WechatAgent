@@ -1,102 +1,142 @@
 package com.clawbot.wechatbot.tools.webPageTool;
 
+import com.clawbot.wechatbot.tools.webaccess.SafeHttpFetcher;
+import com.clawbot.wechatbot.tools.webaccess.UrlAccessPolicy;
+
 import java.net.URI;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** 独立网页正文抓取客户端，不依赖微信机器人和大模型。 */
 public class WebPageExtractClient {
-    private static final Pattern TITLE = Pattern.compile("(?is)<title[^>]*>(.*?)</title>");
+    private static final int DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+    private static final int DEFAULT_MAX_REDIRECTS = 3;
+    private static final Pattern TITLE =
+        Pattern.compile("(?is)<title[^>]*>(.*?)</title>");
     private static final Pattern DESCRIPTION = Pattern.compile(
-        "(?is)<meta\\s+[^>]*(?:name|property)=[\"'](?:description|og:description)[\"'][^>]*content=[\"'](.*?)[\"'][^>]*>");
-    private static final Pattern CONTENT_TYPE_CHARSET = Pattern.compile("(?i)charset=([^;]+)");
+        "(?is)<meta\\s+[^>]*(?:name|property)=[\"']"
+            + "(?:description|og:description)[\"'][^>]*content=[\"'](.*?)[\"'][^>]*>");
+    private static final Pattern CONTENT_TYPE_CHARSET =
+        Pattern.compile("(?i)charset=([^;]+)");
 
-    private final HttpClient http;
-    private final Duration requestTimeout;
+    private final SafeHttpFetcher fetcher;
     private final int defaultMaxBodyChars;
-    private final String userAgent;
 
-    public WebPageExtractClient(int connectTimeoutSeconds, int requestTimeoutSeconds, int defaultMaxBodyChars) {
-        this(HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds))
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .build(), Duration.ofSeconds(requestTimeoutSeconds), defaultMaxBodyChars,
-            "ClawBot-WebPageExtractTool/1.0");
+    public WebPageExtractClient(
+        int connectTimeoutSeconds,
+        int requestTimeoutSeconds,
+        int defaultMaxBodyChars
+    ) {
+        this(
+            createDefaultFetcher(
+                connectTimeoutSeconds,
+                requestTimeoutSeconds,
+                DEFAULT_MAX_RESPONSE_BYTES,
+                DEFAULT_MAX_REDIRECTS),
+            defaultMaxBodyChars
+        );
     }
 
-    public WebPageExtractClient(HttpClient http, Duration requestTimeout, int defaultMaxBodyChars) {
-        this(http, requestTimeout, defaultMaxBodyChars, "ClawBot-WebPageExtractTool/1.0");
+    public WebPageExtractClient(
+        HttpClient http, Duration requestTimeout, int defaultMaxBodyChars
+    ) {
+        this(
+            new SafeHttpFetcher(
+                http,
+                new UrlAccessPolicy(Set.of(80, 443)),
+                requestTimeout,
+                DEFAULT_MAX_RESPONSE_BYTES,
+                DEFAULT_MAX_REDIRECTS,
+                "ClawBot-WebPageExtractTool/1.0"),
+            defaultMaxBodyChars
+        );
     }
 
-    public WebPageExtractClient(HttpClient http, Duration requestTimeout, int defaultMaxBodyChars,
-                                String userAgent) {
-        this.http = http == null ? HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .build() : http;
-        this.requestTimeout = requestTimeout == null ? Duration.ofSeconds(15) : requestTimeout;
+    public WebPageExtractClient(SafeHttpFetcher fetcher, int defaultMaxBodyChars) {
+        if (fetcher == null) throw new IllegalArgumentException("fetcher must not be null");
+        if (defaultMaxBodyChars < 1) {
+            throw new IllegalArgumentException("defaultMaxBodyChars must be greater than 0");
+        }
+        this.fetcher = fetcher;
         this.defaultMaxBodyChars = defaultMaxBodyChars;
-        this.userAgent = userAgent == null || userAgent.isBlank()
-            ? "ClawBot-WebPageExtractTool/1.0" : userAgent;
     }
 
-    public WebPageExtractResult extract(WebPageExtractRequest request) throws Exception {
+    public WebPageExtractResult extract(WebPageExtractRequest request) {
         if (request == null || request.getUrl().isEmpty()) {
             return WebPageExtractResult.error("", "url 参数不能为空");
         }
-        URI uri = normalizeUri(request.getUrl());
-        if (!"http".equalsIgnoreCase(uri.getScheme()) && !"https".equalsIgnoreCase(uri.getScheme())) {
-            return WebPageExtractResult.error(request.getUrl(), "仅支持 http/https URL");
+
+        URI uri;
+        try {
+            uri = normalizeUri(request.getUrl());
+        } catch (Exception e) {
+            return WebPageExtractResult.error(request.getUrl(), "URL 格式无效");
         }
 
-        HttpRequest httpRequest = HttpRequest.newBuilder(uri)
-            .timeout(requestTimeout)
-            .header("User-Agent", userAgent)
-            .header("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5")
-            .GET()
+        try {
+            SafeHttpFetcher.TextFetchResponse response = fetcher.fetchText(uri);
+            int status = response.statusCode();
+            if (status < 200 || status >= 300) {
+                return WebPageExtractResult.error(
+                    request.getUrl(), "网页请求失败，HTTP " + status);
+            }
+
+            String html = decode(response.body(), response.contentType());
+            String title = cleanText(firstMatch(TITLE, html));
+            String description = cleanText(firstMatch(DESCRIPTION, html));
+            String body = extractBodyText(html);
+            int requestedMax = request.getMaxBodyChars();
+            int maxChars = requestedMax > 0
+                ? Math.min(requestedMax, defaultMaxBodyChars)
+                : defaultMaxBodyChars;
+            if (body.length() > maxChars) {
+                body = body.substring(0, maxChars).trim();
+            }
+
+            return WebPageExtractResult.ok(
+                request.getUrl(),
+                response.finalUri().toString(),
+                status,
+                title,
+                description,
+                body
+            );
+        } catch (Exception e) {
+            String message = e.getMessage();
+            if (message == null || message.isBlank()) message = "未知错误";
+            return WebPageExtractResult.error(request.getUrl(), "网页访问被拒绝：" + message);
+        }
+    }
+
+    private static SafeHttpFetcher createDefaultFetcher(
+        int connectTimeoutSeconds,
+        int requestTimeoutSeconds,
+        int maxResponseBytes,
+        int maxRedirects
+    ) {
+        HttpClient http = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds))
+            .followRedirects(HttpClient.Redirect.NEVER)
             .build();
-        HttpResponse<byte[]> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofByteArray());
-        int status = response.statusCode();
-        if (status < 200 || status >= 300) {
-            return WebPageExtractResult.error(request.getUrl(), "网页请求失败，HTTP " + status);
-        }
-
-        String contentType = response.headers().firstValue("Content-Type").orElse("");
-        if (!contentType.isEmpty()
-            && !contentType.toLowerCase(Locale.ROOT).contains("text")
-            && !contentType.toLowerCase(Locale.ROOT).contains("html")
-            && !contentType.toLowerCase(Locale.ROOT).contains("xml")) {
-            return WebPageExtractResult.error(request.getUrl(), "不支持的 Content-Type: " + contentType);
-        }
-
-        String html = decode(response.body(), contentType);
-        String title = cleanText(firstMatch(TITLE, html));
-        String description = cleanText(firstMatch(DESCRIPTION, html));
-        String body = extractBodyText(html);
-        int maxChars = request.getMaxBodyChars() > 0 ? request.getMaxBodyChars() : defaultMaxBodyChars;
-        if (maxChars > 0 && body.length() > maxChars) {
-            body = body.substring(0, maxChars).trim();
-        }
-
-        return WebPageExtractResult.ok(
-            request.getUrl(),
-            response.uri().toString(),
-            status,
-            title,
-            description,
-            body
+        return new SafeHttpFetcher(
+            http,
+            new UrlAccessPolicy(Set.of(80, 443)),
+            Duration.ofSeconds(requestTimeoutSeconds),
+            maxResponseBytes,
+            maxRedirects,
+            "ClawBot-WebPageExtractTool/1.0"
         );
     }
 
     private URI normalizeUri(String url) {
         String trimmed = url.trim();
-        if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+        if (!trimmed.regionMatches(true, 0, "http://", 0, 7)
+                && !trimmed.regionMatches(true, 0, "https://", 0, 8)) {
             trimmed = "https://" + trimmed;
         }
         return URI.create(trimmed);
@@ -104,10 +144,12 @@ public class WebPageExtractClient {
 
     private String decode(byte[] bytes, String contentType) {
         Charset charset = StandardCharsets.UTF_8;
-        Matcher matcher = CONTENT_TYPE_CHARSET.matcher(contentType == null ? "" : contentType);
+        Matcher matcher =
+            CONTENT_TYPE_CHARSET.matcher(contentType == null ? "" : contentType);
         if (matcher.find()) {
             try {
-                charset = Charset.forName(matcher.group(1).trim().replace("\"", ""));
+                charset = Charset.forName(
+                    matcher.group(1).trim().replace("\"", ""));
             } catch (Exception ignored) {
                 charset = StandardCharsets.UTF_8;
             }
@@ -121,7 +163,8 @@ public class WebPageExtractClient {
         text = text.replaceAll("(?is)<style[^>]*>.*?</style>", " ");
         text = text.replaceAll("(?is)<noscript[^>]*>.*?</noscript>", " ");
         text = text.replaceAll("(?is)<!--.*?-->", " ");
-        text = text.replaceAll("(?is)</(p|div|section|article|header|footer|li|h[1-6]|br|tr)>", "\n");
+        text = text.replaceAll(
+            "(?is)</(p|div|section|article|header|footer|li|h[1-6]|br|tr)>", "\n");
         text = text.replaceAll("(?is)<[^>]+>", " ");
         return cleanText(text);
     }
