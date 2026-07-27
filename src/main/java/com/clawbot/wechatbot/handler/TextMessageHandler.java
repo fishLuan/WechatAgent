@@ -12,6 +12,7 @@ import com.clawbot.wechatbot.memory.MemoryProperties;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
+import com.clawbot.wechatbot.service.reply.LongReplyManager;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.util.JsonUtils;
 
@@ -36,6 +37,7 @@ public class TextMessageHandler implements MessageHandler {
     private final TianNewsTool tianNewsTool;
     private final ConversationMemoryService memoryService;
     private final MemoryProperties memoryProperties;
+    private final LongReplyManager longReplyManager;
 
     public TextMessageHandler(
         ChatService chatService,
@@ -43,7 +45,8 @@ public class TextMessageHandler implements MessageHandler {
         DocumentService documentService,
         TianNewsTool tianNewsTool,
         ConversationMemoryService memoryService,
-        MemoryProperties memoryProperties
+        MemoryProperties memoryProperties,
+        LongReplyManager longReplyManager
     ) {
         this.chatService = chatService;
         this.tts = tts;
@@ -51,6 +54,7 @@ public class TextMessageHandler implements MessageHandler {
         this.tianNewsTool = tianNewsTool;
         this.memoryService = memoryService;
         this.memoryProperties = memoryProperties;
+        this.longReplyManager = longReplyManager;
         DocumentService.silencePdfLogs();  // 屏蔽 PDF 库的噪音日志
     }
 
@@ -72,6 +76,9 @@ public class TextMessageHandler implements MessageHandler {
         if (msg.getMessage_id() != null) {
             if (!memoryService.markMessageProcessed(from, msg.getMessage_id())) return;
         }
+
+        // 如果上一条回复过长，优先处理用户对发送方式的选择，不再调用大模型。
+        if (handlePendingLongReply(client, from, userText)) return;
 
         // 特殊命令
         if (isCommand(userText)) {
@@ -125,7 +132,7 @@ public class TextMessageHandler implements MessageHandler {
 
             // 3. 发送文字回复（清理大模型可能自作主张加的"（用男声）"等标记）
             String textReply = cleanBotReply(reply);
-            safeSendText(client, from, textReply);
+            deliverTextReply(client, from, textReply, wantDoc);
             appendHistory(from, userText, textReply);
             System.out.println("[RECV] <" + from + "> " + userText);
             System.out.println("[SEND] " + textReply.replace("\n", " | "));
@@ -159,7 +166,23 @@ public class TextMessageHandler implements MessageHandler {
                     System.out.println("[INFO] ✅ 文档已发送: " + fileName + " (" + fileBytes.length + " bytes)");
                 } catch (Exception e2) {
                     System.err.println("[WARN] 文档生成/发送失败: " + e2.getMessage());
-                    safeSendText(client, from, "（文档生成失败，但上面的文字回复已经发了～）");
+                    if (longReplyManager.requiresChoice(textReply)
+                        && longReplyManager.save(from, textReply)) {
+                        safeSendText(client, from,
+                            "文档生成失败，完整回复已为你保留。\n"
+                                + longReplyManager.choicePrompt());
+                    } else if (longReplyManager.requiresChoice(textReply)) {
+                        safeSendText(client, from, "文档生成失败，将尝试分段发送完整回复。");
+                        try {
+                            sendReplyChunks(client, from, textReply);
+                        } catch (Exception sendFailure) {
+                            System.err.println("[WARN] 文档失败后的分段发送也失败: "
+                                + sendFailure.getMessage());
+                            safeSendText(client, from, "完整回复发送失败，请稍后重试。");
+                        }
+                    } else {
+                        safeSendText(client, from, "（文档生成失败，但上面的文字回复已经发了～）");
+                    }
                 }
             }
         } catch (Exception e) {
@@ -540,6 +563,116 @@ public class TextMessageHandler implements MessageHandler {
             }
         }
         return sb.toString();
+    }
+
+    /**
+     * 消费上一条长回复对应的发送方式选择。
+     *
+     * @return true 表示当前消息已经作为选择处理，不应继续进入大模型。
+     */
+    private boolean handlePendingLongReply(
+        ILinkClient client, String userId, String userText
+    ) {
+        LongReplyManager.Lookup lookup = longReplyManager.lookup(userId);
+        LongReplyManager.Choice choice = longReplyManager.parseChoice(userText);
+
+        if (lookup.status() == LongReplyManager.LookupStatus.NONE) return false;
+        if (lookup.status() == LongReplyManager.LookupStatus.EXPIRED) {
+            if (choice == LongReplyManager.Choice.UNKNOWN) return false;
+            safeSendText(client, userId, "上一条长回复已过期，请重新提问。");
+            return true;
+        }
+
+        String content = lookup.content();
+        switch (choice) {
+            case CHUNKS -> {
+                try {
+                    sendReplyChunks(client, userId, content);
+                    longReplyManager.remove(userId);
+                } catch (Exception e) {
+                    System.err.println("[WARN] 长回复分段发送失败: " + e.getMessage());
+                    safeSendText(client, userId,
+                        "分段发送失败，完整回复仍为你保留，可以回复“1”重试或回复“2”改用文档。");
+                }
+                return true;
+            }
+            case DOCUMENT -> {
+                if (documentService == null) {
+                    safeSendText(client, userId,
+                        "文档服务暂不可用，可以回复“1”改为分段发送。");
+                    return true;
+                }
+                try {
+                    byte[] fileBytes = documentService.createWord("完整回复", content);
+                    String fileName = "long-reply-" + System.currentTimeMillis() + ".docx";
+                    client.sendFile(
+                        userId,
+                        fileBytes,
+                        fileName,
+                        "📄 完整回复（Word，" + content.length() + "字）");
+                    longReplyManager.remove(userId);
+                    System.out.println("[INFO] ✅ 长回复文档已发送: " + fileName
+                        + " (" + fileBytes.length + " bytes)");
+                } catch (Exception e) {
+                    System.err.println("[WARN] 长回复文档生成/发送失败: " + e.getMessage());
+                    safeSendText(client, userId,
+                        "文档生成失败，完整回复仍为你保留，可以回复“2”重试或回复“1”改为分段发送。");
+                }
+                return true;
+            }
+            case CANCEL -> {
+                longReplyManager.remove(userId);
+                safeSendText(client, userId, "已取消发送这条长回复。");
+                return true;
+            }
+            case UNKNOWN -> {
+                safeSendText(client, userId,
+                    "请回复“1”分段发送、“2”生成 Word 文档，或者回复“取消”。");
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void deliverTextReply(
+        ILinkClient client, String userId, String textReply, boolean documentAlreadyRequested
+    ) {
+        if (!longReplyManager.requiresChoice(textReply)) {
+            safeSendText(client, userId, textReply);
+            return;
+        }
+
+        // 用户在原问题中已经明确要求文档时，后续流程会直接发送文件，无需重复询问。
+        if (documentAlreadyRequested) {
+            safeSendText(client, userId, "回复内容较长，已按你的要求整理为文档。");
+            return;
+        }
+
+        if (longReplyManager.save(userId, textReply)) {
+            safeSendText(client, userId, longReplyManager.choicePrompt());
+            return;
+        }
+
+        // 极端超长内容不进入暂存区，避免突破内存保护上限。
+        safeSendText(client, userId, "回复超过暂存上限，将自动分段发送。");
+        try {
+            sendReplyChunks(client, userId, textReply);
+        } catch (Exception e) {
+            System.err.println("[WARN] 超长回复自动分段发送失败: " + e.getMessage());
+            safeSendText(client, userId, "长回复发送失败，请缩小问题范围后重试。");
+        }
+    }
+
+    private void sendReplyChunks(ILinkClient client, String userId, String content)
+        throws Exception {
+        List<String> chunks = longReplyManager.split(content);
+        for (int index = 0; index < chunks.size(); index++) {
+            String numberedChunk = "【" + (index + 1) + "/" + chunks.size() + "】\n"
+                + chunks.get(index);
+            long typingMillis = Math.min(2000, 300L + numberedChunk.length() * 20L);
+            client.sendTextWithTyping(userId, numberedChunk, typingMillis);
+        }
+        System.out.println("[INFO] ✅ 长回复已分 " + chunks.size() + " 段发送");
     }
 
     private void safeSendText(ILinkClient client, String to, String text) {

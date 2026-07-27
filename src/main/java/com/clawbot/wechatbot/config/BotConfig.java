@@ -92,6 +92,14 @@ public class BotConfig {
     public String getTianapiApiKey() { return get("tianapi.api.key"); }
     public int getLoginTimeoutMs() { return getInt("wechat.login.timeout-ms"); }
     public int getMaxSessions() { return getInt("wechat.max-sessions"); }
+    public int getLongReplyThreshold() { return getInt("wechat.reply.long-text-threshold"); }
+    public int getLongReplyChunkSize() { return getInt("wechat.reply.chunk-size"); }
+    public int getLongReplyPendingExpireMinutes() {
+        return getInt("wechat.reply.pending-expire-minutes");
+    }
+    public int getLongReplyMaxPendingChars() {
+        return getInt("wechat.reply.max-pending-chars");
+    }
 
     public boolean isDingTalkNotificationEnabled() {
         return getBoolean("notification.dingtalk.enabled");
