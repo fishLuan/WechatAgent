@@ -39,13 +39,12 @@ public class WebSearchTool implements FunctionTool {
         this(apiKey, DEFAULT_ENDPOINT, 30, 60);
     }
 
-    public WebSearchTool(String apiKey, String endpoint, int connectTimeoutSeconds, int requestTimeoutSeconds,
-                         HttpClient sharedHttpClient, ObjectMapper sharedMapper) {
+    public WebSearchTool(String apiKey, String endpoint, int connectTimeoutSeconds, int requestTimeoutSeconds) {
         String trimmedKey = apiKey == null ? "" : apiKey.trim();
         String trimmedEndpoint = (endpoint == null || endpoint.isBlank()) ? DEFAULT_ENDPOINT : endpoint;
 
-        this.mapper = sharedMapper == null ? new ObjectMapper() : sharedMapper;
-        SearchHttpClient http = new SearchHttpClient(connectTimeoutSeconds, requestTimeoutSeconds, sharedHttpClient);
+        this.mapper = new ObjectMapper();
+        SearchHttpClient http = new SearchHttpClient(connectTimeoutSeconds, requestTimeoutSeconds);
 
         this.channels = new ArrayList<>(2);
         this.channels.add(new BochaApiSearchChannel(trimmedKey, trimmedEndpoint, http, this.mapper));

@@ -19,13 +19,13 @@ public class DashScopeClient {
     private final ObjectMapper mapper;
 
     public DashScopeClient(String apiKey, String endpoint, int connectTimeoutSeconds,
-                           int requestTimeoutSeconds, HttpClient sharedHttpClient, ObjectMapper sharedMapper) {
+                           int requestTimeoutSeconds) {
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.endpoint = endpoint;
         this.requestTimeout = Duration.ofSeconds(requestTimeoutSeconds);
-        this.http = sharedHttpClient == null ? HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds)).build() : sharedHttpClient;
-        this.mapper = sharedMapper == null ? new ObjectMapper() : sharedMapper;
+        this.http = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds)).build();
+        this.mapper = new ObjectMapper();
     }
 
     public boolean isConfigured() {

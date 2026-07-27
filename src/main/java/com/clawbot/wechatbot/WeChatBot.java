@@ -19,8 +19,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.RejectedExecutionException;
 
 /**
  * 微信机器人运行时。
@@ -33,7 +31,6 @@ public class WeChatBot implements SmartLifecycle {
     private final BotConfig config;
     private final List<MessageHandler> handlers;
     private final NotificationService notifications;
-    private final ExecutorService messageHandlerExecutor;
     private final List<BotSession> sessions = new CopyOnWriteArrayList<>();
     private final String routeNamespace = "clawbot-" + UUID.randomUUID();
 
@@ -42,12 +39,11 @@ public class WeChatBot implements SmartLifecycle {
     private int nextSessionIndex = 1;
 
     public WeChatBot(BotConfig config, List<MessageHandler> handlers,
-                     NotificationService notifications, ExecutorService messageHandlerExecutor) {
+                     NotificationService notifications) {
         this.config = config;
         this.handlers = new ArrayList<>(handlers);
         this.handlers.sort(Comparator.comparingInt(MessageHandler::priority));
         this.notifications = notifications;
-        this.messageHandlerExecutor = messageHandlerExecutor;
     }
 
     @Override
@@ -146,28 +142,18 @@ public class WeChatBot implements SmartLifecycle {
         if (currentClient == null || messages == null || messages.isEmpty()) return;
         for (WeixinMessage message : messages) {
             if (message == null) continue;
-            final ILinkClient clientRef = currentClient;
-            final WeixinMessage msgRef = message;
-            try {
-                messageHandlerExecutor.execute(() -> handleSingleMessage(clientRef, msgRef));
-            } catch (RejectedExecutionException e) {
-                System.err.println("[WARN] 消息处理线程池已满，丢弃消息: " + message.getMessage_id());
-            }
-        }
-    }
-
-    private void handleSingleMessage(ILinkClient currentClient, WeixinMessage message) {
-        for (MessageHandler handler : handlers) {
-            try {
-                if (handler.canHandle(message)) {
-                    handler.handle(currentClient, message);
+            for (MessageHandler handler : handlers) {
+                try {
+                    if (handler.canHandle(message)) {
+                        handler.handle(currentClient, message);
+                        break;
+                    }
+                } catch (Exception e) {
+                    notifications.notifyError(
+                        "消息处理器/" + handler.getClass().getSimpleName(), e);
+                    System.err.println("[ERROR] 消息处理失败: " + e.getMessage());
                     break;
                 }
-            } catch (Exception e) {
-                notifications.notifyError(
-                    "消息处理器/" + handler.getClass().getSimpleName(), e);
-                System.err.println("[ERROR] 消息处理失败: " + e.getMessage());
-                break;
             }
         }
     }
@@ -179,9 +165,6 @@ public class WeChatBot implements SmartLifecycle {
             session.stop();
         }
         sessions.clear();
-        if (messageHandlerExecutor != null && !messageHandlerExecutor.isShutdown()) {
-            messageHandlerExecutor.shutdown();
-        }
     }
 
     @Override

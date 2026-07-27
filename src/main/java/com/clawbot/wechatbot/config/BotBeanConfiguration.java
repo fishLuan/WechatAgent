@@ -5,6 +5,8 @@ import com.clawbot.wechatbot.handler.DocumentMessageHandler;
 import com.clawbot.wechatbot.handler.ImageGenHandler;
 import com.clawbot.wechatbot.handler.ImageMessageHandler;
 import com.clawbot.wechatbot.handler.TextMessageHandler;
+import com.clawbot.wechatbot.memory.ConversationMemoryService;
+import com.clawbot.wechatbot.memory.MemoryProperties;
 import com.clawbot.wechatbot.notification.DingTalkNotificationService;
 import com.clawbot.wechatbot.notification.NoOpNotificationService;
 import com.clawbot.wechatbot.notification.NotificationService;
@@ -21,6 +23,10 @@ import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
 import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
 import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
+import com.clawbot.wechatbot.service.multitask.LlmTaskPlanner;
+import com.clawbot.wechatbot.service.multitask.MultiTaskChatService;
+import com.clawbot.wechatbot.service.multitask.TaskPlanner;
+import com.clawbot.wechatbot.service.reply.LongReplyManager;
 import com.clawbot.wechatbot.tools.FunctionTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
@@ -31,20 +37,21 @@ import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
 import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.tools.currenttimetool.CurrentTimeTool;
+import com.clawbot.wechatbot.tools.webaccess.SafeHttpFetcher;
+import com.clawbot.wechatbot.tools.webaccess.UrlAccessPolicy;
 import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractClient;
 import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 应用对象装配中心。业务类保持纯 Java 构造器，生命周期和依赖关系由 Spring 管理。
@@ -55,36 +62,6 @@ public class BotBeanConfiguration {
     @Bean
     ObjectMapper objectMapper() {
         return new ObjectMapper();
-    }
-
-    @Bean
-    HttpClient sharedHttpClient() {
-        return HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(30))
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .executor(Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() * 2,
-                namedThreadFactory("http-client-")))
-            .build();
-    }
-
-    @Bean
-    ExecutorService messageHandlerExecutor() {
-        int nThreads = Math.max(4, Runtime.getRuntime().availableProcessors());
-        return Executors.newFixedThreadPool(nThreads, namedThreadFactory("msg-handler-"));
-    }
-
-    @Bean
-    ScheduledExecutorService backgroundTaskExecutor() {
-        return Executors.newSingleThreadScheduledExecutor(namedThreadFactory("bg-task-"));
-    }
-
-    private static ThreadFactory namedThreadFactory(String prefix) {
-        AtomicInteger counter = new AtomicInteger(0);
-        return r -> {
-            Thread t = new Thread(r, prefix + counter.incrementAndGet());
-            t.setDaemon(true);
-            return t;
-        };
     }
 
     @Bean(destroyMethod = "close")
@@ -101,36 +78,33 @@ public class BotBeanConfiguration {
     }
 
     @Bean
-    DeepSeekClient deepSeekClient(BotConfig config, HttpClient sharedHttpClient, ObjectMapper mapper) {
+    DeepSeekClient deepSeekClient(BotConfig config) {
         return new DeepSeekClient(
             config.getDeepSeekApiKey(), config.getDeepSeekModel(), config.getDeepSeekUrl(),
             config.getDeepSeekTemperature(), config.getDeepSeekMaxTokens(),
-            config.getDeepSeekConnectTimeoutSeconds(), config.getDeepSeekRequestTimeoutSeconds(),
-            sharedHttpClient, mapper);
+            config.getDeepSeekConnectTimeoutSeconds(), config.getDeepSeekRequestTimeoutSeconds());
     }
 
     @Bean
-    DashScopeClient dashScopeClient(BotConfig config, HttpClient sharedHttpClient, ObjectMapper mapper) {
+    DashScopeClient dashScopeClient(BotConfig config) {
         return new DashScopeClient(
             config.getDashscopeApiKey(), config.getDashscopeEndpoint(),
-            config.getDashscopeConnectTimeoutSeconds(), config.getDashscopeRequestTimeoutSeconds(),
-            sharedHttpClient, mapper);
+            config.getDashscopeConnectTimeoutSeconds(), config.getDashscopeRequestTimeoutSeconds());
     }
 
     @Bean
-    AmapWeatherTool amapWeatherTool(BotConfig config, HttpClient sharedHttpClient, ObjectMapper mapper) {
+    AmapWeatherTool amapWeatherTool(BotConfig config) {
         return new AmapWeatherTool(
             config.getAmapWeatherApiKey(), config.getAmapWeatherEndpoint(),
-            config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds(),
-            sharedHttpClient, mapper);
+            config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds());
     }
 
     @Bean
-    ExchangeRateTool exchangeRateTool(BotConfig config, HttpClient sharedHttpClient, ObjectMapper mapper) {
+    ExchangeRateTool exchangeRateTool(BotConfig config) {
         return new ExchangeRateTool(
             config.getJuheExchangeApiKey(), config.getJuheExchangeEndpoint(),
             config.getJuheExchangeVersion(), config.getJuheExchangeConnectTimeoutSeconds(),
-            config.getJuheExchangeRequestTimeoutSeconds(), sharedHttpClient, mapper);
+            config.getJuheExchangeRequestTimeoutSeconds());
     }
 
     @Bean
@@ -139,34 +113,60 @@ public class BotBeanConfiguration {
     }
 
     @Bean
-    WebSearchTool webSearchTool(BotConfig config, HttpClient sharedHttpClient, ObjectMapper mapper) {
+    WebSearchTool webSearchTool(BotConfig config) {
         return new WebSearchTool(
             config.getBochaApiKey(), config.getBochaEndpoint(),
-            config.getBochaConnectTimeoutSeconds(), config.getBochaRequestTimeoutSeconds(),
-            sharedHttpClient, mapper);
+            config.getBochaConnectTimeoutSeconds(), config.getBochaRequestTimeoutSeconds());
     }
 
     @Bean
-    TianNewsTool tianNewsTool(BotConfig config, HttpClient sharedHttpClient, ObjectMapper mapper) {
-        return new TianNewsTool(config.getTianapiApiKey(), sharedHttpClient, mapper);
+    TianNewsTool tianNewsTool(BotConfig config) {
+        return new TianNewsTool(config.getTianapiApiKey());
     }
 
     @Bean
-    WebPageExtractClient webPageExtractClient(BotConfig config, HttpClient sharedHttpClient) {
-        return new WebPageExtractClient(
-            sharedHttpClient,
+    UrlAccessPolicy urlAccessPolicy(BotConfig config) {
+        Set<Integer> allowedPorts = Arrays.stream(
+                config.getWebPageExtractAllowedPorts().split(","))
+            .map(String::trim)
+            .filter(value -> !value.isEmpty())
+            .map(Integer::parseInt)
+            .collect(Collectors.toUnmodifiableSet());
+        return new UrlAccessPolicy(allowedPorts);
+    }
+
+    @Bean
+    SafeHttpFetcher safeHttpFetcher(BotConfig config, UrlAccessPolicy accessPolicy) {
+        HttpClient http = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(
+                config.getWebPageExtractConnectTimeoutSeconds()))
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build();
+        return new SafeHttpFetcher(
+            http,
+            accessPolicy,
             Duration.ofSeconds(config.getWebPageExtractRequestTimeoutSeconds()),
-            config.getWebPageExtractMaxBodyChars());
+            config.getWebPageExtractMaxResponseBytes(),
+            config.getWebPageExtractMaxRedirects(),
+            "ClawBot-SafeHttpFetcher/1.0"
+        );
     }
 
     @Bean
-    WebPageExtractTool webPageExtractTool(WebPageExtractClient client, ObjectMapper mapper, BotConfig config) {
-        return new WebPageExtractTool(client, mapper, config.getWebPageExtractMaxBodyChars());
+    WebPageExtractTool webPageExtractTool(
+        BotConfig config, SafeHttpFetcher fetcher, ObjectMapper mapper
+    ) {
+        WebPageExtractClient client =
+            new WebPageExtractClient(fetcher, config.getWebPageExtractMaxBodyChars());
+        return new WebPageExtractTool(
+            client, mapper, config.getWebPageExtractMaxBodyChars());
     }
 
     @Bean
-    UrlSafetyChecker urlSafetyChecker(ObjectMapper mapper, HttpClient sharedHttpClient) {
-        return new UrlSafetyChecker(mapper, sharedHttpClient);
+    UrlSafetyChecker urlSafetyChecker(
+        ObjectMapper mapper, SafeHttpFetcher safeHttpFetcher
+    ) {
+        return new UrlSafetyChecker(mapper, safeHttpFetcher);
     }
 
     @Bean
@@ -185,9 +185,26 @@ public class BotBeanConfiguration {
     }
 
     @Bean
-    ChatService chatService(DeepSeekClient client, FunctionToolRegistry registry, BotConfig config) {
+    DeepSeekChatService singleTaskChatService(
+        DeepSeekClient client, FunctionToolRegistry registry, BotConfig config) {
         return new DeepSeekChatService(
             client, registry, config.getSystemPrompt(), config.getDeepSeekMaxToolRounds());
+    }
+
+    @Bean
+    TaskPlanner taskPlanner(DeepSeekClient client, BotConfig config) {
+        return new LlmTaskPlanner(client, config.getDeepSeekMultiTaskMaxTasks());
+    }
+
+    @Bean(destroyMethod = "close")
+    @Primary
+    ChatService chatService(DeepSeekChatService singleTaskChatService,
+                            TaskPlanner taskPlanner, BotConfig config) {
+        return new MultiTaskChatService(
+            singleTaskChatService,
+            taskPlanner,
+            config.isDeepSeekMultiTaskEnabled(),
+            config.getDeepSeekMultiTaskMaxParallelism());
     }
 
     @Bean
@@ -227,6 +244,15 @@ public class BotBeanConfiguration {
     }
 
     @Bean
+    LongReplyManager longReplyManager(BotConfig config) {
+        return new LongReplyManager(
+            config.getLongReplyThreshold(),
+            config.getLongReplyChunkSize(),
+            config.getLongReplyMaxPendingChars(),
+            Duration.ofMinutes(config.getLongReplyPendingExpireMinutes()));
+    }
+
+    @Bean
     MessageHandler imageMessageHandler(VisionService service) {
         return new ImageMessageHandler(service);
     }
@@ -237,16 +263,27 @@ public class BotBeanConfiguration {
     }
 
     @Bean
-    MessageHandler documentMessageHandler(ChatService chat, DocumentService documents) {
-        return new DocumentMessageHandler(chat, documents);
+    MessageHandler documentMessageHandler(DeepSeekChatService singleTaskChatService,
+                                          DocumentService documents) {
+        return new DocumentMessageHandler(singleTaskChatService, documents);
     }
 
     @Bean
     MessageHandler textMessageHandler(ChatService chat, SpeechSynthesisService speech,
                                       DocumentService documents, TianNewsTool news,
                                       BotConfig config,
-                                      ScheduledExecutorService backgroundExecutor) {
+                                      ConversationMemoryService memoryService,
+                                      MemoryProperties memoryProperties,
+                                      LongReplyManager longReplyManager) {
         SpeechSynthesisService optionalSpeech = config.isDashscopeConfigured() ? speech : null;
-        return new TextMessageHandler(chat, optionalSpeech, documents, news, backgroundExecutor);
+        return new TextMessageHandler(
+            chat,
+            optionalSpeech,
+            documents,
+            news,
+            memoryService,
+            memoryProperties,
+            longReplyManager
+        );
     }
 }

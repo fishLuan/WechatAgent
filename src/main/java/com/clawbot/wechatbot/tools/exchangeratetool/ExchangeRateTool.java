@@ -47,13 +47,10 @@ public class ExchangeRateTool implements FunctionTool {
     }
 
     public ExchangeRateTool(String apiKey, String endpoint, String version,
-                            int connectTimeoutSeconds, int requestTimeoutSeconds,
-                            HttpClient sharedHttpClient, ObjectMapper sharedMapper) {
+                            int connectTimeoutSeconds, int requestTimeoutSeconds) {
         this(apiKey, endpoint, version,
-            sharedHttpClient == null ? HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds)).build() : sharedHttpClient,
-            sharedMapper == null ? new ObjectMapper() : sharedMapper,
-            Duration.ofSeconds(requestTimeoutSeconds));
+            HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(connectTimeoutSeconds)).build(),
+            new ObjectMapper(), Duration.ofSeconds(requestTimeoutSeconds));
     }
 
     ExchangeRateTool(String apiKey, String endpoint, String version, HttpClient http,

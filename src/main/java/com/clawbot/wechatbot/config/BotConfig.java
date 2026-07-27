@@ -24,6 +24,15 @@ public class BotConfig {
     public double getDeepSeekTemperature() { return getDouble("deepseek.temperature"); }
     public int getDeepSeekMaxTokens() { return getInt("deepseek.max-tokens"); }
     public int getDeepSeekMaxToolRounds() { return getInt("deepseek.max-tool-rounds"); }
+    public boolean isDeepSeekMultiTaskEnabled() {
+        return getBoolean("deepseek.multi-task.enabled");
+    }
+    public int getDeepSeekMultiTaskMaxTasks() {
+        return getInt("deepseek.multi-task.max-tasks");
+    }
+    public int getDeepSeekMultiTaskMaxParallelism() {
+        return getInt("deepseek.multi-task.max-parallelism");
+    }
     public int getDeepSeekConnectTimeoutSeconds() { return getInt("deepseek.connect-timeout-seconds"); }
     public int getDeepSeekRequestTimeoutSeconds() { return getInt("deepseek.request-timeout-seconds"); }
 
@@ -70,10 +79,27 @@ public class BotConfig {
     public int getWebPageExtractMaxBodyChars() {
         return getInt("webpage.extract.max-body-chars");
     }
+    public int getWebPageExtractMaxResponseBytes() {
+        return getInt("webpage.extract.max-response-bytes");
+    }
+    public int getWebPageExtractMaxRedirects() {
+        return getInt("webpage.extract.max-redirects");
+    }
+    public String getWebPageExtractAllowedPorts() {
+        return get("webpage.extract.allowed-ports");
+    }
 
     public String getTianapiApiKey() { return get("tianapi.api.key"); }
     public int getLoginTimeoutMs() { return getInt("wechat.login.timeout-ms"); }
     public int getMaxSessions() { return getInt("wechat.max-sessions"); }
+    public int getLongReplyThreshold() { return getInt("wechat.reply.long-text-threshold"); }
+    public int getLongReplyChunkSize() { return getInt("wechat.reply.chunk-size"); }
+    public int getLongReplyPendingExpireMinutes() {
+        return getInt("wechat.reply.pending-expire-minutes");
+    }
+    public int getLongReplyMaxPendingChars() {
+        return getInt("wechat.reply.max-pending-chars");
+    }
 
     public boolean isDingTalkNotificationEnabled() {
         return getBoolean("notification.dingtalk.enabled");

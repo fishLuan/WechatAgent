@@ -28,13 +28,10 @@ public class AmapWeatherTool implements FunctionTool {
             .connectTimeout(Duration.ofSeconds(10)).build(), new ObjectMapper(), Duration.ofSeconds(15));
     }
 
-    public AmapWeatherTool(String apiKey, String endpoint, int connectTimeoutSeconds, int requestTimeoutSeconds,
-                           HttpClient sharedHttpClient, ObjectMapper sharedMapper) {
-        this(apiKey, endpoint,
-            sharedHttpClient == null ? HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds)).build() : sharedHttpClient,
-            sharedMapper == null ? new ObjectMapper() : sharedMapper,
-            Duration.ofSeconds(requestTimeoutSeconds));
+    public AmapWeatherTool(String apiKey, String endpoint, int connectTimeoutSeconds, int requestTimeoutSeconds) {
+        this(apiKey, endpoint, HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds)).build(),
+            new ObjectMapper(), Duration.ofSeconds(requestTimeoutSeconds));
     }
 
     AmapWeatherTool(String apiKey, String endpoint, HttpClient http, ObjectMapper mapper,

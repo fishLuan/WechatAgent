@@ -5,27 +5,18 @@ import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.VoiceItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.memory.ConversationMemory;
+import com.clawbot.wechatbot.memory.ConversationMemoryService;
+import com.clawbot.wechatbot.memory.ConversationMessage;
+import com.clawbot.wechatbot.memory.MemoryProperties;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
+import com.clawbot.wechatbot.service.reply.LongReplyManager;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.util.JsonUtils;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.ReentrantLock;
-import java.util.regex.Pattern;
 
 /**
  * 文本消息处理器 —— 处理用户发来的普通文本/语音，调用 DeepSeek 对话
@@ -40,91 +31,38 @@ import java.util.regex.Pattern;
  */
 public class TextMessageHandler implements MessageHandler {
 
-    private static final String HISTORY_FILE = "data/chat-history.json";
-    private static final String SUMMARY_FILE = "data/memory-summary.txt";
-    private static final String COUNTER_FILE = "data/turn-counter.txt";
-    private static final int RECENT_TURNS = 15;
-    private static final int SUMMARY_EVERY = 10;
-    private static final int PROCESSED_MSG_IDS_MAX = 10000;
-    private static final int SAVE_DEBOUNCE_MS = 2000;
-
     private final ChatService chatService;
     private final SpeechSynthesisService tts;
     private final DocumentService documentService;
     private final TianNewsTool tianNewsTool;
-    private final ScheduledExecutorService backgroundExecutor;
+    private final ConversationMemoryService memoryService;
+    private final MemoryProperties memoryProperties;
+    private final LongReplyManager longReplyManager;
 
-    private final StringBuilder longTermSummary = new StringBuilder();
-    private final List<String> recentMessages = new ArrayList<>();
-    private final AtomicInteger turnCounter = new AtomicInteger(0);
-    private final Set<Long> processedMsgIds = Collections.synchronizedSet(
-        Collections.newSetFromMap(new LinkedHashMapLRU<>(PROCESSED_MSG_IDS_MAX)));
-
-    private final ReentrantLock memoryLock = new ReentrantLock();
-    private volatile long lastSaveTime = 0;
-    private volatile boolean saveScheduled = false;
-
-    private static final Pattern[] CLEAN_PREFIX_PATTERNS = compilePatterns(new String[] {
-        "^（用[^\n]{0,15}?声[^\n]{0,5}?）\\s*",
-        "^\\(用[^\n]{0,15}?声[^\n]{0,5}?\\)\\s*",
-        "^（[^\n]{0,10}?男声[^\n]{0,10}?）\\s*",
-        "^（[^\n]{0,10}?女声[^\n]{0,10}?）\\s*",
-        "^（[^\n]{0,10}?语音[^\n]{0,10}?）\\s*",
-        "^（[^\n]{0,10}?TTS[^\n]{0,10}?）\\s*",
-        "^\\([^\n]{0,10}?语音[^\n]{0,10}?\\)\\s*",
-        "^【[^\n]{0,10}?语音[^\n]{0,10}?】\\s*",
-        "^\"用[^\n]{0,15}?声[^\n]{0,5}?\"\\s*",
-        "^语音版[：:]*\\s*",
-        "^语音回复[：:]*\\s*",
-    });
-
-    private static Pattern[] compilePatterns(String[] regexes) {
-        Pattern[] patterns = new Pattern[regexes.length];
-        for (int i = 0; i < regexes.length; i++) {
-            patterns[i] = Pattern.compile(regexes[i]);
-        }
-        return patterns;
-    }
-
-    private static final class LinkedHashMapLRU<K, V> extends java.util.LinkedHashMap<K, V> {
-        private final int maxSize;
-        LinkedHashMapLRU(int maxSize) {
-            super(16, 0.75f, true);
-            this.maxSize = maxSize;
-        }
-        @Override
-        protected boolean removeEldestEntry(java.util.Map.Entry<K, V> eldest) {
-            return size() > maxSize;
-        }
-    }
-
-    public TextMessageHandler(ChatService chatService) {
-        this(chatService, null, null, null, null);
-    }
-
-    public TextMessageHandler(ChatService chatService, SpeechSynthesisService tts) {
-        this(chatService, tts, null, null, null);
-    }
-
-    public TextMessageHandler(ChatService chatService, SpeechSynthesisService tts, DocumentService documentService) {
-        this(chatService, tts, documentService, null, null);
-    }
-
-    public TextMessageHandler(ChatService chatService, SpeechSynthesisService tts,
-                              DocumentService documentService, TianNewsTool tianNewsTool,
-                              ScheduledExecutorService backgroundExecutor) {
+    public TextMessageHandler(
+        ChatService chatService,
+        SpeechSynthesisService tts,
+        DocumentService documentService,
+        TianNewsTool tianNewsTool,
+        ConversationMemoryService memoryService,
+        MemoryProperties memoryProperties,
+        LongReplyManager longReplyManager
+    ) {
         this.chatService = chatService;
         this.tts = tts;
         this.documentService = documentService;
         this.tianNewsTool = tianNewsTool;
-        this.backgroundExecutor = backgroundExecutor;
-        DocumentService.silencePdfLogs();
-        loadMemoryFromFile();
+        this.memoryService = memoryService;
+        this.memoryProperties = memoryProperties;
+        this.longReplyManager = longReplyManager;
+        DocumentService.silencePdfLogs();  // 屏蔽 PDF 库的噪音日志
     }
 
     @Override
     public boolean canHandle(WeixinMessage msg) {
+        // 有图片的留给 ImageMessageHandler
         if (hasImage(msg)) return false;
+        // 空消息不处理
         String text = extractText(msg);
         return text != null && !text.trim().isEmpty();
     }
@@ -134,28 +72,39 @@ public class TextMessageHandler implements MessageHandler {
         String from = msg.getFrom_user_id();
         String userText = extractText(msg);
 
+        // 去重
         if (msg.getMessage_id() != null) {
-            if (!processedMsgIds.add(msg.getMessage_id())) return;
+            if (!memoryService.markMessageProcessed(from, msg.getMessage_id())) return;
         }
 
+        // 如果上一条回复过长，优先处理用户对发送方式的选择，不再调用大模型。
+        if (handlePendingLongReply(client, from, userText)) return;
+
+        // 特殊命令
         if (isCommand(userText)) {
             handleCommand(client, from, userText);
             return;
         }
 
+        // 未配置 Key → echo
         if (!chatService.isConfigured()) {
             safeSendText(client, from, "（Echo模式）你说: " + userText
                 + "\n提示：配置环境变量 DEEPSEEK_API_KEY 开启智能对话");
             return;
         }
 
+        // DeepSeek 对话
         try {
+            // 1. 关键词预处理：
+            //    - 语音指令：剥离"语音/读"等词，避免 DeepSeek 自作主张
+            //    - 文档指令：先正常对话，把回复写入 PDF/Word
             boolean wantVoice = shouldTriggerTts(userText);
             boolean wantDoc = shouldTriggerDocGen(userText);
             String textForChat = userText;
             if (wantVoice) textForChat = stripTtsKeywords(textForChat);
             if (wantDoc)   textForChat = stripDocKeywords(textForChat);
 
+            // 2. 新闻关键词检测：如果用户问新闻，直接调 TianNewsTool 获取实时数据
             String newsData = null;
             if (tianNewsTool != null && isNewsQuery(textForChat)) {
                 try {
@@ -164,10 +113,14 @@ public class TextMessageHandler implements MessageHandler {
                         newsData = result;
                     }
                 } catch (Exception ignored) {
+                    // 新闻工具失败不影响正常对话
                 }
             }
 
-            String context = buildContextForModel();
+            // 3. 传给大模型的内容 = 长期摘要 + 最近完整对话
+            ConversationMemory memory = memoryService.get(from);
+            String context = buildContextForModel(memory);
+            // 如果有实时新闻数据，直接拼到用户消息前面
             String chatInput;
             if (newsData != null) {
                 chatInput = "【以下是最新实时新闻，请据此回答】\n\n"
@@ -177,12 +130,14 @@ public class TextMessageHandler implements MessageHandler {
             }
             String reply = chatService.chat(chatInput, context.isEmpty() ? "" : context);
 
+            // 3. 发送文字回复（清理大模型可能自作主张加的"（用男声）"等标记）
             String textReply = cleanBotReply(reply);
-            safeSendText(client, from, textReply);
-            appendHistory(userText, textReply);
+            deliverTextReply(client, from, textReply, wantDoc);
+            appendHistory(from, userText, textReply);
             System.out.println("[RECV] <" + from + "> " + userText);
             System.out.println("[SEND] " + textReply.replace("\n", " | "));
 
+            // ===== 4. 语音合成（关键词触发）：把回复文字 → WAV 文件发送 =====
             if (tts != null && wantVoice) {
                 try {
                     String textForTts = textReply.length() > 200
@@ -198,6 +153,7 @@ public class TextMessageHandler implements MessageHandler {
                 }
             }
 
+            // ===== 5. 文档生成（关键词触发）：把回复文字 → PDF/Word 文件发送 =====
             if (documentService != null && wantDoc) {
                 try {
                     boolean isPdf = userText.toLowerCase().contains("pdf");
@@ -210,7 +166,23 @@ public class TextMessageHandler implements MessageHandler {
                     System.out.println("[INFO] ✅ 文档已发送: " + fileName + " (" + fileBytes.length + " bytes)");
                 } catch (Exception e2) {
                     System.err.println("[WARN] 文档生成/发送失败: " + e2.getMessage());
-                    safeSendText(client, from, "（文档生成失败，但上面的文字回复已经发了～）");
+                    if (longReplyManager.requiresChoice(textReply)
+                        && longReplyManager.save(from, textReply)) {
+                        safeSendText(client, from,
+                            "文档生成失败，完整回复已为你保留。\n"
+                                + longReplyManager.choicePrompt());
+                    } else if (longReplyManager.requiresChoice(textReply)) {
+                        safeSendText(client, from, "文档生成失败，将尝试分段发送完整回复。");
+                        try {
+                            sendReplyChunks(client, from, textReply);
+                        } catch (Exception sendFailure) {
+                            System.err.println("[WARN] 文档失败后的分段发送也失败: "
+                                + sendFailure.getMessage());
+                            safeSendText(client, from, "完整回复发送失败，请稍后重试。");
+                        }
+                    } else {
+                        safeSendText(client, from, "（文档生成失败，但上面的文字回复已经发了～）");
+                    }
                 }
             }
         } catch (Exception e) {
@@ -220,29 +192,67 @@ public class TextMessageHandler implements MessageHandler {
     }
 
     @Override
-    public int priority() { return 100; }
+    public int priority() { return 100; } // 兜底，最后才到
 
+    // ============================================================
+    // 工具方法
+    // ============================================================
+
+    /**
+     * 清理大模型的回复：当用户触发了语音/文档时，大模型可能自作主张在开头加
+     *  "（用沉稳的男声）"、"（语音版：）" 这类标记，去掉它们让回复更自然。
+     */
     private String cleanBotReply(String reply) {
         if (reply == null) return reply;
         String r = reply.trim();
-        for (Pattern p : CLEAN_PREFIX_PATTERNS) {
-            r = p.matcher(r).replaceFirst("");
+
+        // 按顺序尝试去掉前缀（中文括号、英文括号都要考虑）
+        String[] prefixPatterns = new String[] {
+            "^（用[^\n]{0,15}?声[^\n]{0,5}?）\\s*",
+            "^\\(用[^\n]{0,15}?声[^\n]{0,5}?\\)\\s*",
+            "^（[^\n]{0,10}?男声[^\n]{0,10}?）\\s*",
+            "^（[^\n]{0,10}?女声[^\n]{0,10}?）\\s*",
+            "^（[^\n]{0,10}?语音[^\n]{0,10}?）\\s*",
+            "^（[^\n]{0,10}?TTS[^\n]{0,10}?）\\s*",
+            "^\\([^\n]{0,10}?语音[^\n]{0,10}?\\)\\s*",
+            "^【[^\n]{0,10}?语音[^\n]{0,10}?】\\s*",
+            "^\"用[^\n]{0,15}?声[^\n]{0,5}?\"\\s*",
+            "^语音版[：:]*\\s*",
+            "^语音回复[：:]*\\s*",
+        };
+        for (String p : prefixPatterns) {
+            r = r.replaceFirst(p, "");
         }
+
+        // 去掉一些常见的开头（"好的，以下是..." 这类倒还自然，这里只去明显的 TTS 标记）
         r = r.trim();
         return r.isEmpty() ? reply : r;
     }
 
+    /**
+     * 关键词触发语音生成：
+     *   ① 显式语音指令：语音、生成语音、发语音、读、念、朗读、说出来、说给我听
+     *   ② 音色指令（隐含要语音）：男声、女声、用男声、用女声、换成男声、换成女声
+     */
     private boolean shouldTriggerTts(String userText) {
         if (userText == null) return false;
         String t = userText.trim();
+        // 显式语音词
         if (t.contains("语音") || t.contains("读") || t.contains("念")
             || t.contains("朗读") || t.contains("说出来") || t.contains("说给我听")) {
             return true;
         }
+        // 音色词（隐含要语音）
         if (t.contains("男声") || t.contains("女声")) return true;
         return false;
     }
 
+    /**
+     * 根据用户消息关键词选择音色：
+     *   包含"男声" → Ethan（阳光温暖男声，qwen3-tts-flash 官方支持）
+     *   包含"女声" → Cherry（女声，默认）
+     *   其他情况 → Cherry（默认女声）
+     */
     private String pickVoice(String userText) {
         if (userText == null) return "Cherry";
         String t = userText.trim();
@@ -251,11 +261,22 @@ public class TextMessageHandler implements MessageHandler {
         return "Cherry";
     }
 
+    /**
+     * 从用户消息中剥离语音指令关键词，把指令部分去掉，只保留实际内容交给 DeepSeek。
+     *
+     *   "给我生成一段语音介绍SpringBoot" → "介绍SpringBoot"
+     *   "帮我生成一段杭州今天天气怎么样的语音" → "杭州今天天气怎么样的"
+     *   "生成一段你好的语音" → "你好的"
+     *   "读一下这段代码" → "这段代码"
+     *   "用男声生成一段介绍SpringBoot的语音" → "介绍SpringBoot的"
+     */
     private String stripTtsKeywords(String userText) {
         if (userText == null) return "";
         String result = userText.trim();
 
+        // ===== 第 1 步：按长短语整体剥离（按长度从长到短，避免先被短的截断） =====
         String[] phrases = new String[] {
+            // 音色 + 动作（最长优先）
             "用男声生成一段", "用女声生成一段",
             "用男声生成", "用女声生成",
             "用男声说", "用女声说",
@@ -264,6 +285,7 @@ public class TextMessageHandler implements MessageHandler {
             "换成男声", "换成女声",
             "换男声", "换女声",
             "用男声", "用女声",
+            // "帮我..." 前缀
             "帮我生成一段语音", "给我生成一段语音",
             "帮我生成语音", "给我生成语音",
             "帮我生成一段", "给我生成一段",
@@ -275,13 +297,16 @@ public class TextMessageHandler implements MessageHandler {
             "语音版的", "语音版",
             "语音回复", "语音回答",
             "语音介绍",
+            // 读/念（长的在前）
             "帮我读一下", "给我读一下", "帮我读", "给我读",
             "读一下", "读出来", "读给我听",
             "帮我念一下", "给我念一下", "帮我念", "给我念",
             "念一下", "念出来", "念给我听",
             "帮我朗读一下", "给我朗读一下", "帮我朗读", "给我朗读",
             "朗读一下", "朗读出来", "朗读给我听", "朗读",
+            // 说
             "说出来", "说给我听", "帮我说", "给我说",
+            // 兜底
             "生成一段",
             "帮我", "给我",
         };
@@ -290,6 +315,7 @@ public class TextMessageHandler implements MessageHandler {
             result = result.replace(p, " ");
         }
 
+        // ===== 第 2 步：逐词清理真正会误导 DeepSeek 的强关键词 =====
         String[] triggerWords = new String[] {
             "语音", "生成", "朗读", "男声", "女声", "说", "念", "读",
         };
@@ -298,6 +324,7 @@ public class TextMessageHandler implements MessageHandler {
             result = result.replace(w, " ");
         }
 
+        // 清理多余空格
         result = result.replaceAll("\\s+", " ").trim();
         if (result.isEmpty()) {
             return "你好";
@@ -305,10 +332,13 @@ public class TextMessageHandler implements MessageHandler {
         return result;
     }
 
+    /** 从用户消息中剥离"生成PDF/生成Word/文档"等关键词，
+     *  让传给 DeepSeek 的内容更干净，避免它自作主张说"我不能生成PDF"。 */
     private String stripDocKeywords(String userText) {
         if (userText == null) return "你好";
         String result = userText;
 
+        // 常见短语
         String[] phrases = new String[] {
             "生成PDF", "生成pdf", "生成PDF文件",
             "导出PDF", "导出pdf", "生成Word", "生成word",
@@ -320,6 +350,7 @@ public class TextMessageHandler implements MessageHandler {
             result = result.replace(p, " ");
         }
 
+        // 逐词清理
         String[] triggerWords = new String[] {
             "PDF", "pdf", "Word", "word", "文档", "生成", "导出",
         };
@@ -332,6 +363,14 @@ public class TextMessageHandler implements MessageHandler {
         return result;
     }
 
+    // ============================================================
+    // 文档生成
+    // ============================================================
+
+    /**
+     * 关键词触发生成文档：
+     *   生成PDF / 导出PDF / 生成pdf / 生成Word / 导出Word / 生成word / 生成文档
+     */
     private boolean shouldTriggerDocGen(String userText) {
         if (userText == null) return false;
         String t = userText.trim().toLowerCase();
@@ -340,19 +379,30 @@ public class TextMessageHandler implements MessageHandler {
             || t.contains("文档");
     }
 
+    /**
+     * 处理文档生成：
+     *   1. 判断用户要 PDF 还是 Word
+     *   2. 提取文档内容（如果用户写了"生成PDF：xxx内容"，用 xxx；
+     *      如果只有"生成PDF"，把最近对话拼起来作为内容）
+     *   3. 调用 DocumentService 生成文件 → sendFile 发送
+     */
     private void handleDocGen(ILinkClient client, String from, String userText) {
         if (documentService == null) {
             safeSendText(client, from, "⚠️ 文档服务还没配置好，暂时不能生成文档");
             return;
         }
 
+        // 1. 判断文件类型
         String lower = userText.trim().toLowerCase();
         boolean wantPdf = lower.contains("pdf");
         boolean wantWord = lower.contains("word") || lower.contains("文档");
+        // 如果两个都没写（只写了"生成文档"），默认 PDF
         if (!wantPdf && !wantWord) wantPdf = true;
 
-        String content = extractDocContent(userText, wantPdf || wantWord);
-        String title = buildDocTitle(userText, wantPdf);
+        // 2. 提取文档内容：用户写了"生成PDF：xxx" → 用 xxx；否则用最近对话
+        ConversationMemory memory = memoryService.get(from);
+        String content = extractDocContent(userText, wantPdf || wantWord, memory);
+        String title = buildDocTitle(userText, wantPdf, memory);
 
         safeSendText(client, from, "📝 正在为你生成" + (wantPdf ? "PDF" : "Word")
                 + "文档（" + content.length() + "字）...");
@@ -371,10 +421,16 @@ public class TextMessageHandler implements MessageHandler {
                 caption = "📄 " + title + "（Word，" + fileBytes.length + "字节）";
             }
 
+            // 3. 通过 sendFile 发送给用户
             client.sendFile(from, fileBytes, fileName, caption);
             System.out.println("[INFO] ✅ 文档已发送: " + fileName + " (" + fileBytes.length + " bytes)");
 
-            appendHistory(userText, "已为你生成" + (wantPdf ? "PDF" : "Word") + "文档");
+            // 4. 把这次指令也算作一轮对话（让记忆更自然）
+            appendHistory(
+                from,
+                userText,
+                "已为你生成" + (wantPdf ? "PDF" : "Word") + "文档"
+            );
         } catch (Exception e) {
             System.err.println("[ERROR] 文档生成失败: " + e.getMessage());
             e.printStackTrace();
@@ -382,16 +438,26 @@ public class TextMessageHandler implements MessageHandler {
         }
     }
 
-    private String extractDocContent(String userText, boolean isDocGen) {
+    /**
+     * 从用户消息里提取文档内容：
+     *   "生成PDF：介绍一下SpringBoot" → "介绍一下SpringBoot"
+     *   "导出Word：最近三天工作总结" → "最近三天工作总结"
+     *   "生成PDF"（没写内容）→ 把最近对话拼接起来
+     */
+    private String extractDocContent(
+        String userText, boolean isDocGen, ConversationMemory memory
+    ) {
         if (userText == null) return "";
         String original = userText.trim();
 
+        // 尝试按分隔符拆分（冒号、中文冒号、空格）
         String[] splitters = new String[] { "：", ":", " ", "　" };
         for (String sp : splitters) {
             int idx = original.indexOf(sp);
             if (idx > 0 && idx < original.length() - 1) {
                 String before = original.substring(0, idx).trim().toLowerCase();
                 String after = original.substring(idx + 1).trim();
+                // 如果前半部分包含 pdf/word/文档 关键词，后半部分就是内容
                 if (before.contains("pdf") || before.contains("word")
                         || before.contains("文档") || before.contains("生成")
                         || before.contains("导出")) {
@@ -400,37 +466,36 @@ public class TextMessageHandler implements MessageHandler {
             }
         }
 
-        memoryLock.lock();
-        try {
-            if (recentMessages.isEmpty()) {
-                return "（暂无对话内容，试着和我聊几句，然后再生成文档吧～）";
-            }
-
-            StringBuilder sb = new StringBuilder();
-            sb.append("【最近对话记录】\n\n");
-            for (int i = 0; i < recentMessages.size(); i += 2) {
-                String userMsg = recentMessages.get(i);
-                String botReply = (i + 1 < recentMessages.size())
-                        ? recentMessages.get(i + 1) : "（无回复）";
-                sb.append("用户: ").append(userMsg).append("\n");
-                sb.append("助手: ").append(botReply).append("\n\n");
-            }
-            return sb.toString();
-        } finally {
-            memoryLock.unlock();
+        // 用户没指定内容 → 把最近对话拼接起来（如果对话为空，给一个默认提示）
+        if (memory.getRecentMessages().isEmpty()) {
+            return "（暂无对话内容，试着和我聊几句，然后再生成文档吧～）";
         }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("【最近对话记录】\n\n");
+        for (ConversationMessage message : memory.getRecentMessages()) {
+            String role = "assistant".equals(message.role()) ? "助手" : "用户";
+            sb.append(role).append(": ").append(message.content()).append("\n\n");
+        }
+        return sb.toString();
     }
 
-    private String buildDocTitle(String userText, boolean wantPdf) {
-        String content = extractDocContent(userText, true);
+    /** 生成文档标题（根据用户指令里的内容或日期自动生成） */
+    private String buildDocTitle(
+        String userText, boolean wantPdf, ConversationMemory memory
+    ) {
+        // 如果用户写了具体内容（如"生成PDF：介绍SpringBoot"），用内容的前几个字
+        String content = extractDocContent(userText, true, memory);
         if (!content.startsWith("【最近对话记录】")
                 && !content.startsWith("（暂无对话内容）")) {
             int maxLen = Math.min(20, content.length());
             return content.substring(0, maxLen).trim();
         }
+        // 默认标题
         return "聊天对话记录";
     }
 
+    /** 检测用户消息是否为新闻查询 */
     private boolean isNewsQuery(String text) {
         if (text == null || text.isEmpty()) return false;
         String t = text.trim().toLowerCase();
@@ -462,16 +527,7 @@ public class TextMessageHandler implements MessageHandler {
             return;
         }
         if (t.equals("clear") || t.equals("清空") || t.equals("重置")) {
-            memoryLock.lock();
-            try {
-                longTermSummary.setLength(0);
-                recentMessages.clear();
-                turnCounter.set(0);
-            } finally {
-                memoryLock.unlock();
-            }
-            deleteHistoryFile();
-            deleteSummaryFile();
+            memoryService.clear(from);
             safeSendText(client, from, "对话记忆已清空（包括长期摘要），我们重新开始聊天吧！");
             return;
         }
@@ -509,6 +565,116 @@ public class TextMessageHandler implements MessageHandler {
         return sb.toString();
     }
 
+    /**
+     * 消费上一条长回复对应的发送方式选择。
+     *
+     * @return true 表示当前消息已经作为选择处理，不应继续进入大模型。
+     */
+    private boolean handlePendingLongReply(
+        ILinkClient client, String userId, String userText
+    ) {
+        LongReplyManager.Lookup lookup = longReplyManager.lookup(userId);
+        LongReplyManager.Choice choice = longReplyManager.parseChoice(userText);
+
+        if (lookup.status() == LongReplyManager.LookupStatus.NONE) return false;
+        if (lookup.status() == LongReplyManager.LookupStatus.EXPIRED) {
+            if (choice == LongReplyManager.Choice.UNKNOWN) return false;
+            safeSendText(client, userId, "上一条长回复已过期，请重新提问。");
+            return true;
+        }
+
+        String content = lookup.content();
+        switch (choice) {
+            case CHUNKS -> {
+                try {
+                    sendReplyChunks(client, userId, content);
+                    longReplyManager.remove(userId);
+                } catch (Exception e) {
+                    System.err.println("[WARN] 长回复分段发送失败: " + e.getMessage());
+                    safeSendText(client, userId,
+                        "分段发送失败，完整回复仍为你保留，可以回复“1”重试或回复“2”改用文档。");
+                }
+                return true;
+            }
+            case DOCUMENT -> {
+                if (documentService == null) {
+                    safeSendText(client, userId,
+                        "文档服务暂不可用，可以回复“1”改为分段发送。");
+                    return true;
+                }
+                try {
+                    byte[] fileBytes = documentService.createWord("完整回复", content);
+                    String fileName = "long-reply-" + System.currentTimeMillis() + ".docx";
+                    client.sendFile(
+                        userId,
+                        fileBytes,
+                        fileName,
+                        "📄 完整回复（Word，" + content.length() + "字）");
+                    longReplyManager.remove(userId);
+                    System.out.println("[INFO] ✅ 长回复文档已发送: " + fileName
+                        + " (" + fileBytes.length + " bytes)");
+                } catch (Exception e) {
+                    System.err.println("[WARN] 长回复文档生成/发送失败: " + e.getMessage());
+                    safeSendText(client, userId,
+                        "文档生成失败，完整回复仍为你保留，可以回复“2”重试或回复“1”改为分段发送。");
+                }
+                return true;
+            }
+            case CANCEL -> {
+                longReplyManager.remove(userId);
+                safeSendText(client, userId, "已取消发送这条长回复。");
+                return true;
+            }
+            case UNKNOWN -> {
+                safeSendText(client, userId,
+                    "请回复“1”分段发送、“2”生成 Word 文档，或者回复“取消”。");
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void deliverTextReply(
+        ILinkClient client, String userId, String textReply, boolean documentAlreadyRequested
+    ) {
+        if (!longReplyManager.requiresChoice(textReply)) {
+            safeSendText(client, userId, textReply);
+            return;
+        }
+
+        // 用户在原问题中已经明确要求文档时，后续流程会直接发送文件，无需重复询问。
+        if (documentAlreadyRequested) {
+            safeSendText(client, userId, "回复内容较长，已按你的要求整理为文档。");
+            return;
+        }
+
+        if (longReplyManager.save(userId, textReply)) {
+            safeSendText(client, userId, longReplyManager.choicePrompt());
+            return;
+        }
+
+        // 极端超长内容不进入暂存区，避免突破内存保护上限。
+        safeSendText(client, userId, "回复超过暂存上限，将自动分段发送。");
+        try {
+            sendReplyChunks(client, userId, textReply);
+        } catch (Exception e) {
+            System.err.println("[WARN] 超长回复自动分段发送失败: " + e.getMessage());
+            safeSendText(client, userId, "长回复发送失败，请缩小问题范围后重试。");
+        }
+    }
+
+    private void sendReplyChunks(ILinkClient client, String userId, String content)
+        throws Exception {
+        List<String> chunks = longReplyManager.split(content);
+        for (int index = 0; index < chunks.size(); index++) {
+            String numberedChunk = "【" + (index + 1) + "/" + chunks.size() + "】\n"
+                + chunks.get(index);
+            long typingMillis = Math.min(2000, 300L + numberedChunk.length() * 20L);
+            client.sendTextWithTyping(userId, numberedChunk, typingMillis);
+        }
+        System.out.println("[INFO] ✅ 长回复已分 " + chunks.size() + " 段发送");
+    }
+
     private void safeSendText(ILinkClient client, String to, String text) {
         try {
             long typingMillis = Math.min(2000, 300L + text.length() * 20L);
@@ -518,224 +684,87 @@ public class TextMessageHandler implements MessageHandler {
         }
     }
 
-    private String buildContextForModel() {
-        memoryLock.lock();
-        try {
-            StringBuilder sb = new StringBuilder();
-            if (longTermSummary.length() > 0) {
-                sb.append("{\"role\":\"system\",\"content\":")
-                  .append(JsonUtils.escape("【长期记忆摘要】\n" + longTermSummary.toString()))
-                  .append("}");
-            }
-            for (String msg : recentMessages) {
-                if (sb.length() > 0) sb.append(",");
-                sb.append(msg);
-            }
-            return sb.toString();
-        } finally {
-            memoryLock.unlock();
+    // ============================================================
+    // 记忆管理（方案C：长期摘要 + 最近对话）
+    // ============================================================
+
+    /**
+     * 构建传给大模型的 context = 长期摘要 + 最近完整对话
+     */
+    private String buildContextForModel(ConversationMemory memory) {
+        StringBuilder sb = new StringBuilder();
+        if (!memory.getLongTermSummary().isBlank()) {
+            sb.append("{\"role\":\"system\",\"content\":")
+              .append(JsonUtils.escape(
+                  "【长期记忆摘要】\n" + memory.getLongTermSummary()))
+              .append("}");
+        }
+        for (ConversationMessage message : memory.getRecentMessages()) {
+            if (sb.length() > 0) sb.append(",");
+            sb.append("{\"role\":")
+                .append(JsonUtils.escape(message.role()))
+                .append(",\"content\":")
+                .append(JsonUtils.escape(message.content()))
+                .append("}");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 追加一轮对话，并在必要时触发摘要压缩
+     */
+    private void appendHistory(String userId, String userText, String assistantReply) {
+        ConversationMemory memory =
+            memoryService.appendTurn(userId, userText, assistantReply);
+        int turnCounter = memory.getTurnCounter();
+        if (turnCounter > 0
+                && turnCounter % memoryProperties.getSummaryEvery() == 0) {
+            updateSummaryWithLLM(userId, memory);
         }
     }
 
-    private void appendHistory(String userText, String assistantReply) {
-        final boolean needSummaryUpdate;
-        memoryLock.lock();
+    /**
+     * 调用大模型把当前用户的最近对话压缩成长期摘要。
+     */
+    private void updateSummaryWithLLM(String userId, ConversationMemory memory) {
         try {
-            recentMessages.add("{\"role\":\"user\",\"content\":" + JsonUtils.escape(userText) + "}");
-            recentMessages.add("{\"role\":\"assistant\",\"content\":" + JsonUtils.escape(assistantReply) + "}");
+            int messagesToSummarize = Math.min(
+                memoryProperties.getSummaryEvery() * 2,
+                memory.getRecentMessages().size()
+            );
+            List<ConversationMessage> toCompress = memory.getRecentMessages().subList(
+                Math.max(0, memory.getRecentMessages().size() - messagesToSummarize),
+                memory.getRecentMessages().size()
+            );
+            if (toCompress.isEmpty()) return;
 
-            int maxMessages = RECENT_TURNS * 2;
-            while (recentMessages.size() > maxMessages) {
-                recentMessages.remove(0);
-            }
-
-            int turn = turnCounter.incrementAndGet();
-            needSummaryUpdate = (turn > 0 && turn % SUMMARY_EVERY == 0);
-        } finally {
-            memoryLock.unlock();
-        }
-
-        scheduleSaveMemory();
-
-        if (needSummaryUpdate && backgroundExecutor != null) {
-            backgroundExecutor.execute(this::updateSummaryWithLLM);
-        }
-    }
-
-    private void scheduleSaveMemory() {
-        long now = System.currentTimeMillis();
-        if (now - lastSaveTime < SAVE_DEBOUNCE_MS) {
-            if (!saveScheduled && backgroundExecutor != null) {
-                saveScheduled = true;
-                backgroundExecutor.schedule(() -> {
-                    saveScheduled = false;
-                    lastSaveTime = System.currentTimeMillis();
-                    saveMemoryToFile();
-                }, SAVE_DEBOUNCE_MS, TimeUnit.MILLISECONDS);
-            }
-            return;
-        }
-        lastSaveTime = now;
-        if (backgroundExecutor != null) {
-            backgroundExecutor.execute(this::saveMemoryToFile);
-        } else {
-            saveMemoryToFile();
-        }
-    }
-
-    private void updateSummaryWithLLM() {
-        try {
             StringBuilder dialog = new StringBuilder();
-            memoryLock.lock();
-            try {
-                int messagesToSummarize = Math.min(SUMMARY_EVERY * 2, recentMessages.size());
-                List<String> toCompress = messagesToSummarize >= recentMessages.size()
-                    ? recentMessages
-                    : recentMessages.subList(
-                        recentMessages.size() - messagesToSummarize,
-                        recentMessages.size());
-                if (toCompress.isEmpty()) return;
-
-                for (String m : toCompress) {
-                    if (dialog.length() > 0) dialog.append(",");
-                    dialog.append(m);
-                }
-            } finally {
-                memoryLock.unlock();
+            if (!memory.getLongTermSummary().isBlank()) {
+                dialog.append("{\"role\":\"system\",\"content\":")
+                    .append(JsonUtils.escape(
+                        "【现有长期记忆摘要】\n" + memory.getLongTermSummary()))
+                    .append("}");
+            }
+            for (ConversationMessage message : toCompress) {
+                if (dialog.length() > 0) dialog.append(",");
+                dialog.append("{\"role\":")
+                    .append(JsonUtils.escape(message.role()))
+                    .append(",\"content\":")
+                    .append(JsonUtils.escape(message.content()))
+                    .append("}");
             }
 
             String prompt = "请用简洁中文总结下面的对话，提取关键的长期信息（例如用户姓名、用户偏好、重要约定等），不要重复废话，不要输出客套话，只要纯摘要。如果之前已有摘要，请在之前摘要基础上增量更新，不要完全重写。输出不超过 200 字。";
             String newSummary = chatService.chat(prompt, dialog.toString());
 
             if (newSummary != null && !newSummary.trim().isEmpty()) {
-                memoryLock.lock();
-                try {
-                    if (longTermSummary.length() > 0) {
-                        longTermSummary.append("\n");
-                    }
-                    longTermSummary.append(newSummary.trim());
-                } finally {
-                    memoryLock.unlock();
-                }
-                System.out.println("[INFO] 记忆摘要已更新（第 " + turnCounter.get() + " 轮）");
-                scheduleSaveMemory();
+                memoryService.replaceSummary(userId, newSummary);
+                System.out.println(
+                    "[INFO] 用户记忆摘要已更新（第 "
+                        + memory.getTurnCounter() + " 轮）");
             }
         } catch (Exception e) {
             System.err.println("[WARN] 记忆摘要更新失败（不影响对话）: " + e.getMessage());
-        }
-    }
-
-    private void loadMemoryFromFile() {
-        try {
-            Path path = Paths.get(SUMMARY_FILE);
-            if (Files.exists(path)) {
-                String content = new String(Files.readAllBytes(path), "UTF-8");
-                if (content != null && !content.trim().isEmpty()) {
-                    memoryLock.lock();
-                    try {
-                        longTermSummary.append(content.trim());
-                    } finally {
-                        memoryLock.unlock();
-                    }
-                }
-            }
-        } catch (IOException ignored) {
-        }
-
-        try {
-            Path path = Paths.get(HISTORY_FILE);
-            if (Files.exists(path)) {
-                String content = new String(Files.readAllBytes(path), "UTF-8");
-                if (content != null && !content.trim().isEmpty()) {
-                    String trimmed = content.trim();
-                    if (trimmed.startsWith("[")) {
-                        trimmed = trimmed.substring(1);
-                    }
-                    if (trimmed.endsWith("]")) {
-                        trimmed = trimmed.substring(0, trimmed.length() - 1);
-                    }
-                    memoryLock.lock();
-                    try {
-                        parseLegacyFormat(trimmed);
-                    } finally {
-                        memoryLock.unlock();
-                    }
-                }
-            }
-        } catch (IOException ignored) {
-        }
-
-        try {
-            Path path = Paths.get(COUNTER_FILE);
-            if (Files.exists(path)) {
-                String content = new String(Files.readAllBytes(path), "UTF-8").trim();
-                if (!content.isEmpty()) {
-                    turnCounter.set(Integer.parseInt(content));
-                }
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    private void parseLegacyFormat(String content) {
-        int idx = 0;
-        while (idx < content.length()) {
-            int start = content.indexOf("{\"role\"", idx);
-            if (start < 0) break;
-            int nextStart = content.indexOf(",{\"role\"", start + 1);
-            int end = (nextStart > 0) ? nextStart : content.length();
-            String piece = content.substring(start, end).trim();
-            if (piece.endsWith(",")) piece = piece.substring(0, piece.length() - 1);
-            recentMessages.add(piece);
-            idx = end + 1;
-        }
-    }
-
-    private void saveMemoryToFile() {
-        try {
-            Path dataDir = Paths.get("data");
-            if (!Files.exists(dataDir)) {
-                Files.createDirectories(dataDir);
-            }
-            memoryLock.lock();
-            try {
-                Files.write(Paths.get(SUMMARY_FILE), longTermSummary.toString().getBytes("UTF-8"));
-                Files.write(Paths.get(COUNTER_FILE), String.valueOf(turnCounter.get()).getBytes("UTF-8"));
-                StringBuilder sb = new StringBuilder();
-                sb.append("[\n");
-                for (int i = 0; i < recentMessages.size(); i++) {
-                    if (i > 0) sb.append(",\n");
-                    sb.append("  ").append(recentMessages.get(i));
-                }
-                sb.append("\n]");
-                Files.write(Paths.get(HISTORY_FILE), sb.toString().getBytes("UTF-8"));
-            } finally {
-                memoryLock.unlock();
-            }
-        } catch (IOException e) {
-            System.err.println("[WARN] 保存记忆文件失败: " + e.getMessage());
-        }
-    }
-
-    private void deleteHistoryFile() {
-        try {
-            Path path = Paths.get(HISTORY_FILE);
-            if (Files.exists(path)) {
-                Files.delete(path);
-            }
-        } catch (IOException e) {
-            System.err.println("[WARN] 删除对话文件失败: " + e.getMessage());
-        }
-    }
-
-    private void deleteSummaryFile() {
-        try {
-            Path path = Paths.get(SUMMARY_FILE);
-            if (Files.exists(path)) {
-                Files.delete(path);
-            }
-        } catch (IOException e) {
-            System.err.println("[WARN] 删除摘要文件失败: " + e.getMessage());
         }
     }
 }

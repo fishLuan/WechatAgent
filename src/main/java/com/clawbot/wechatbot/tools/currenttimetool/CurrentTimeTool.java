@@ -7,11 +7,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.time.*;
 import java.time.format.DateTimeFormatter;
-import java.time.zone.ZoneRules;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 /**
  * 获取精确到秒的当前时间工具，支持时区、时间戳、自定义格式。
@@ -20,12 +17,6 @@ public class CurrentTimeTool implements FunctionTool {
 
     private static final String NAME = "get_current_time";
     private static final List<String> FORMAT_ENUM = Arrays.asList("default", "iso", "chinese", "timestamp_s", "timestamp_ms");
-
-    private static final DateTimeFormatter DEFAULT_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static final DateTimeFormatter CHINESE_FORMATTER = DateTimeFormatter.ofPattern("yyyy年MM月dd日 HH时mm分ss秒");
-    private static final String[] WEEKDAY_NAMES = {"一", "二", "三", "四", "五", "六", "日"};
-    private static final ConcurrentMap<String, DateTimeFormatter> CUSTOM_FORMATTER_CACHE = new ConcurrentHashMap<>();
-    private static final int CUSTOM_FORMATTER_CACHE_MAX = 64;
 
     private final ObjectMapper mapper;
 
@@ -80,47 +71,33 @@ public class CurrentTimeTool implements FunctionTool {
             return error("无效的时区 ID：" + timezone + "，请使用标准时区名，例如 Asia/Shanghai、UTC、America/New_York");
         }
 
-        Instant nowInstant = Instant.now();
-        ZonedDateTime now = ZonedDateTime.ofInstant(nowInstant, zoneId);
-        long epochSecond = nowInstant.getEpochSecond();
-        long epochMilli = nowInstant.toEpochMilli();
-        ZoneOffset offset = zoneId.getRules().getOffset(nowInstant);
+        ZonedDateTime now = ZonedDateTime.now(zoneId);
 
         try {
             if (!customPattern.isEmpty()) {
-                DateTimeFormatter formatter = getCustomFormatter(customPattern);
-                return success(now.format(formatter), zoneId, now, offset, epochSecond, epochMilli);
+                DateTimeFormatter formatter = DateTimeFormatter.ofPattern(customPattern);
+                return success(now.format(formatter), zoneId, now);
             }
 
             switch (format) {
                 case "iso":
-                    return success(now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME), zoneId, now, offset, epochSecond, epochMilli);
+                    return success(now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME), zoneId, now);
                 case "chinese":
-                    String chinese = now.format(CHINESE_FORMATTER)
-                        + "（" + zoneDisplayName(offset) + "，星期" + chineseWeekday(now.getDayOfWeek()) + "）";
-                    return success(chinese, zoneId, now, offset, epochSecond, epochMilli);
+                    String chinese = now.format(DateTimeFormatter.ofPattern("yyyy年MM月dd日 HH时mm分ss秒"))
+                        + "（" + zoneDisplayName(zoneId) + "，星期" + chineseWeekday(now.getDayOfWeek()) + "）";
+                    return success(chinese, zoneId, now);
                 case "timestamp_s":
-                    return success(String.valueOf(epochSecond), zoneId, now, offset, epochSecond, epochMilli);
+                    return success(String.valueOf(now.toEpochSecond()), zoneId, now);
                 case "timestamp_ms":
-                    return success(String.valueOf(epochMilli), zoneId, now, offset, epochSecond, epochMilli);
+                    return success(String.valueOf(now.toInstant().toEpochMilli()), zoneId, now);
                 default:
-                    String def = now.format(DEFAULT_FORMATTER) + " " + zoneId.getId();
-                    return success(def, zoneId, now, offset, epochSecond, epochMilli);
+                    String def = now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                        + " " + zoneId.getId();
+                    return success(def, zoneId, now);
             }
         } catch (Exception e) {
             return error("格式化时间失败：" + e.getMessage());
         }
-    }
-
-    private static DateTimeFormatter getCustomFormatter(String pattern) {
-        DateTimeFormatter formatter = CUSTOM_FORMATTER_CACHE.get(pattern);
-        if (formatter != null) return formatter;
-        if (CUSTOM_FORMATTER_CACHE.size() >= CUSTOM_FORMATTER_CACHE_MAX) {
-            CUSTOM_FORMATTER_CACHE.clear();
-        }
-        formatter = DateTimeFormatter.ofPattern(pattern);
-        CUSTOM_FORMATTER_CACHE.put(pattern, formatter);
-        return formatter;
     }
 
     private JsonNode wrapTool(ObjectNode function) {
@@ -130,17 +107,16 @@ public class CurrentTimeTool implements FunctionTool {
         return tool;
     }
 
-    private String success(String result, ZoneId zoneId, ZonedDateTime now, ZoneOffset offset,
-                           long epochSecond, long epochMilli) {
+    private String success(String result, ZoneId zoneId, ZonedDateTime now) {
         ObjectNode node = mapper.createObjectNode();
         node.put("status", "ok");
         node.put("timezone", zoneId.getId());
-        node.put("zone_display", zoneDisplayName(offset));
+        node.put("zone_display", zoneDisplayName(zoneId));
         node.put("result", result);
         node.put("weekday", "星期" + chineseWeekday(now.getDayOfWeek()));
         node.put("day_of_year", "第" + now.getDayOfYear() + "天");
-        node.put("timestamp_s", epochSecond);
-        node.put("timestamp_ms", epochMilli);
+        node.put("timestamp_s", now.toEpochSecond());
+        node.put("timestamp_ms", now.toInstant().toEpochMilli());
         return node.toString();
     }
 
@@ -152,19 +128,33 @@ public class CurrentTimeTool implements FunctionTool {
     }
 
     private static String chineseWeekday(DayOfWeek dayOfWeek) {
-        return WEEKDAY_NAMES[dayOfWeek.getValue() - 1];
+        String[] names = {"一", "二", "三", "四", "五", "六", "日"};
+        return names[dayOfWeek.getValue() - 1];
     }
 
-    private static String zoneDisplayName(ZoneOffset offset) {
-        int totalSeconds = offset.getTotalSeconds();
-        if (totalSeconds == 0) return "UTC";
-        int totalMinutes = totalSeconds / 60;
-        int hours = totalMinutes / 60;
-        int minutes = Math.abs(totalMinutes % 60);
-        String sign = hours >= 0 ? "+" : "-";
-        if (minutes == 0) {
-            return String.format("UTC%s%d", sign, Math.abs(hours));
+    private static String zoneDisplayName(ZoneId zoneId) {
+        Offset offset = Offset.fromZoneId(zoneId);
+        if (offset.hours == 0 && offset.minutes == 0) return "UTC";
+        String sign = offset.hours >= 0 ? "+" : "-";
+        if (offset.minutes == 0) {
+            return String.format("UTC%s%d", sign, Math.abs(offset.hours));
         }
-        return String.format("UTC%s%d:%02d", sign, Math.abs(hours), minutes);
+        return String.format("UTC%s%d:%02d", sign, Math.abs(offset.hours), offset.minutes);
+    }
+
+    private static class Offset {
+        final int hours;
+        final int minutes;
+
+        Offset(int hours, int minutes) {
+            this.hours = hours;
+            this.minutes = minutes;
+        }
+
+        static Offset fromZoneId(ZoneId zoneId) {
+            int totalSeconds = ZonedDateTime.now(zoneId).getOffset().getTotalSeconds();
+            int totalMinutes = totalSeconds / 60;
+            return new Offset(totalMinutes / 60, Math.abs(totalMinutes % 60));
+        }
     }
 }

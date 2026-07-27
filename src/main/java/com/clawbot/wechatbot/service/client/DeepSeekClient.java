@@ -21,20 +21,18 @@ public class DeepSeekClient {
     private final int maxTokens;
     private final Duration requestTimeout;
     private final HttpClient http;
-    private final ObjectMapper mapper;
+    private final ObjectMapper mapper = new ObjectMapper();
 
     public DeepSeekClient(String apiKey, String model, String apiUrl, double temperature,
-                          int maxTokens, int connectTimeoutSeconds, int requestTimeoutSeconds,
-                          HttpClient sharedHttpClient, ObjectMapper sharedMapper) {
+                          int maxTokens, int connectTimeoutSeconds, int requestTimeoutSeconds) {
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.model = model;
         this.apiUrl = apiUrl;
         this.temperature = temperature;
         this.maxTokens = maxTokens;
         this.requestTimeout = Duration.ofSeconds(requestTimeoutSeconds);
-        this.http = sharedHttpClient == null ? HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds)).build() : sharedHttpClient;
-        this.mapper = sharedMapper == null ? new ObjectMapper() : sharedMapper;
+        this.http = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds)).build();
     }
 
     public boolean isConfigured() {
@@ -46,10 +44,15 @@ public class DeepSeekClient {
     }
 
     public JsonNode chat(ArrayNode messages, ArrayNode tools) throws Exception {
+        return chat(messages, tools, temperature);
+    }
+
+    public JsonNode chat(ArrayNode messages, ArrayNode tools,
+                         double requestTemperature) throws Exception {
         ObjectNode body = mapper.createObjectNode();
         body.put("model", model);
         body.set("messages", messages);
-        body.put("temperature", temperature);
+        body.put("temperature", requestTemperature);
         body.put("max_tokens", maxTokens);
         if (tools != null && !tools.isEmpty()) {
             body.set("tools", tools);
