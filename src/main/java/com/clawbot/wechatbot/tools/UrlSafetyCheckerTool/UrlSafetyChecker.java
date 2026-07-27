@@ -1,16 +1,21 @@
 package com.clawbot.wechatbot.tools.UrlSafetyCheckerTool;
 
 import com.clawbot.wechatbot.tools.FunctionTool;
+import com.clawbot.wechatbot.tools.webaccess.SafeHttpFetcher;
+import com.clawbot.wechatbot.tools.webaccess.UrlAccessPolicy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.http.HttpClient;
 import java.net.URL;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 public class UrlSafetyChecker implements FunctionTool {
@@ -46,13 +51,19 @@ public class UrlSafetyChecker implements FunctionTool {
     );
 
     private final ObjectMapper mapper;
+    private final SafeHttpFetcher safeHttpFetcher;
 
     public UrlSafetyChecker() {
-        this(new ObjectMapper());
+        this(new ObjectMapper(), createDefaultFetcher());
     }
 
     public UrlSafetyChecker(ObjectMapper mapper) {
+        this(mapper, createDefaultFetcher());
+    }
+
+    public UrlSafetyChecker(ObjectMapper mapper, SafeHttpFetcher safeHttpFetcher) {
         this.mapper = mapper;
+        this.safeHttpFetcher = safeHttpFetcher;
     }
 
     @Override
@@ -65,7 +76,8 @@ public class UrlSafetyChecker implements FunctionTool {
         ObjectNode function = mapper.createObjectNode();
         function.put("name", name());
         function.put("description",
-            "检测用户分享的链接是否存在安全风险。支持协议检测、域名可疑关键字、端口异常、IP直连、短链识别，以及可选的短链展开（最多追踪 5 级重定向）。"
+            "检测用户分享的链接是否存在安全风险。支持协议检测、域名可疑关键字、端口异常、"
+                + "IP直连、短链识别，以及经过 SSRF 防护的短链展开。"
         );
 
         ObjectNode parameters = function.putObject("parameters");
@@ -79,7 +91,8 @@ public class UrlSafetyChecker implements FunctionTool {
         properties.putObject("expand_short_link")
             .put("type", "boolean")
             .put("description",
-                "是否尝试展开短链（bit.ly / t.cn 等）并检测最终目的地；默认 false。展开会额外产生网络请求，最多追踪 5 级重定向。"
+                "是否尝试展开短链（bit.ly / t.cn 等）并检测最终目的地；默认 false。"
+                    + "展开会额外产生网络请求，重定向次数受系统配置限制。"
             );
 
         parameters.putArray("required").add("url");
@@ -169,9 +182,10 @@ public class UrlSafetyChecker implements FunctionTool {
         int redirectHops = 0;
         if (expandShortLink && SHORT_LINK_DOMAINS.stream().anyMatch(host::endsWith)) {
             try {
-                ExpandResult r = expandShortLink(parsedUrl.toString(), 5);
-                finalUrl = r.finalUrl;
-                redirectHops = r.hops;
+                SafeHttpFetcher.RedirectResolution resolution =
+                    safeHttpFetcher.resolveRedirects(URI.create(parsedUrl.toString()), 5);
+                finalUrl = resolution.finalUri().toString();
+                redirectHops = resolution.redirectCount();
                 if (finalUrl != null && !finalUrl.equalsIgnoreCase(url)) {
                     try {
                         URL f = new URL(finalUrl);
@@ -260,38 +274,18 @@ public class UrlSafetyChecker implements FunctionTool {
         return "当前链接未检测到明显风险特征，可正常访问。";
     }
 
-    private static ExpandResult expandShortLink(String startUrl, int maxHops) throws Exception {
-        String current = startUrl;
-        int hops = 0;
-        while (hops < maxHops) {
-            HttpURLConnection conn = (HttpURLConnection) new URL(current).openConnection();
-            conn.setRequestMethod("HEAD");
-            conn.setInstanceFollowRedirects(false);
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
-            int code = conn.getResponseCode();
-            if (code >= 300 && code < 400) {
-                String location = conn.getHeaderField("Location");
-                if (location == null || location.isEmpty()) break;
-                current = location.startsWith("http") ? location
-                    : new URL(new URL(current), location).toString();
-                hops++;
-                conn.disconnect();
-            } else {
-                conn.disconnect();
-                break;
-            }
-        }
-        return new ExpandResult(current, hops);
-    }
-
-    private static final class ExpandResult {
-        final String finalUrl;
-        final int hops;
-
-        ExpandResult(String finalUrl, int hops) {
-            this.finalUrl = finalUrl;
-            this.hops = hops;
-        }
+    private static SafeHttpFetcher createDefaultFetcher() {
+        HttpClient http = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build();
+        return new SafeHttpFetcher(
+            http,
+            new UrlAccessPolicy(Set.of(80, 443)),
+            Duration.ofSeconds(5),
+            1024,
+            5,
+            "ClawBot-UrlSafetyChecker/1.0"
+        );
     }
 }
