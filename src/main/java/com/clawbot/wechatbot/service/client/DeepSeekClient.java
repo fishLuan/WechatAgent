@@ -21,18 +21,20 @@ public class DeepSeekClient {
     private final int maxTokens;
     private final Duration requestTimeout;
     private final HttpClient http;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
 
     public DeepSeekClient(String apiKey, String model, String apiUrl, double temperature,
-                          int maxTokens, int connectTimeoutSeconds, int requestTimeoutSeconds) {
+                          int maxTokens, int connectTimeoutSeconds, int requestTimeoutSeconds,
+                          HttpClient sharedHttpClient, ObjectMapper sharedMapper) {
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.model = model;
         this.apiUrl = apiUrl;
         this.temperature = temperature;
         this.maxTokens = maxTokens;
         this.requestTimeout = Duration.ofSeconds(requestTimeoutSeconds);
-        this.http = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds)).build();
+        this.http = sharedHttpClient == null ? HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds)).build() : sharedHttpClient;
+        this.mapper = sharedMapper == null ? new ObjectMapper() : sharedMapper;
     }
 
     public boolean isConfigured() {

@@ -17,9 +17,13 @@ class SearchHttpClient {
     final Duration requestTimeout;
 
     SearchHttpClient(int connectTimeoutSeconds, int requestTimeoutSeconds) {
-        this.http = HttpClient.newBuilder()
+        this(null, connectTimeoutSeconds, requestTimeoutSeconds);
+    }
+
+    SearchHttpClient(HttpClient sharedHttpClient, int connectTimeoutSeconds, int requestTimeoutSeconds) {
+        this.http = sharedHttpClient == null ? HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds))
-            .build();
+            .build() : sharedHttpClient;
         this.requestTimeout = Duration.ofSeconds(requestTimeoutSeconds);
     }
 

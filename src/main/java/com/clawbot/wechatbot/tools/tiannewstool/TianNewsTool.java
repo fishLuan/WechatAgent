@@ -28,6 +28,14 @@ public class TianNewsTool implements FunctionTool {
             .connectTimeout(Duration.ofSeconds(5)).build(), Duration.ofSeconds(15));
     }
 
+    public TianNewsTool(String apiKey, HttpClient sharedHttpClient, ObjectMapper sharedMapper) {
+        this(apiKey,
+            sharedMapper == null ? new ObjectMapper() : sharedMapper,
+            sharedHttpClient == null ? HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5)).build() : sharedHttpClient,
+            Duration.ofSeconds(15));
+    }
+
     TianNewsTool(String apiKey, ObjectMapper mapper, HttpClient http, Duration timeout) {
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.mapper = mapper;

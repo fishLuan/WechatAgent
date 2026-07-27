@@ -26,16 +26,25 @@ import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
 import com.clawbot.wechatbot.tools.bazitool.BaziFortuneTool;
 import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
+import com.clawbot.wechatbot.tools.idcardtool.IdCardTool;
 import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
 import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.tools.currenttimetool.CurrentTimeTool;
+import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractClient;
 import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 应用对象装配中心。业务类保持纯 Java 构造器，生命周期和依赖关系由 Spring 管理。
@@ -46,6 +55,36 @@ public class BotBeanConfiguration {
     @Bean
     ObjectMapper objectMapper() {
         return new ObjectMapper();
+    }
+
+    @Bean
+    HttpClient sharedHttpClient() {
+        return HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(30))
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .executor(Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() * 2,
+                namedThreadFactory("http-client-")))
+            .build();
+    }
+
+    @Bean
+    ExecutorService messageHandlerExecutor() {
+        int nThreads = Math.max(4, Runtime.getRuntime().availableProcessors());
+        return Executors.newFixedThreadPool(nThreads, namedThreadFactory("msg-handler-"));
+    }
+
+    @Bean
+    ScheduledExecutorService backgroundTaskExecutor() {
+        return Executors.newSingleThreadScheduledExecutor(namedThreadFactory("bg-task-"));
+    }
+
+    private static ThreadFactory namedThreadFactory(String prefix) {
+        AtomicInteger counter = new AtomicInteger(0);
+        return r -> {
+            Thread t = new Thread(r, prefix + counter.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        };
     }
 
     @Bean(destroyMethod = "close")
@@ -62,33 +101,36 @@ public class BotBeanConfiguration {
     }
 
     @Bean
-    DeepSeekClient deepSeekClient(BotConfig config) {
+    DeepSeekClient deepSeekClient(BotConfig config, HttpClient sharedHttpClient, ObjectMapper mapper) {
         return new DeepSeekClient(
             config.getDeepSeekApiKey(), config.getDeepSeekModel(), config.getDeepSeekUrl(),
             config.getDeepSeekTemperature(), config.getDeepSeekMaxTokens(),
-            config.getDeepSeekConnectTimeoutSeconds(), config.getDeepSeekRequestTimeoutSeconds());
+            config.getDeepSeekConnectTimeoutSeconds(), config.getDeepSeekRequestTimeoutSeconds(),
+            sharedHttpClient, mapper);
     }
 
     @Bean
-    DashScopeClient dashScopeClient(BotConfig config) {
+    DashScopeClient dashScopeClient(BotConfig config, HttpClient sharedHttpClient, ObjectMapper mapper) {
         return new DashScopeClient(
             config.getDashscopeApiKey(), config.getDashscopeEndpoint(),
-            config.getDashscopeConnectTimeoutSeconds(), config.getDashscopeRequestTimeoutSeconds());
+            config.getDashscopeConnectTimeoutSeconds(), config.getDashscopeRequestTimeoutSeconds(),
+            sharedHttpClient, mapper);
     }
 
     @Bean
-    AmapWeatherTool amapWeatherTool(BotConfig config) {
+    AmapWeatherTool amapWeatherTool(BotConfig config, HttpClient sharedHttpClient, ObjectMapper mapper) {
         return new AmapWeatherTool(
             config.getAmapWeatherApiKey(), config.getAmapWeatherEndpoint(),
-            config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds());
+            config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds(),
+            sharedHttpClient, mapper);
     }
 
     @Bean
-    ExchangeRateTool exchangeRateTool(BotConfig config) {
+    ExchangeRateTool exchangeRateTool(BotConfig config, HttpClient sharedHttpClient, ObjectMapper mapper) {
         return new ExchangeRateTool(
             config.getJuheExchangeApiKey(), config.getJuheExchangeEndpoint(),
             config.getJuheExchangeVersion(), config.getJuheExchangeConnectTimeoutSeconds(),
-            config.getJuheExchangeRequestTimeoutSeconds());
+            config.getJuheExchangeRequestTimeoutSeconds(), sharedHttpClient, mapper);
     }
 
     @Bean
@@ -97,33 +139,44 @@ public class BotBeanConfiguration {
     }
 
     @Bean
-    WebSearchTool webSearchTool(BotConfig config) {
+    WebSearchTool webSearchTool(BotConfig config, HttpClient sharedHttpClient, ObjectMapper mapper) {
         return new WebSearchTool(
             config.getBochaApiKey(), config.getBochaEndpoint(),
-            config.getBochaConnectTimeoutSeconds(), config.getBochaRequestTimeoutSeconds());
+            config.getBochaConnectTimeoutSeconds(), config.getBochaRequestTimeoutSeconds(),
+            sharedHttpClient, mapper);
     }
 
     @Bean
-    TianNewsTool tianNewsTool(BotConfig config) {
-        return new TianNewsTool(config.getTianapiApiKey());
+    TianNewsTool tianNewsTool(BotConfig config, HttpClient sharedHttpClient, ObjectMapper mapper) {
+        return new TianNewsTool(config.getTianapiApiKey(), sharedHttpClient, mapper);
     }
 
     @Bean
-    WebPageExtractTool webPageExtractTool(BotConfig config) {
-        return new WebPageExtractTool(
-            config.getWebPageExtractConnectTimeoutSeconds(),
-            config.getWebPageExtractRequestTimeoutSeconds(),
+    WebPageExtractClient webPageExtractClient(BotConfig config, HttpClient sharedHttpClient) {
+        return new WebPageExtractClient(
+            sharedHttpClient,
+            Duration.ofSeconds(config.getWebPageExtractRequestTimeoutSeconds()),
             config.getWebPageExtractMaxBodyChars());
     }
 
     @Bean
-    UrlSafetyChecker urlSafetyChecker(ObjectMapper mapper) {
-        return new UrlSafetyChecker(mapper);
+    WebPageExtractTool webPageExtractTool(WebPageExtractClient client, ObjectMapper mapper, BotConfig config) {
+        return new WebPageExtractTool(client, mapper, config.getWebPageExtractMaxBodyChars());
+    }
+
+    @Bean
+    UrlSafetyChecker urlSafetyChecker(ObjectMapper mapper, HttpClient sharedHttpClient) {
+        return new UrlSafetyChecker(mapper, sharedHttpClient);
     }
 
     @Bean
     CurrentTimeTool currentTimeTool(ObjectMapper mapper) {
         return new CurrentTimeTool(mapper);
+    }
+
+    @Bean
+    IdCardTool idCardTool(ObjectMapper mapper) {
+        return new IdCardTool(mapper);
     }
 
     @Bean
@@ -191,8 +244,9 @@ public class BotBeanConfiguration {
     @Bean
     MessageHandler textMessageHandler(ChatService chat, SpeechSynthesisService speech,
                                       DocumentService documents, TianNewsTool news,
-                                      BotConfig config) {
+                                      BotConfig config,
+                                      ScheduledExecutorService backgroundExecutor) {
         SpeechSynthesisService optionalSpeech = config.isDashscopeConfigured() ? speech : null;
-        return new TextMessageHandler(chat, optionalSpeech, documents, news);
+        return new TextMessageHandler(chat, optionalSpeech, documents, news, backgroundExecutor);
     }
 }

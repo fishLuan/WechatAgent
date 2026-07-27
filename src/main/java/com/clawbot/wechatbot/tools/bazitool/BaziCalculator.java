@@ -11,7 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Uses lunar-java for deterministic calendar and Eight-Character calculation. */
+/** 使用 Lunar-Java 进行确定性的日历计算和八字排盘 */
 final class BaziCalculator {
     BaziChart calculate(BaziRequest request) {
         Lunar lunar = createLunar(request);

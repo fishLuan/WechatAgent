@@ -6,8 +6,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -46,13 +50,22 @@ public class UrlSafetyChecker implements FunctionTool {
     );
 
     private final ObjectMapper mapper;
+    private final HttpClient http;
 
     public UrlSafetyChecker() {
         this(new ObjectMapper());
     }
 
     public UrlSafetyChecker(ObjectMapper mapper) {
+        this(mapper, null);
+    }
+
+    public UrlSafetyChecker(ObjectMapper mapper, HttpClient sharedHttpClient) {
         this.mapper = mapper;
+        this.http = sharedHttpClient == null ? HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build() : sharedHttpClient;
     }
 
     @Override
@@ -260,25 +273,25 @@ public class UrlSafetyChecker implements FunctionTool {
         return "当前链接未检测到明显风险特征，可正常访问。";
     }
 
-    private static ExpandResult expandShortLink(String startUrl, int maxHops) throws Exception {
+    private ExpandResult expandShortLink(String startUrl, int maxHops) throws Exception {
         String current = startUrl;
         int hops = 0;
+        Duration timeout = Duration.ofSeconds(5);
         while (hops < maxHops) {
-            HttpURLConnection conn = (HttpURLConnection) new URL(current).openConnection();
-            conn.setRequestMethod("HEAD");
-            conn.setInstanceFollowRedirects(false);
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
-            int code = conn.getResponseCode();
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(current))
+                .timeout(timeout)
+                .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                .build();
+            HttpResponse<Void> response = http.send(request, HttpResponse.BodyHandlers.discarding());
+            int code = response.statusCode();
             if (code >= 300 && code < 400) {
-                String location = conn.getHeaderField("Location");
+                String location = response.headers().firstValue("Location").orElse(null);
                 if (location == null || location.isEmpty()) break;
                 current = location.startsWith("http") ? location
                     : new URL(new URL(current), location).toString();
                 hops++;
-                conn.disconnect();
             } else {
-                conn.disconnect();
                 break;
             }
         }
