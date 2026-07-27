@@ -26,6 +26,7 @@ import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
 import com.clawbot.wechatbot.service.multitask.LlmTaskPlanner;
 import com.clawbot.wechatbot.service.multitask.MultiTaskChatService;
 import com.clawbot.wechatbot.service.multitask.TaskPlanner;
+import com.clawbot.wechatbot.service.reply.LongReplyManager;
 import com.clawbot.wechatbot.tools.FunctionTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
@@ -243,6 +244,15 @@ public class BotBeanConfiguration {
     }
 
     @Bean
+    LongReplyManager longReplyManager(BotConfig config) {
+        return new LongReplyManager(
+            config.getLongReplyThreshold(),
+            config.getLongReplyChunkSize(),
+            config.getLongReplyMaxPendingChars(),
+            Duration.ofMinutes(config.getLongReplyPendingExpireMinutes()));
+    }
+
+    @Bean
     MessageHandler imageMessageHandler(VisionService service) {
         return new ImageMessageHandler(service);
     }
@@ -263,7 +273,8 @@ public class BotBeanConfiguration {
                                       DocumentService documents, TianNewsTool news,
                                       BotConfig config,
                                       ConversationMemoryService memoryService,
-                                      MemoryProperties memoryProperties) {
+                                      MemoryProperties memoryProperties,
+                                      LongReplyManager longReplyManager) {
         SpeechSynthesisService optionalSpeech = config.isDashscopeConfigured() ? speech : null;
         return new TextMessageHandler(
             chat,
@@ -271,7 +282,8 @@ public class BotBeanConfiguration {
             documents,
             news,
             memoryService,
-            memoryProperties
+            memoryProperties,
+            longReplyManager
         );
     }
 }
