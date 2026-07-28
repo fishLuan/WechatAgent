@@ -43,7 +43,7 @@ class ApplicationTests {
 
     @Test
     void contextLoads() {
-        assertEquals(9, toolRegistry.size());
+        assertEquals(10, toolRegistry.size());
         assertEquals(3, handlers.size());
         assertEquals(2, agentTaskHandlers.size());
         assertTrue(toolRegistry.definitions().findValuesAsText("name").contains("convert_currency"));
@@ -53,6 +53,8 @@ class ApplicationTests {
             .contains("get_current_time"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name")
             .contains("validate_id_card"));
+        assertTrue(toolRegistry.definitions().findValuesAsText("name")
+            .contains("scheduler_manage"));
         assertInstanceOf(DeepSeekChatService.class, chatService);
         assertTrue(agentOrchestrator.isConfigured() == chatService.isConfigured());
     }
