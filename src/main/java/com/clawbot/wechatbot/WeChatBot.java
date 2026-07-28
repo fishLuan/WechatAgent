@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot;
 
 import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.base.MessageSender;
 import com.clawbot.wechatbot.config.BotConfig;
 import com.clawbot.wechatbot.notification.NotificationService;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
@@ -319,5 +320,38 @@ public class WeChatBot implements SmartLifecycle {
         System.out.println("   WeChat iLink Bot - Spring Boot");
         System.out.println("========================================");
         System.out.println();
+    }
+
+    @Component
+    public class BotMessageSender implements MessageSender {
+        @Override
+        public void sendText(String userId, String text) {
+            if (!isRunning() || sessions.isEmpty()) return;
+            BotSession s = sessions.get(0);
+            if (s.client != null && s.client.isLoggedIn()) {
+                int max = 1500;
+                if (text.length() <= max) {
+                    try { s.client.sendText(userId, text); } catch (Exception ignored) {}
+                } else {
+                    int i = 0;
+                    while (i < text.length()) {
+                        int end = Math.min(i + max, text.length());
+                        try { s.client.sendText(userId, text.substring(i, end)); } catch (Exception ignored) {}
+                        i = end;
+                    }
+                }
+            }
+        }
+        @Override public void sendImage(String userId, byte[] bytes, String fileName) {
+            if (!isRunning() || sessions.isEmpty()) return;
+            try { sessions.get(0).client.sendImage(userId, bytes, fileName, null); } catch (Exception ignored) {}
+        }
+        @Override public void sendFile(String userId, byte[] bytes, String fileName, String caption) {
+            if (!isRunning() || sessions.isEmpty()) return;
+            try { sessions.get(0).client.sendFile(userId, bytes, fileName, caption); } catch (Exception ignored) {}
+        }
+        @Override public boolean isReady() {
+            return isRunning() && !sessions.isEmpty() && sessions.get(0).client != null && sessions.get(0).client.isLoggedIn();
+        }
     }
 }
