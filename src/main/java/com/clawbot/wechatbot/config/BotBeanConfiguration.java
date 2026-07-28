@@ -2,7 +2,6 @@ package com.clawbot.wechatbot.config;
 
 import com.clawbot.wechatbot.base.MessageHandler;
 import com.clawbot.wechatbot.handler.DocumentMessageHandler;
-import com.clawbot.wechatbot.handler.ImageGenHandler;
 import com.clawbot.wechatbot.handler.ImageMessageHandler;
 import com.clawbot.wechatbot.handler.TextMessageHandler;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
@@ -10,7 +9,6 @@ import com.clawbot.wechatbot.memory.MemoryProperties;
 import com.clawbot.wechatbot.notification.DingTalkNotificationService;
 import com.clawbot.wechatbot.notification.NoOpNotificationService;
 import com.clawbot.wechatbot.notification.NotificationService;
-import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.service.ImageGenService;
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
@@ -23,9 +21,12 @@ import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
 import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
 import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
-import com.clawbot.wechatbot.service.multitask.LlmTaskPlanner;
-import com.clawbot.wechatbot.service.multitask.MultiTaskChatService;
-import com.clawbot.wechatbot.service.multitask.TaskPlanner;
+import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
+import com.clawbot.wechatbot.service.agent.AgentTaskHandler;
+import com.clawbot.wechatbot.service.agent.ChatAgentTaskHandler;
+import com.clawbot.wechatbot.service.agent.ImageGenerationAgentTaskHandler;
+import com.clawbot.wechatbot.service.agent.LlmTaskPlanner;
+import com.clawbot.wechatbot.service.agent.TaskPlanner;
 import com.clawbot.wechatbot.service.reply.LongReplyManager;
 import com.clawbot.wechatbot.tools.FunctionTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
@@ -44,7 +45,6 @@ import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
@@ -193,18 +193,33 @@ public class BotBeanConfiguration {
 
     @Bean
     TaskPlanner taskPlanner(DeepSeekClient client, BotConfig config) {
-        return new LlmTaskPlanner(client, config.getDeepSeekMultiTaskMaxTasks());
+        return new LlmTaskPlanner(client, config.getAgentMaxTasks());
+    }
+
+    @Bean
+    AgentTaskHandler chatAgentTaskHandler(DeepSeekChatService chatService) {
+        return new ChatAgentTaskHandler(chatService);
+    }
+
+    @Bean
+    AgentTaskHandler imageGenerationAgentTaskHandler(ImageGenService imageGenService) {
+        return new ImageGenerationAgentTaskHandler(imageGenService);
     }
 
     @Bean(destroyMethod = "close")
-    @Primary
-    ChatService chatService(DeepSeekChatService singleTaskChatService,
-                            TaskPlanner taskPlanner, BotConfig config) {
-        return new MultiTaskChatService(
+    AgentOrchestrator agentOrchestrator(
+        DeepSeekChatService singleTaskChatService,
+        TaskPlanner taskPlanner,
+        List<AgentTaskHandler> taskHandlers,
+        BotConfig config
+    ) {
+        return new AgentOrchestrator(
             singleTaskChatService,
             taskPlanner,
-            config.isDeepSeekMultiTaskEnabled(),
-            config.getDeepSeekMultiTaskMaxParallelism());
+            taskHandlers,
+            config.isAgentEnabled(),
+            config.getAgentMaxOuterRounds(),
+            config.getAgentMaxParallelism());
     }
 
     @Bean
@@ -258,18 +273,15 @@ public class BotBeanConfiguration {
     }
 
     @Bean
-    MessageHandler imageGenHandler(ImageGenService service) {
-        return new ImageGenHandler(service);
-    }
-
-    @Bean
     MessageHandler documentMessageHandler(DeepSeekChatService singleTaskChatService,
                                           DocumentService documents) {
         return new DocumentMessageHandler(singleTaskChatService, documents);
     }
 
     @Bean
-    MessageHandler textMessageHandler(ChatService chat, SpeechSynthesisService speech,
+    MessageHandler textMessageHandler(DeepSeekChatService chat,
+                                      AgentOrchestrator agentOrchestrator,
+                                      SpeechSynthesisService speech,
                                       DocumentService documents, TianNewsTool news,
                                       BotConfig config,
                                       ConversationMemoryService memoryService,
@@ -278,6 +290,7 @@ public class BotBeanConfiguration {
         SpeechSynthesisService optionalSpeech = config.isDashscopeConfigured() ? speech : null;
         return new TextMessageHandler(
             chat,
+            agentOrchestrator,
             optionalSpeech,
             documents,
             news,

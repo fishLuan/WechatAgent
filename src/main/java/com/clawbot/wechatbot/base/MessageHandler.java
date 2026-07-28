@@ -9,7 +9,7 @@ import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
  * 每种消息类型一个实现类：
  *   - TextMessageHandler 处理普通文本（DeepSeek 对话）
  *   - ImageMessageHandler 处理图片消息（百炼看图）
- *   - ImageGenHandler 处理"画图"指令（百炼文生图）
+ *   - DocumentMessageHandler 处理用户发送的文件
  *
  * 框架层通过 canHandle() 判断由谁处理，然后调用 handle()
  */
