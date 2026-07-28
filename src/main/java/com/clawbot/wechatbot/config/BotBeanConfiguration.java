@@ -9,42 +9,40 @@ import com.clawbot.wechatbot.memory.MemoryProperties;
 import com.clawbot.wechatbot.notification.DingTalkNotificationService;
 import com.clawbot.wechatbot.notification.NoOpNotificationService;
 import com.clawbot.wechatbot.notification.NotificationService;
-import com.clawbot.wechatbot.service.DocumentService;
-import com.clawbot.wechatbot.service.ImageGenService;
-import com.clawbot.wechatbot.service.SpeechSynthesisService;
-import com.clawbot.wechatbot.service.VisionService;
-import com.clawbot.wechatbot.service.client.DashScopeClient;
-import com.clawbot.wechatbot.service.client.DeepSeekClient;
-import com.clawbot.wechatbot.service.document.PdfDocumentService;
-import com.clawbot.wechatbot.service.document.WordDocumentService;
-import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
-import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
-import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
-import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
 import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
 import com.clawbot.wechatbot.service.agent.AgentTaskHandler;
 import com.clawbot.wechatbot.service.agent.ChatAgentTaskHandler;
 import com.clawbot.wechatbot.service.agent.ImageGenerationAgentTaskHandler;
 import com.clawbot.wechatbot.service.agent.LlmTaskPlanner;
 import com.clawbot.wechatbot.service.agent.TaskPlanner;
+import com.clawbot.wechatbot.service.client.DashScopeClient;
+import com.clawbot.wechatbot.service.client.DeepSeekClient;
+import com.clawbot.wechatbot.service.document.PdfDocumentService;
+import com.clawbot.wechatbot.service.document.WordDocumentService;
+import com.clawbot.wechatbot.service.DocumentService;
+import com.clawbot.wechatbot.service.ImageGenService;
+import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
+import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
+import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
+import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
 import com.clawbot.wechatbot.service.reply.LongReplyManager;
+import com.clawbot.wechatbot.service.SpeechSynthesisService;
+import com.clawbot.wechatbot.service.VisionService;
+import com.clawbot.wechatbot.tools.bazitool.BaziFortuneTool;
+import com.clawbot.wechatbot.tools.currenttimetool.CurrentTimeTool;
+import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
 import com.clawbot.wechatbot.tools.FunctionTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
-import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
-import com.clawbot.wechatbot.tools.bazitool.BaziFortuneTool;
-import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
 import com.clawbot.wechatbot.tools.idcardtool.IdCardTool;
 import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
 import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
-import com.clawbot.wechatbot.tools.currenttimetool.CurrentTimeTool;
+import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
 import com.clawbot.wechatbot.tools.webaccess.SafeHttpFetcher;
 import com.clawbot.wechatbot.tools.webaccess.UrlAccessPolicy;
 import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractClient;
 import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
@@ -53,10 +51,15 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.Configuration;
+
 /**
  * 应用对象装配中心。业务类保持纯 Java 构造器，生命周期和依赖关系由 Spring 管理。
  */
 @Configuration(proxyBeanMethods = false)
+@ComponentScan(basePackages = {"com.clawbot.wechatbot.scheduler"})
 public class BotBeanConfiguration {
 
     @Bean

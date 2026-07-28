@@ -9,6 +9,7 @@ import com.clawbot.wechatbot.memory.ConversationMemory;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.memory.ConversationMessage;
 import com.clawbot.wechatbot.memory.MemoryProperties;
+import com.clawbot.wechatbot.scheduler.tool.SchedulerTool;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
@@ -133,8 +134,14 @@ public class TextMessageHandler implements MessageHandler {
             } else {
                 chatInput = textForChat;
             }
-            AgentResponse agentResponse = agentOrchestrator.execute(
-                chatInput, context.isEmpty() ? "" : context);
+            AgentResponse agentResponse;
+            SchedulerTool.CURRENT_USER_ID.set(from);
+            try {
+                agentResponse = agentOrchestrator.execute(
+                    chatInput, context.isEmpty() ? "" : context);
+            } finally {
+                SchedulerTool.CURRENT_USER_ID.remove();
+            }
 
             // 3. 发送文字回复（清理大模型可能自作主张加的"（用男声）"等标记）
             String textReply = cleanBotReply(agentResponse.text());
