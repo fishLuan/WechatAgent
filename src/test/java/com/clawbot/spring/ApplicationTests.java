@@ -2,6 +2,12 @@ package com.clawbot.spring;
 
 import com.clawbot.wechatbot.WeChatBotApplication;
 import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliContentRepository;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliPreferenceRepository;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliRecommendationHistoryRepository;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliSubscriptionRepository;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliUpdateEventRepository;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
 import com.clawbot.wechatbot.service.agent.AgentTaskHandler;
@@ -14,7 +20,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest(
@@ -41,6 +49,24 @@ class ApplicationTests {
     @Autowired
     private List<AgentTaskHandler> agentTaskHandlers;
 
+    @Autowired
+    private BilibiliProperties bilibiliProperties;
+
+    @Autowired
+    private BilibiliContentRepository bilibiliContentRepository;
+
+    @Autowired
+    private BilibiliSubscriptionRepository bilibiliSubscriptionRepository;
+
+    @Autowired
+    private BilibiliUpdateEventRepository bilibiliUpdateEventRepository;
+
+    @Autowired
+    private BilibiliPreferenceRepository bilibiliPreferenceRepository;
+
+    @Autowired
+    private BilibiliRecommendationHistoryRepository bilibiliHistoryRepository;
+
     @Test
     void contextLoads() {
         assertEquals(10, toolRegistry.size());
@@ -57,6 +83,14 @@ class ApplicationTests {
             .contains("scheduler_manage"));
         assertInstanceOf(DeepSeekChatService.class, chatService);
         assertTrue(agentOrchestrator.isConfigured() == chatService.isConfigured());
+        assertFalse(bilibiliProperties.isEnabled());
+        assertTrue(bilibiliProperties.getDefaultMinimumRating()
+            > bilibiliProperties.getMovieMinimumRating());
+        assertNotNull(bilibiliContentRepository);
+        assertNotNull(bilibiliSubscriptionRepository);
+        assertNotNull(bilibiliUpdateEventRepository);
+        assertNotNull(bilibiliPreferenceRepository);
+        assertNotNull(bilibiliHistoryRepository);
     }
 
 }
