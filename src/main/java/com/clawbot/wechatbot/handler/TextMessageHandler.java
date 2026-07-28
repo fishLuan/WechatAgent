@@ -12,6 +12,9 @@ import com.clawbot.wechatbot.memory.MemoryProperties;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
+import com.clawbot.wechatbot.service.agent.AgentAttachment;
+import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
+import com.clawbot.wechatbot.service.agent.AgentResponse;
 import com.clawbot.wechatbot.service.reply.LongReplyManager;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.util.JsonUtils;
@@ -25,13 +28,13 @@ import java.util.List;
  * 通过 sendFile 发送给用户（微信协议不允许机器人发送语音气泡，
  * 但可以发送普通文件）。
  *
- * 注意：这是"兜底" Handler，优先级最低（priority 最大）。
- * 其他 Handler（ImageMessageHandler、ImageGenHandler）先判断，
- * 如果都不处理，最后才进入这里。
+ * 注意：这是文本消息的统一入口。图片生成等复合需求由内部 Agent 外循环调度，
+ * 不再由独立的图片生成消息 Handler 提前截断。
  */
 public class TextMessageHandler implements MessageHandler {
 
     private final ChatService chatService;
+    private final AgentOrchestrator agentOrchestrator;
     private final SpeechSynthesisService tts;
     private final DocumentService documentService;
     private final TianNewsTool tianNewsTool;
@@ -41,6 +44,7 @@ public class TextMessageHandler implements MessageHandler {
 
     public TextMessageHandler(
         ChatService chatService,
+        AgentOrchestrator agentOrchestrator,
         SpeechSynthesisService tts,
         DocumentService documentService,
         TianNewsTool tianNewsTool,
@@ -49,6 +53,7 @@ public class TextMessageHandler implements MessageHandler {
         LongReplyManager longReplyManager
     ) {
         this.chatService = chatService;
+        this.agentOrchestrator = agentOrchestrator;
         this.tts = tts;
         this.documentService = documentService;
         this.tianNewsTool = tianNewsTool;
@@ -87,7 +92,7 @@ public class TextMessageHandler implements MessageHandler {
         }
 
         // 未配置 Key → echo
-        if (!chatService.isConfigured()) {
+        if (!agentOrchestrator.isConfigured()) {
             safeSendText(client, from, "（Echo模式）你说: " + userText
                 + "\n提示：配置环境变量 DEEPSEEK_API_KEY 开启智能对话");
             return;
@@ -128,11 +133,13 @@ public class TextMessageHandler implements MessageHandler {
             } else {
                 chatInput = textForChat;
             }
-            String reply = chatService.chat(chatInput, context.isEmpty() ? "" : context);
+            AgentResponse agentResponse = agentOrchestrator.execute(
+                chatInput, context.isEmpty() ? "" : context);
 
             // 3. 发送文字回复（清理大模型可能自作主张加的"（用男声）"等标记）
-            String textReply = cleanBotReply(reply);
+            String textReply = cleanBotReply(agentResponse.text());
             deliverTextReply(client, from, textReply, wantDoc);
+            sendAgentAttachments(client, from, agentResponse.attachments());
             appendHistory(from, userText, textReply);
             System.out.println("[RECV] <" + from + "> " + userText);
             System.out.println("[SEND] " + textReply.replace("\n", " | "));
@@ -499,9 +506,8 @@ public class TextMessageHandler implements MessageHandler {
     private boolean isNewsQuery(String text) {
         if (text == null || text.isEmpty()) return false;
         String t = text.trim().toLowerCase();
-        String[] keywords = {"新闻", "大事", "热点", "最近", "发生了什么",
-            "有什么", "头条", "资讯", "时事", "今天", "昨天",
-            "科技", "体育", "娱乐", "财经", "国际", "社会"};
+        String[] keywords = {"新闻", "大事", "热点", "头条", "资讯", "时事",
+            "发生了什么", "最近发生"};
         for (String kw : keywords) {
             if (t.contains(kw)) return true;
         }
@@ -673,6 +679,34 @@ public class TextMessageHandler implements MessageHandler {
             client.sendTextWithTyping(userId, numberedChunk, typingMillis);
         }
         System.out.println("[INFO] ✅ 长回复已分 " + chunks.size() + " 段发送");
+    }
+
+    private void sendAgentAttachments(
+        ILinkClient client, String userId, List<AgentAttachment> attachments
+    ) {
+        for (AgentAttachment attachment : attachments) {
+            try {
+                if (attachment.type() == AgentAttachment.AttachmentType.IMAGE) {
+                    client.sendImage(
+                        userId,
+                        attachment.content(),
+                        attachment.fileName(),
+                        attachment.caption());
+                } else {
+                    client.sendFile(
+                        userId,
+                        attachment.content(),
+                        attachment.fileName(),
+                        attachment.caption());
+                }
+                System.out.println("[INFO] ✅ Agent 附件已发送: "
+                    + attachment.fileName());
+            } catch (Exception error) {
+                System.err.println("[WARN] Agent 附件发送失败: " + error.getMessage());
+                safeSendText(client, userId,
+                    "文字任务已完成，但附件发送失败：" + attachment.fileName());
+            }
+        }
     }
 
     private void safeSendText(ILinkClient client, String to, String text) {
