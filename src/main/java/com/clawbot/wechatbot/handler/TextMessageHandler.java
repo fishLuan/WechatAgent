@@ -9,6 +9,7 @@ import com.clawbot.wechatbot.memory.ConversationMemory;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.memory.ConversationMessage;
 import com.clawbot.wechatbot.memory.MemoryProperties;
+import com.clawbot.wechatbot.scheduler.TaskCommandRouter;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
@@ -41,6 +42,7 @@ public class TextMessageHandler implements MessageHandler {
     private final ConversationMemoryService memoryService;
     private final MemoryProperties memoryProperties;
     private final LongReplyManager longReplyManager;
+    private final TaskCommandRouter taskRouter;
 
     public TextMessageHandler(
         ChatService chatService,
@@ -50,7 +52,8 @@ public class TextMessageHandler implements MessageHandler {
         TianNewsTool tianNewsTool,
         ConversationMemoryService memoryService,
         MemoryProperties memoryProperties,
-        LongReplyManager longReplyManager
+        LongReplyManager longReplyManager,
+        TaskCommandRouter taskRouter
     ) {
         this.chatService = chatService;
         this.agentOrchestrator = agentOrchestrator;
@@ -60,6 +63,7 @@ public class TextMessageHandler implements MessageHandler {
         this.memoryService = memoryService;
         this.memoryProperties = memoryProperties;
         this.longReplyManager = longReplyManager;
+        this.taskRouter = taskRouter;
         DocumentService.silencePdfLogs();  // 屏蔽 PDF 库的噪音日志
     }
 
@@ -88,6 +92,12 @@ public class TextMessageHandler implements MessageHandler {
         // 特殊命令
         if (isCommand(userText)) {
             handleCommand(client, from, userText);
+            return;
+        }
+
+        // 定时任务自然语言拦截（「1分钟后提醒我喝水」这种，直接走任务，不让大模型聊天）
+        if (taskRouter != null && com.clawbot.wechatbot.scheduler.TaskCommandRouter.isTaskIntent(userText)) {
+            taskRouter.handle(client, from, userText);
             return;
         }
 
@@ -517,7 +527,11 @@ public class TextMessageHandler implements MessageHandler {
     private boolean isCommand(String text) {
         String t = text.trim().toLowerCase();
         return t.equals("help") || t.equals("帮助") || t.equals("?")
-            || t.equals("clear") || t.equals("清空") || t.equals("重置");
+            || t.equals("clear") || t.equals("清空") || t.equals("重置")
+            || t.startsWith("/remind ")
+            || t.equals("/tasks") || t.equals("我的任务")
+            || t.startsWith("/cancel")
+            || t.equals("/cancel-all") || t.equals("取消所有任务");
     }
 
     private void handleCommand(ILinkClient client, String from, String text) {
@@ -529,6 +543,7 @@ public class TextMessageHandler implements MessageHandler {
                 + "\n2. 看图识别（发送图片即可，接入阿里云百炼视觉模型）"
                 + "\n3. 文生图（说「画图 一只在月球上的猫」即可生成图片）"
                 + "\n4. 语音回复（消息里包含「语音/读/念」等关键词，我会额外发送语音文件）"
+                + "\n5. 定时提醒：/remind、/tasks、/cancel <序号>、/cancel-all"
                 + "\n（发送 'clear' 可清空对话记忆）");
             return;
         }
@@ -536,6 +551,10 @@ public class TextMessageHandler implements MessageHandler {
             memoryService.clear(from);
             safeSendText(client, from, "对话记忆已清空（包括长期摘要），我们重新开始聊天吧！");
             return;
+        }
+        if (t.startsWith("/remind ") || t.equals("/tasks") || t.equals("我的任务")
+            || t.startsWith("/cancel") || t.equals("/cancel-all") || t.equals("取消所有任务")) {
+            taskRouter.handle(client, from, text);
         }
     }
 

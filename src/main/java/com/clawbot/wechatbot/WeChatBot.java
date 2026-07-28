@@ -3,6 +3,7 @@ package com.clawbot.wechatbot;
 import com.clawbot.wechatbot.base.MessageHandler;
 import com.clawbot.wechatbot.config.BotConfig;
 import com.clawbot.wechatbot.notification.NotificationService;
+import com.clawbot.wechatbot.scheduler.WeChatClientReadyEvent;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.config.ConfigLoader;
@@ -11,6 +12,7 @@ import com.github.wechat.ilink.sdk.core.listener.OnLoginListener;
 import com.github.wechat.ilink.sdk.core.login.LoginContext;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
@@ -31,6 +33,7 @@ public class WeChatBot implements SmartLifecycle {
     private final BotConfig config;
     private final List<MessageHandler> handlers;
     private final NotificationService notifications;
+    private final ApplicationContext appCtx;
     private final List<BotSession> sessions = new CopyOnWriteArrayList<>();
     private final String routeNamespace = "clawbot-" + UUID.randomUUID();
 
@@ -39,11 +42,13 @@ public class WeChatBot implements SmartLifecycle {
     private int nextSessionIndex = 1;
 
     public WeChatBot(BotConfig config, List<MessageHandler> handlers,
-                     NotificationService notifications) {
+                     NotificationService notifications,
+                     ApplicationContext appCtx) {
         this.config = config;
         this.handlers = new ArrayList<>(handlers);
         this.handlers.sort(Comparator.comparingInt(MessageHandler::priority));
         this.notifications = notifications;
+        this.appCtx = appCtx;
     }
 
     @Override
@@ -61,7 +66,7 @@ public class WeChatBot implements SmartLifecycle {
     private void runBot(BotSession session) {
         try {
             System.out.println(session.prefix() + " [1/3] Building client...");
-            ILinkClient builtClient = ILinkClient.builder()
+            final ILinkClient builtClient = ILinkClient.builder()
                 .config(createSessionConfig(session))
                 .onLogin(new OnLoginListener() {
                     @Override
@@ -85,6 +90,28 @@ public class WeChatBot implements SmartLifecycle {
                 .onMessage(messages -> routeMessages(session.client, messages))
                 .build();
             session.client = builtClient;
+            // ⬇⬇⬇ 下面是【只追加、不修改原逻辑】的调度器接入代码：
+            // 1) 登录成功/轮询到已登录时，把 builtClient 注入 WeChatMessageSender
+            // 2) 用 Spring ApplicationListener 监听（在 onLoginSuccess 之后、或 114 行轮询确认已登录时）都可以
+            //    为了 100% 不碰回调、也不依赖回调时序，我们在这里立刻追加一个后台监听线程：
+            final String botKey = session.name();
+            final ILinkClient safeClient = builtClient;
+            new Thread(() -> {
+                try {
+                    // 等最多 120 秒直到登录成功（扫码登录是异步的，这时候 builtClient 还没 LoggedIn）
+                    int waited = 0;
+                    while (!safeClient.isLoggedIn() && waited < 120) {
+                        Thread.sleep(1000);
+                        waited++;
+                    }
+                    if (safeClient.isLoggedIn()) {
+                        String botId = botKey;  // 直接用 session name 当 botId，当 WeChatMessageSender 的 Map key 完全够用
+                        appCtx.publishEvent(new WeChatClientReadyEvent(botId, safeClient));
+                        System.out.printf("[SCHEDULER] ✅ 已接入微信 Bot: %s（builtClient 100% 非空）%n", botId);
+                    }
+                } catch (Throwable ignore) {}
+            }, "scheduler-wechat-client-watcher-" + botKey).start();
+            // ⬆⬆⬆ 上面是追加的调度器接入代码（原来的 onLoginSuccess / onMessage 一行都没动！）
 
             System.out.println(session.prefix() + " [2/3] Getting QR code...");
             String qrContent = builtClient.executeLogin();

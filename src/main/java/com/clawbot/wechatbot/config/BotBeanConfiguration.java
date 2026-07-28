@@ -9,6 +9,16 @@ import com.clawbot.wechatbot.memory.MemoryProperties;
 import com.clawbot.wechatbot.notification.DingTalkNotificationService;
 import com.clawbot.wechatbot.notification.NoOpNotificationService;
 import com.clawbot.wechatbot.notification.NotificationService;
+import com.clawbot.wechatbot.scheduler.AgentTaskScheduler;
+import com.clawbot.wechatbot.scheduler.InMemoryTaskPersistence;
+import com.clawbot.wechatbot.scheduler.MongoTaskPersistence;
+import com.clawbot.wechatbot.scheduler.RemindCommandParser;
+import com.clawbot.wechatbot.scheduler.TaskCommandRouter;
+import com.clawbot.wechatbot.scheduler.TaskPersistence;
+import com.clawbot.wechatbot.scheduler.TaskSchedulerProperties;
+import com.clawbot.wechatbot.scheduler.WeChatMessageSender;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.data.mongodb.core.MongoTemplate;
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.service.ImageGenService;
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
@@ -279,6 +289,49 @@ public class BotBeanConfiguration {
     }
 
     @Bean
+    @ConditionalOnProperty(name = "clawbot.memory.enabled", havingValue = "false")
+    TaskPersistence inMemoryTaskPersistence(TaskSchedulerProperties props) {
+        return new InMemoryTaskPersistence(props);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "clawbot.memory.enabled", havingValue = "true", matchIfMissing = true)
+    TaskPersistence mongoTaskPersistence(MongoTemplate mongoTemplate, TaskSchedulerProperties props) {
+        return new MongoTaskPersistence(mongoTemplate, props);
+    }
+
+    @Bean
+    WeChatMessageSender weChatMessageSender(NotificationService notifications) {
+        return new WeChatMessageSender(notifications);
+    }
+
+    @Bean(destroyMethod = "close")
+    AgentTaskScheduler agentTaskScheduler(
+        TaskSchedulerProperties props,
+        TaskPersistence persistence,
+        NotificationService notifications,
+        WeChatMessageSender weChatMessageSender
+    ) {
+        return new AgentTaskScheduler(props, persistence, notifications, weChatMessageSender);
+    }
+
+    @Bean
+    RemindCommandParser remindCommandParser(TaskSchedulerProperties props) {
+        return new RemindCommandParser(props);
+    }
+
+    @Bean
+    TaskCommandRouter taskCommandRouter(
+        AgentTaskScheduler scheduler,
+        RemindCommandParser parser,
+        WeChatMessageSender sender,
+        DeepSeekChatService chatService,
+        AgentOrchestrator agentOrchestrator
+    ) {
+        return new TaskCommandRouter(scheduler, parser, sender, chatService, agentOrchestrator);
+    }
+
+    @Bean
     MessageHandler textMessageHandler(DeepSeekChatService chat,
                                       AgentOrchestrator agentOrchestrator,
                                       SpeechSynthesisService speech,
@@ -286,7 +339,8 @@ public class BotBeanConfiguration {
                                       BotConfig config,
                                       ConversationMemoryService memoryService,
                                       MemoryProperties memoryProperties,
-                                      LongReplyManager longReplyManager) {
+                                      LongReplyManager longReplyManager,
+                                      TaskCommandRouter taskRouter) {
         SpeechSynthesisService optionalSpeech = config.isDashscopeConfigured() ? speech : null;
         return new TextMessageHandler(
             chat,
@@ -296,7 +350,8 @@ public class BotBeanConfiguration {
             news,
             memoryService,
             memoryProperties,
-            longReplyManager
+            longReplyManager,
+            taskRouter
         );
     }
 }

@@ -39,14 +39,14 @@ public class MongoConversationMemoryService implements ConversationMemoryService
     @PostConstruct
     void initializeIndexesAndVerifyConnection() {
         mongoTemplate.executeCommand("{ ping: 1 }");
-        mongoTemplate.indexOps(ConversationMemory.class).ensureIndex(
+        mongoTemplate.indexOps(ConversationMemory.class).createIndex(
             new Index()
                 .on("namespace", Direction.ASC)
                 .on("userKey", Direction.ASC)
                 .unique()
                 .named("uk_conversation_memory_namespace_user")
         );
-        mongoTemplate.indexOps(ProcessedMessage.class).ensureIndex(
+        mongoTemplate.indexOps(ProcessedMessage.class).createIndex(
             new Index()
                 .on("expireAt", Direction.ASC)
                 .expire(Duration.ZERO)
