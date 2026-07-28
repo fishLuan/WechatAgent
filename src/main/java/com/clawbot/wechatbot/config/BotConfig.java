@@ -24,6 +24,22 @@ public class BotConfig {
     public double getDeepSeekTemperature() { return getDouble("deepseek.temperature"); }
     public int getDeepSeekMaxTokens() { return getInt("deepseek.max-tokens"); }
     public int getDeepSeekMaxToolRounds() { return getInt("deepseek.max-tool-rounds"); }
+    public boolean isLongFormEnabled() { return getBoolean("deepseek.long-form.enabled"); }
+    public int getLongFormMinTargetChars() {
+        return getInt("deepseek.long-form.min-target-chars");
+    }
+    public int getLongFormMaxTargetChars() {
+        return getInt("deepseek.long-form.max-target-chars");
+    }
+    public int getLongFormTolerancePercent() {
+        return getInt("deepseek.long-form.tolerance-percent");
+    }
+    public int getLongFormMaxContinuationRounds() {
+        return getInt("deepseek.long-form.max-continuation-rounds");
+    }
+    public int getLongFormMaxTotalChars() {
+        return getInt("deepseek.long-form.max-total-chars");
+    }
     public boolean isAgentEnabled() {
         return getBoolean("agent.enabled");
     }
@@ -35,6 +51,27 @@ public class BotConfig {
     }
     public int getAgentMaxOuterRounds() {
         return getInt("agent.max-outer-rounds");
+    }
+    public int getAgentMaxChatDepth() {
+        return getInt("agent.guard.max-chat-depth");
+    }
+    public int getAgentMaxToolCallsPerRound() {
+        return getInt("agent.guard.max-tool-calls-per-round");
+    }
+    public int getAgentMaxTotalToolCalls() {
+        return getInt("agent.guard.max-total-tool-calls");
+    }
+    public int getAgentMaxSameToolFailures() {
+        return getInt("agent.guard.max-same-tool-failures");
+    }
+    public int getAgentMaxToolResultChars() {
+        return getInt("agent.guard.max-tool-result-chars");
+    }
+    public int getAgentMaxTotalToolResultChars() {
+        return getInt("agent.guard.max-total-tool-result-chars");
+    }
+    public int getAgentExecutionTimeoutSeconds() {
+        return getInt("agent.guard.execution-timeout-seconds");
     }
     public int getDeepSeekConnectTimeoutSeconds() { return getInt("deepseek.connect-timeout-seconds"); }
     public int getDeepSeekRequestTimeoutSeconds() { return getInt("deepseek.request-timeout-seconds"); }

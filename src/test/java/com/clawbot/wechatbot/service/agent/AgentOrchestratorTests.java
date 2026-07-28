@@ -5,6 +5,7 @@ import com.clawbot.wechatbot.service.ImageGenService;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -116,6 +117,36 @@ class AgentOrchestratorTests {
 
             assertEquals("原始流程回答", response.text());
             assertEquals(1, calls.get());
+        }
+    }
+
+    @Test
+    void terminatesOuterLoopWhenOverallDeadlineExpires() throws Exception {
+        ChatService chat = chatService(input -> "不应调用");
+        ImageGenService image = imageService(prompt -> {
+            Thread.sleep(1000);
+            return new byte[] {1};
+        });
+        TaskPlanner planner = ignored -> List.of(
+            new AgentTask(
+                "image", 0, AgentTaskType.IMAGE_GENERATION,
+                "生成图片", List.of()));
+        long started = System.nanoTime();
+
+        try (AgentOrchestrator orchestrator = new AgentOrchestrator(
+            chat,
+            planner,
+            List.of(new ImageGenerationAgentTaskHandler(image)),
+            true,
+            2,
+            1,
+            Duration.ofMillis(80))) {
+            AgentResponse response = orchestrator.execute("生成图片", "");
+            long elapsedMillis = Duration.ofNanos(
+                System.nanoTime() - started).toMillis();
+
+            assertTrue(response.text().contains("Agent 执行时间超过"));
+            assertTrue(elapsedMillis < 800);
         }
     }
 

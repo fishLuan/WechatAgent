@@ -2,16 +2,18 @@ package com.clawbot.wechatbot.service.agent;
 
 import com.clawbot.wechatbot.service.ChatService;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 外层 Agent 循环：规划任务、检索处理器、处理依赖、并行执行并汇总文字及附件。
@@ -26,6 +28,7 @@ public final class AgentOrchestrator implements AutoCloseable {
     private final List<AgentTaskHandler> handlers;
     private final boolean enabled;
     private final int maxOuterRounds;
+    private final Duration executionTimeout;
     private final ExecutorService executor;
 
     public AgentOrchestrator(
@@ -36,11 +39,36 @@ public final class AgentOrchestrator implements AutoCloseable {
         int maxOuterRounds,
         int maxParallelism
     ) {
+        this(
+            fallbackChatService,
+            planner,
+            handlers,
+            enabled,
+            maxOuterRounds,
+            maxParallelism,
+            Duration.ofSeconds(90));
+    }
+
+    public AgentOrchestrator(
+        ChatService fallbackChatService,
+        TaskPlanner planner,
+        List<AgentTaskHandler> handlers,
+        boolean enabled,
+        int maxOuterRounds,
+        int maxParallelism,
+        Duration executionTimeout
+    ) {
         this.fallbackChatService = fallbackChatService;
         this.planner = planner;
         this.handlers = List.copyOf(handlers);
         this.enabled = enabled;
         this.maxOuterRounds = Math.max(1, maxOuterRounds);
+        if (executionTimeout == null
+            || executionTimeout.isZero()
+            || executionTimeout.isNegative()) {
+            throw new IllegalArgumentException("Agent 执行超时必须大于 0");
+        }
+        this.executionTimeout = executionTimeout;
         this.executor = Executors.newFixedThreadPool(
             Math.max(1, maxParallelism),
             runnable -> {
@@ -51,8 +79,9 @@ public final class AgentOrchestrator implements AutoCloseable {
     }
 
     public AgentResponse execute(String userText, String history) throws Exception {
+        long deadlineNanos = System.nanoTime() + executionTimeout.toNanos();
         if (!enabled || userText == null || userText.isBlank()) {
-            return AgentResponse.text(fallbackChatService.chat(userText, history));
+            return executeFallback(userText, history, deadlineNanos);
         }
 
         PlanningInput input = splitSupportingContext(userText);
@@ -62,17 +91,17 @@ public final class AgentOrchestrator implements AutoCloseable {
         } catch (Exception planningFailure) {
             System.err.println("[WARN] Agent 任务规划失败，回退单任务流程: "
                 + safeMessage(planningFailure));
-            return AgentResponse.text(fallbackChatService.chat(userText, history));
+            return executeFallback(userText, history, deadlineNanos);
         }
         if (tasks.isEmpty()) {
-            return AgentResponse.text(fallbackChatService.chat(userText, history));
+            return executeFallback(userText, history, deadlineNanos);
         }
 
         // 单一文本任务走原始输入，避免规划器改写造成语义或附加上下文丢失。
         if (tasks.size() == 1
             && tasks.get(0).type() == AgentTaskType.CHAT_TOOL
             && tasks.get(0).dependencies().isEmpty()) {
-            return AgentResponse.text(fallbackChatService.chat(userText, history));
+            return executeFallback(userText, history, deadlineNanos);
         }
 
         Map<String, AgentTask> pending = new LinkedHashMap<>();
@@ -81,14 +110,22 @@ public final class AgentOrchestrator implements AutoCloseable {
             .forEach(task -> pending.put(task.id(), task));
         Map<String, AgentTaskResult> completed = new LinkedHashMap<>();
 
-        for (int round = 0; round < maxOuterRounds && !pending.isEmpty(); round++) {
+        for (int round = 0;
+             round < maxOuterRounds
+                 && !pending.isEmpty()
+                 && System.nanoTime() < deadlineNanos;
+             round++) {
             List<AgentTask> ready = pending.values().stream()
                 .filter(task -> completed.keySet().containsAll(task.dependencies()))
                 .toList();
             if (ready.isEmpty()) break;
 
             List<AgentTaskResult> roundResults = executeReadyTasks(
-                ready, completed, input.supportingContext(), history);
+                ready,
+                completed,
+                input.supportingContext(),
+                history,
+                deadlineNanos);
             for (AgentTaskResult result : roundResults) {
                 pending.remove(result.task().id());
                 completed.put(result.task().id(), result);
@@ -96,39 +133,107 @@ public final class AgentOrchestrator implements AutoCloseable {
         }
 
         // 循环达到上限、依赖不存在或出现依赖环时，不静默丢弃任务。
+        boolean timedOut = System.nanoTime() >= deadlineNanos;
         for (AgentTask task : pending.values()) {
             completed.put(task.id(), AgentTaskResult.failure(
-                task, "任务依赖无法满足或超过外循环次数限制"));
+                task,
+                timedOut
+                    ? "Agent 执行时间超过 " + executionTimeout.toSeconds() + " 秒"
+                    : "任务依赖无法满足或超过外循环次数限制"));
         }
 
         return aggregate(tasks, completed);
+    }
+
+    private AgentResponse executeFallback(
+        String userText, String history, long deadlineNanos
+    ) throws Exception {
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        if (remainingNanos <= 0) {
+            throw new TimeoutException(
+                "Agent 执行时间超过 " + executionTimeout.toSeconds() + " 秒");
+        }
+        Future<String> future = executor.submit(
+            () -> fallbackChatService.chat(userText, history));
+        try {
+            return AgentResponse.text(
+                future.get(remainingNanos, TimeUnit.NANOSECONDS));
+        } catch (TimeoutException error) {
+            future.cancel(true);
+            throw new TimeoutException(
+                "Agent 执行时间超过 " + executionTimeout.toSeconds() + " 秒");
+        } catch (ExecutionException error) {
+            Throwable cause = error.getCause();
+            if (cause instanceof Exception exception) throw exception;
+            throw new Exception("Agent 单任务执行失败", cause);
+        } catch (InterruptedException error) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new Exception("Agent 执行被中断", error);
+        }
     }
 
     private List<AgentTaskResult> executeReadyTasks(
         List<AgentTask> ready,
         Map<String, AgentTaskResult> completed,
         String supportingContext,
-        String history
+        String history,
+        long deadlineNanos
     ) {
-        List<CompletableFuture<AgentTaskResult>> futures = new ArrayList<>();
+        List<Future<AgentTaskResult>> futures = new ArrayList<>();
         for (AgentTask task : ready) {
-            futures.add(CompletableFuture.supplyAsync(
-                () -> executeTask(task, completed, supportingContext, history),
-                executor));
+            futures.add(executor.submit(
+                () -> executeTask(task, completed, supportingContext, history)));
         }
 
         List<AgentTaskResult> results = new ArrayList<>();
         for (int index = 0; index < futures.size(); index++) {
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                cancelRemaining(futures, index);
+                addTimeoutResults(results, ready, index);
+                break;
+            }
             try {
-                results.add(futures.get(index).join());
-            } catch (CompletionException error) {
+                results.add(futures.get(index).get(remainingNanos, TimeUnit.NANOSECONDS));
+            } catch (TimeoutException error) {
+                cancelRemaining(futures, index);
+                addTimeoutResults(results, ready, index);
+                break;
+            } catch (ExecutionException error) {
                 Throwable cause = error.getCause() == null ? error : error.getCause();
                 results.add(AgentTaskResult.failure(
                     ready.get(index), "处理失败：" + safeMessage(cause)));
+            } catch (InterruptedException error) {
+                cancelRemaining(futures, index);
+                Thread.currentThread().interrupt();
+                results.add(AgentTaskResult.failure(
+                    ready.get(index), "Agent 执行被中断"));
+                for (int remaining = index + 1; remaining < ready.size(); remaining++) {
+                    results.add(AgentTaskResult.failure(
+                        ready.get(remaining), "Agent 执行被中断"));
+                }
+                break;
             }
         }
         results.sort(Comparator.comparingInt(result -> result.task().order()));
         return results;
+    }
+
+    private void cancelRemaining(List<Future<AgentTaskResult>> futures, int start) {
+        for (int index = start; index < futures.size(); index++) {
+            futures.get(index).cancel(true);
+        }
+    }
+
+    private void addTimeoutResults(
+        List<AgentTaskResult> results, List<AgentTask> ready, int start
+    ) {
+        for (int index = start; index < ready.size(); index++) {
+            results.add(AgentTaskResult.failure(
+                ready.get(index),
+                "Agent 执行时间超过 " + executionTimeout.toSeconds() + " 秒"));
+        }
     }
 
     private AgentTaskResult executeTask(

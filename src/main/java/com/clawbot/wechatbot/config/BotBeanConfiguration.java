@@ -15,6 +15,8 @@ import com.clawbot.wechatbot.service.agent.ChatAgentTaskHandler;
 import com.clawbot.wechatbot.service.agent.ImageGenerationAgentTaskHandler;
 import com.clawbot.wechatbot.service.agent.LlmTaskPlanner;
 import com.clawbot.wechatbot.service.agent.TaskPlanner;
+import com.clawbot.wechatbot.service.agent.guard.AgentExecutionGuard;
+import com.clawbot.wechatbot.service.agent.guard.AgentGuardPolicy;
 import com.clawbot.wechatbot.service.client.DashScopeClient;
 import com.clawbot.wechatbot.service.client.DeepSeekClient;
 import com.clawbot.wechatbot.service.document.PdfDocumentService;
@@ -25,6 +27,7 @@ import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
 import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
 import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
+import com.clawbot.wechatbot.service.longform.LongFormGenerationPolicy;
 import com.clawbot.wechatbot.service.reply.LongReplyManager;
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
 import com.clawbot.wechatbot.service.VisionService;
@@ -188,10 +191,44 @@ public class BotBeanConfiguration {
     }
 
     @Bean
+    AgentGuardPolicy agentGuardPolicy(BotConfig config) {
+        return new AgentGuardPolicy(
+            config.getAgentMaxChatDepth(),
+            config.getAgentMaxToolCallsPerRound(),
+            config.getAgentMaxTotalToolCalls(),
+            config.getAgentMaxSameToolFailures(),
+            config.getAgentMaxToolResultChars(),
+            config.getAgentMaxTotalToolResultChars(),
+            Duration.ofSeconds(config.getAgentExecutionTimeoutSeconds()));
+    }
+
+    @Bean
+    AgentExecutionGuard agentExecutionGuard(
+        AgentGuardPolicy policy, ObjectMapper mapper
+    ) {
+        return new AgentExecutionGuard(policy, mapper);
+    }
+
+    @Bean
     DeepSeekChatService singleTaskChatService(
-        DeepSeekClient client, FunctionToolRegistry registry, BotConfig config) {
+        DeepSeekClient client,
+        FunctionToolRegistry registry,
+        BotConfig config,
+        AgentExecutionGuard executionGuard
+    ) {
         return new DeepSeekChatService(
-            client, registry, config.getSystemPrompt(), config.getDeepSeekMaxToolRounds());
+            client,
+            registry,
+            config.getSystemPrompt(),
+            config.getDeepSeekMaxToolRounds(),
+            executionGuard,
+            new LongFormGenerationPolicy(
+                config.isLongFormEnabled(),
+                config.getLongFormMinTargetChars(),
+                config.getLongFormMaxTargetChars(),
+                config.getLongFormTolerancePercent(),
+                config.getLongFormMaxContinuationRounds(),
+                config.getLongFormMaxTotalChars()));
     }
 
     @Bean
@@ -222,7 +259,8 @@ public class BotBeanConfiguration {
             taskHandlers,
             config.isAgentEnabled(),
             config.getAgentMaxOuterRounds(),
-            config.getAgentMaxParallelism());
+            config.getAgentMaxParallelism(),
+            Duration.ofSeconds(config.getAgentExecutionTimeoutSeconds()));
     }
 
     @Bean
