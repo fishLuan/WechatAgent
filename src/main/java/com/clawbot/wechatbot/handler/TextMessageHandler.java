@@ -10,6 +10,8 @@ import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.memory.ConversationMessage;
 import com.clawbot.wechatbot.memory.MemoryProperties;
 import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliTool;
+import com.clawbot.wechatbot.intent.IntentRecognizer;
+import com.clawbot.wechatbot.intent.IntentResult;
 import com.clawbot.wechatbot.scheduler.tool.SchedulerTool;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
@@ -43,6 +45,7 @@ public class TextMessageHandler implements MessageHandler {
     private final ConversationMemoryService memoryService;
     private final MemoryProperties memoryProperties;
     private final LongReplyManager longReplyManager;
+    private final IntentRecognizer intentRecognizer;
 
     public TextMessageHandler(
         ChatService chatService,
@@ -52,7 +55,8 @@ public class TextMessageHandler implements MessageHandler {
         TianNewsTool tianNewsTool,
         ConversationMemoryService memoryService,
         MemoryProperties memoryProperties,
-        LongReplyManager longReplyManager
+        LongReplyManager longReplyManager,
+        IntentRecognizer intentRecognizer
     ) {
         this.chatService = chatService;
         this.agentOrchestrator = agentOrchestrator;
@@ -62,6 +66,7 @@ public class TextMessageHandler implements MessageHandler {
         this.memoryService = memoryService;
         this.memoryProperties = memoryProperties;
         this.longReplyManager = longReplyManager;
+        this.intentRecognizer = intentRecognizer;
         DocumentService.silencePdfLogs();  // 屏蔽 PDF 库的噪音日志
     }
 
@@ -78,11 +83,10 @@ public class TextMessageHandler implements MessageHandler {
     public void handle(ILinkClient client, WeixinMessage msg) {
         String from = msg.getFrom_user_id();
         String userText = extractText(msg);
-
-        // 去重
-        if (msg.getMessage_id() != null) {
-            if (!memoryService.markMessageProcessed(from, msg.getMessage_id())) return;
-        }
+        IntentResult intent = intentRecognizer.recognize(userText);
+        System.out.println("[INTENT] type=" + intent.type()
+            + " confidence=" + String.format("%.2f", intent.confidence())
+            + " slots=" + intent.slots());
 
         // 如果上一条回复过长，优先处理用户对发送方式的选择，不再调用大模型。
         if (handlePendingLongReply(client, from, userText)) return;

@@ -77,6 +77,26 @@ public final class DefaultBilibiliSubscriptionService
     }
 
     @Override
+    public SubscriptionResult subscribeBySeasonId(
+        String wechatUserId, ContentType contentType, String seasonId
+    ) {
+        try {
+            if (contentType == null || !contentType.isEpisodeTrackable()) {
+                throw new IllegalArgumentException(
+                    "该内容类型不支持按季度追更");
+            }
+            String safeSeasonId = requireText(seasonId, "seasonId");
+            BilibiliContent content = contentSource.findBySeasonId(
+                    contentType, safeSeasonId)
+                .orElseThrow(() -> new NoSuchElementException(
+                    "未找到对应的B站季度内容"));
+            return toResult(subscribe(wechatUserId, content));
+        } catch (Exception error) {
+            return failedSubscription(error);
+        }
+    }
+
+    @Override
     public List<SubscriptionView> listSubscriptions(String wechatUserId) {
         String userId = requireText(wechatUserId, "wechatUserId");
         return Stream.concat(
@@ -215,6 +235,10 @@ public final class DefaultBilibiliSubscriptionService
             || !content.getContentType().isEpisodeTrackable()) {
             throw new IllegalArgumentException(
                 "电影不支持按集追更，请将该作品标记为“想看”");
+        }
+        if (content.isFinished()) {
+            throw new IllegalArgumentException(
+                "该作品已经完结，无需创建追更提醒");
         }
         requireText(content.getContentId(), "contentId");
         requireText(content.getSeasonId(), "seasonId");

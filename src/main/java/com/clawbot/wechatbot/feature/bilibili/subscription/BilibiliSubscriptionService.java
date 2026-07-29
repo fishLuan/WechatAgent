@@ -19,6 +19,9 @@ public interface BilibiliSubscriptionService {
     SubscriptionResult subscribeByContentId(
         String wechatUserId, ContentType contentType, String contentId);
 
+    SubscriptionResult subscribeBySeasonId(
+        String wechatUserId, ContentType contentType, String seasonId);
+
     List<SubscriptionView> listSubscriptions(String wechatUserId);
 
     OperationResult cancel(String wechatUserId, String subscriptionId);

@@ -37,10 +37,11 @@ public class BilibiliTool implements FunctionTool {
             "1) 想看今日推荐、高分推荐、找好看的动漫番剧/连载电视剧/院线电影（包含模糊表达如『最近有啥好看的番』『找点热血漫』『9分以上治愈电影』『最近热播的剧』『好看的国产剧推荐』）\n" +
             "2) 用户发送了B站作品链接（bilibili.com 或 b23.tv），想订阅/追更该作品\n" +
             "3) 用户想订阅/取消/暂停/恢复某个推荐编号的作品（『昨天推荐的第2个帮我订上』『取消第三个订阅』）\n" +
-            "4) 用户想标记某部作品为『想看』『看过』『不喜欢』（『看过3』『不喜欢1』）\n" +
+            "4) 用户想按推荐编号或作品名标记『想看』『看过』『不喜欢』（『看过3』『已经看过航海王：红发歌姬』）\n" +
             "5) 用户想设置动漫/电影的每日推送时间、最低评分、推荐数量（『动漫改成每天21点推』『电影最低分调到9.0』）\n" +
             "6) 用户想开启/关闭每日推送、查看自己的偏好设置\n" +
             "7) 用户想查看自己订阅了哪些作品、想立即检查有没有新集更新\n" +
+            "8) 用户按作品名搜索或订阅，例如『搜索老友记』『我想订阅紫罗兰的永恒花园』\n" +
             "注意：该工具不需要传user_id，系统自动识别当前对话用户。");
 
         ObjectNode params = func.putObject("parameters");
@@ -52,9 +53,12 @@ public class BilibiliTool implements FunctionTool {
         ArrayNode enums = action.putArray("enum");
         enums.add("recommend_anime").add("recommend_movie").add("recommend_series")
              .add("subscribe_by_url").add("subscribe_by_index")
+             .add("subscribe_by_title").add("search_by_title")
              .add("list_subscriptions").add("cancel_subscription")
              .add("pause_subscription").add("resume_subscription")
              .add("mark_want_to_watch").add("mark_watched").add("mark_disliked")
+             .add("mark_want_to_watch_by_title")
+             .add("mark_watched_by_title").add("mark_disliked_by_title")
              .add("set_push_time").add("set_min_rating").add("set_recommend_count")
              .add("toggle_push_on").add("toggle_push_off")
              .add("show_preferences").add("check_updates_now");
@@ -63,6 +67,11 @@ public class BilibiliTool implements FunctionTool {
         ObjectNode urlNode = props.putObject("bilibili_url");
         urlNode.put("type", "string");
         urlNode.put("description", "[action=subscribe_by_url 时必填] B站作品链接，包含 bilibili.com 或 b23.tv");
+
+        ObjectNode titleNode = props.putObject("title");
+        titleNode.put("type", "string");
+        titleNode.put("description",
+            "[按作品名订阅、搜索或标记状态时必填] 用户提供的作品名称");
 
         ObjectNode idxNode = props.putObject("index");
         idxNode.put("type", "integer");
@@ -117,6 +126,12 @@ public class BilibiliTool implements FunctionTool {
                 case "recommend_movie" -> commandHandler.handleTodayRecommend(userId, ContentType.MOVIE);
                 case "recommend_series" -> commandHandler.handleTodayRecommend(userId, ContentType.SERIES);
                 case "subscribe_by_url" -> commandHandler.handleSubscribeByUrl(userId, args.path("bilibili_url").asText(""));
+                case "subscribe_by_title" ->
+                    commandHandler.handleSubscribeByTitle(
+                        userId, args.path("title").asText(""));
+                case "search_by_title" ->
+                    commandHandler.handleSearchByTitle(
+                        userId, args.path("title").asText(""));
                 case "subscribe_by_index" -> commandHandler.handleSubscribeByIndex(userId,
                     args.has("index") ? args.path("index").asInt(0) : null, parseType(args));
                 case "list_subscriptions" -> commandHandler.handleListSubscriptions(userId);
@@ -135,6 +150,15 @@ public class BilibiliTool implements FunctionTool {
                     args.has("index") ? args.path("index").asInt(0) : null, "watched");
                 case "mark_disliked" -> commandHandler.handleMarkState(userId,
                     args.has("index") ? args.path("index").asInt(0) : null, "disliked");
+                case "mark_want_to_watch_by_title" ->
+                    commandHandler.handleMarkStateByTitle(
+                        userId, args.path("title").asText(""), "want_to_watch");
+                case "mark_watched_by_title" ->
+                    commandHandler.handleMarkStateByTitle(
+                        userId, args.path("title").asText(""), "watched");
+                case "mark_disliked_by_title" ->
+                    commandHandler.handleMarkStateByTitle(
+                        userId, args.path("title").asText(""), "disliked");
                 case "set_push_time" -> commandHandler.handleSetPreference(userId, parseType(args),
                     "push_time", args.path("push_time_hhmm").asText(""));
                 case "set_min_rating" -> commandHandler.handleSetPreference(userId, parseType(args),
@@ -145,11 +169,8 @@ public class BilibiliTool implements FunctionTool {
                 case "toggle_push_off" -> commandHandler.handleTogglePush(userId, parseType(args), false);
                 case "show_preferences" -> commandHandler.handleShowPreference(userId);
                 case "check_updates_now" -> commandHandler.handleCheckUpdatesNow(userId);
-                default -> {
-                    res.put("success", false);
-                    res.put("reply_text", "❌ 未知操作类型：" + action);
-                    yield res.toString();
-                }
+                default -> throw new IllegalArgumentException(
+                    "未知操作类型：" + action);
             };
         } catch (Exception e) {
             res.put("success", false);
@@ -157,9 +178,16 @@ public class BilibiliTool implements FunctionTool {
             return res.toString();
         }
 
-        res.put("success", true);
+        res.put("success", isSuccessfulReply(reply));
         res.put("reply_text", reply == null ? "" : reply);
         return res.toString();
+    }
+
+    private boolean isSuccessfulReply(String reply) {
+        if (reply == null || reply.isBlank()) return false;
+        String normalized = reply.trim();
+        return !normalized.startsWith("❌")
+            && !normalized.startsWith("【UNHANDLED-");
     }
 
     private ContentType parseType(JsonNode args) {

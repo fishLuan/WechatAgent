@@ -84,6 +84,117 @@ class PublicPageBilibiliSourceTests {
     }
 
     @Test
+    void findsPgcSeriesBySeasonId() throws Exception {
+        String json = """
+            {
+              "code": 0,
+              "result": {
+                "season_type": 5,
+                "media_id": 28223067,
+                "season_id": 38729,
+                "title": "老友记 第一季",
+                "episodes": []
+              }
+            }
+            """;
+        StubBilibiliHttpClient http =
+            new StubBilibiliHttpClient(json);
+        PublicPageBilibiliSource source =
+            new PublicPageBilibiliSource(
+                http,
+                new BilibiliUrlParser(),
+                new BilibiliPageParser());
+
+        BilibiliContent content = source.findBySeasonId(
+            ContentType.SERIES, "38729").orElseThrow();
+
+        assertEquals(ContentType.SERIES, content.getContentType());
+        assertEquals("28223067", content.getContentId());
+        assertEquals("38729", content.getSeasonId());
+        assertTrue(http.lastTextUrl().contains("season_id=38729"));
+    }
+
+    @Test
+    void findsPgcContentByMediaIdInsteadOfTreatingItAsSeasonId()
+        throws Exception {
+        String json = """
+            {
+              "code": 0,
+              "result": {
+                "media": {
+                  "type": 1,
+                  "type_name": "番剧",
+                  "media_id": 28368476,
+                  "season_id": 82954,
+                  "title": "测试番剧"
+                }
+              }
+            }
+            """;
+        StubBilibiliHttpClient http =
+            new StubBilibiliHttpClient(json);
+        PublicPageBilibiliSource source =
+            new PublicPageBilibiliSource(
+                http,
+                new BilibiliUrlParser(),
+                new BilibiliPageParser());
+
+        BilibiliContent content = source.findByContentId(
+            ContentType.BANGUMI, "28368476").orElseThrow();
+
+        assertEquals("28368476", content.getContentId());
+        assertEquals("82954", content.getSeasonId());
+        assertTrue(http.lastTextUrl().contains(
+            "media_id=28368476"));
+    }
+
+    @Test
+    void searchesRelatedWorksByTitleAndDeduplicatesResults()
+        throws Exception {
+        String json = """
+            {
+              "data": {
+                "result": [
+                  {
+                    "season_type": 5,
+                    "media_id": 28223067,
+                    "season_id": 38729,
+                    "title": "老友记 第一季",
+                    "url": "https://www.bilibili.com/bangumi/play/ss38729",
+                    "index_show": "全24集",
+                    "media_score": {"score": 9.9}
+                  },
+                  {
+                    "season_type": 5,
+                    "media_id": 28223068,
+                    "season_id": 38730,
+                    "title": "老友记 第二季",
+                    "url": "https://www.bilibili.com/bangumi/play/ss38730",
+                    "media_score": {"score": 9.8}
+                  }
+                ]
+              }
+            }
+            """;
+        StubBilibiliHttpClient http =
+            new StubBilibiliHttpClient(json);
+        PublicPageBilibiliSource source =
+            new PublicPageBilibiliSource(
+                http,
+                new BilibiliUrlParser(),
+                new BilibiliPageParser());
+
+        List<BilibiliContent> results =
+            source.searchByTitle("老友记", 5);
+
+        assertEquals(2, results.size());
+        assertEquals("老友记 第一季", results.get(0).getTitle());
+        assertTrue(results.get(0).isFinished());
+        assertTrue(http.lastAnonymousSearchUrl()
+            .contains("search_type=media_ft"));
+    }
+
+    @Test
     void reportsMissingContentWhenBilibiliReturnsNotFound() {
         PublicPageBilibiliSource source = new PublicPageBilibiliSource(
             new StubBilibiliHttpClient("{\"code\":-404,\"message\":\"啥都木有\"}"),
@@ -99,6 +210,8 @@ class PublicPageBilibiliSourceTests {
 
     private static class StubBilibiliHttpClient extends BilibiliHttpClient {
         private final String anonymousSearchBody;
+        private String lastTextUrl;
+        private String lastAnonymousSearchUrl;
 
         StubBilibiliHttpClient(String anonymousSearchBody) {
             super(HttpClient.newHttpClient(), Duration.ofSeconds(1), 0);
@@ -107,12 +220,22 @@ class PublicPageBilibiliSourceTests {
 
         @Override
         public String getAnonymousSearchText(String url) {
+            lastAnonymousSearchUrl = url;
             return anonymousSearchBody;
         }
 
         @Override
         public String getText(String url) {
+            lastTextUrl = url;
             return anonymousSearchBody;
+        }
+
+        String lastTextUrl() {
+            return lastTextUrl;
+        }
+
+        String lastAnonymousSearchUrl() {
+            return lastAnonymousSearchUrl;
         }
     }
 }

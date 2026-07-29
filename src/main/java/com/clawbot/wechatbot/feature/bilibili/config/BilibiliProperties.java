@@ -21,6 +21,7 @@ public class BilibiliProperties {
     private LocalTime moviePushTime = LocalTime.of(19, 30);
     private int movieRecommendationCount = 3;
     private double movieMinimumRating = 8.0;
+    private int searchResultCount = 5;
 
     @PostConstruct
     void validate() {
@@ -32,6 +33,7 @@ public class BilibiliProperties {
         requirePositive(defaultRecommendationCount, "default-recommendation-count");
         requireRating(defaultMinimumRating, "default-minimum-rating");
         requirePositive(movieRecommendationCount, "movie-recommendation-count");
+        requirePositive(searchResultCount, "search-result-count");
         requireRating(movieMinimumRating, "movie-minimum-rating");
         if (defaultPushTime == null) {
             throw invalid("default-push-time", "不能为空");
@@ -95,4 +97,6 @@ public class BilibiliProperties {
     }
     public double getMovieMinimumRating() { return movieMinimumRating; }
     public void setMovieMinimumRating(double value) { this.movieMinimumRating = value; }
+    public int getSearchResultCount() { return searchResultCount; }
+    public void setSearchResultCount(int value) { this.searchResultCount = value; }
 }
