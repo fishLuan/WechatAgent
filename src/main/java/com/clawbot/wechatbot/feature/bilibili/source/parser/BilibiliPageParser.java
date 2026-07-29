@@ -81,6 +81,16 @@ public class BilibiliPageParser {
                 dto.setPageUrl(text(item, "url", pageUrl));
                 dto.setRating(doubleValue(firstPresent(item, "/media_score/score", "/rating/score")));
                 dto.setGenres(parseGenres(item));
+                String indexShow = text(item, "index_show", "");
+                dto.setFinished(indexShow.startsWith("全")
+                    || indexShow.contains("已完结"));
+                if (!indexShow.isBlank()) {
+                    dto.setLatestEpisode(new BilibiliEpisodeDto(
+                        "",
+                        indexShow,
+                        intValue(item.path("index_show")),
+                        dto.getPageUrl()));
+                }
                 if (hasRequired(dto)) contents.add(dto);
             }
         } catch (Exception ignored) {

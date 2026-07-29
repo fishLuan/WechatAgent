@@ -70,6 +70,41 @@ class BilibiliSubscriptionServiceTests {
     }
 
     @Test
+    void subscribesToPgcSeriesBySeasonId() throws Exception {
+        BilibiliContent content =
+            new BilibiliContent(
+                ContentType.SERIES,
+                "media-28223067",
+                "老友记 第一季");
+        content.setSeasonId("38729");
+        content.setLatestEpisodeNumber(24);
+        when(contentSource.findBySeasonId(
+            ContentType.SERIES, "38729"))
+            .thenReturn(Optional.of(content));
+        when(repository.findByWechatUserIdAndSeasonId(
+            "user-1", "38729"))
+            .thenReturn(Optional.empty());
+        when(repository.insert(any(BilibiliSubscription.class)))
+            .thenAnswer(invocation -> {
+                BilibiliSubscription value =
+                    invocation.getArgument(0);
+                value.setId("subscription-series-1");
+                return value;
+            });
+
+        SubscriptionResult result = service.subscribeBySeasonId(
+            "user-1", ContentType.SERIES, "38729");
+
+        assertTrue(result.success());
+        assertEquals("38729", result.seasonId());
+        assertEquals(24, result.latestEpisodeNumber());
+        verify(contentSource).findBySeasonId(
+            ContentType.SERIES, "38729");
+        verify(contentSource, never()).findByContentId(
+            ContentType.SERIES, "38729");
+    }
+
+    @Test
     void repeatedSubscriptionReactivatesExistingRecordWithoutInsert() throws Exception {
         BilibiliSubscription existing = new BilibiliSubscription(
             "user-1", ContentType.BANGUMI, "content-1", "season-1");
@@ -107,6 +142,29 @@ class BilibiliSubscriptionServiceTests {
         assertFalse(result.success());
         assertTrue(result.message().contains("想看"));
         verify(repository, never()).insert(any(BilibiliSubscription.class));
+    }
+
+    @Test
+    void rejectsFinishedSeriesSubscriptionByUrl() throws Exception {
+        BilibiliContent finished =
+            new BilibiliContent(
+                ContentType.SERIES,
+                "media-1",
+                "已完结电视剧");
+        finished.setSeasonId("season-finished");
+        finished.setFinished(true);
+        when(contentSource.resolveUrl(
+            "https://www.bilibili.com/bangumi/play/ss1"))
+            .thenReturn(finished);
+
+        SubscriptionResult result = service.subscribeByUrl(
+            "user-1",
+            "https://www.bilibili.com/bangumi/play/ss1");
+
+        assertFalse(result.success());
+        assertTrue(result.message().contains("已经完结"));
+        verify(repository, never())
+            .insert(any(BilibiliSubscription.class));
     }
 
     @Test

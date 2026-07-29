@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliPreference;
+import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 import com.clawbot.wechatbot.feature.bilibili.model.EpisodeUpdateNotification;
 import com.clawbot.wechatbot.feature.bilibili.model.OperationResult;
@@ -20,7 +21,7 @@ public class BilibiliMessageFormatter {
     private static final ZoneId BJ = ZoneId.of("Asia/Shanghai");
     private static final DateTimeFormatter DTF = DateTimeFormatter.ofPattern("MM-dd HH:mm");
 
-    private BilibiliMessageFormatter() {}
+    public BilibiliMessageFormatter() {}
 
     public static String formatEpisodeUpdate(EpisodeUpdateNotification n) {
         StringBuilder sb = new StringBuilder();
@@ -230,6 +231,51 @@ public class BilibiliMessageFormatter {
             "因为电影不会分「集」更新，你可以回复 **想看1** 标记「" +
             (title == null ? "这部电影" : title) + "」到想看清单，\n" +
             "以后我会通过每日推荐留意资源～";
+    }
+
+    public String formatResolveFailure(String message) {
+        String reason = message == null || message.isBlank()
+            ? "暂时无法读取该B站链接"
+            : message;
+        return "❌ B站链接处理失败：" + reason;
+    }
+
+    public static String formatTitleSearchResults(
+        String keyword,
+        List<BilibiliContent> results
+    ) {
+        if (results == null || results.isEmpty()) {
+            return "🔎 没有找到与“" + keyword
+                + "”相关的B站作品，请换个关键词再试。";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("🔎 B站作品搜索：").append(keyword).append("\n\n");
+        int index = 1;
+        for (BilibiliContent content : results) {
+            sb.append(index++).append(". ")
+                .append(iconOf(content.getContentType()))
+                .append(" **").append(content.getTitle()).append("**");
+            if (content.getRating() != null
+                && content.getRating() > 0) {
+                sb.append(" ⭐")
+                    .append(String.format("%.1f", content.getRating()));
+            }
+            sb.append("\n");
+            if (content.getLatestEpisodeTitle() != null
+                && !content.getLatestEpisodeTitle().isBlank()) {
+                sb.append("   📝 ")
+                    .append(content.getLatestEpisodeTitle())
+                    .append("\n");
+            }
+            if (content.getPageUrl() != null
+                && !content.getPageUrl().isBlank()) {
+                sb.append("   🔗 ")
+                    .append(content.getPageUrl())
+                    .append("\n");
+            }
+            sb.append("\n");
+        }
+        return sb.toString().trim();
     }
 
     private static String typeNameOf(ContentType t) {

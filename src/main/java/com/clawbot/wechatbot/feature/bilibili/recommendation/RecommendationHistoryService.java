@@ -109,7 +109,15 @@ public class RecommendationHistoryService {
      */
     public void markWantToWatch(
             String wechatUserId, ContentType contentType, String contentId) {
-        updateState(wechatUserId, contentType, contentId, RecommendationState.WANT_TO_WATCH);
+        markWantToWatch(wechatUserId, contentType, contentId, null);
+    }
+
+    public void markWantToWatch(
+            String wechatUserId, ContentType contentType,
+            String contentId, String title) {
+        updateState(
+            wechatUserId, contentType, contentId,
+            title, RecommendationState.WANT_TO_WATCH);
     }
 
     /**
@@ -117,7 +125,15 @@ public class RecommendationHistoryService {
      */
     public void markWatched(
             String wechatUserId, ContentType contentType, String contentId) {
-        updateState(wechatUserId, contentType, contentId, RecommendationState.WATCHED);
+        markWatched(wechatUserId, contentType, contentId, null);
+    }
+
+    public void markWatched(
+            String wechatUserId, ContentType contentType,
+            String contentId, String title) {
+        updateState(
+            wechatUserId, contentType, contentId,
+            title, RecommendationState.WATCHED);
     }
 
     /**
@@ -125,14 +141,22 @@ public class RecommendationHistoryService {
      */
     public void markDisliked(
             String wechatUserId, ContentType contentType, String contentId) {
-        updateState(wechatUserId, contentType, contentId, RecommendationState.DISLIKED);
+        markDisliked(wechatUserId, contentType, contentId, null);
+    }
+
+    public void markDisliked(
+            String wechatUserId, ContentType contentType,
+            String contentId, String title) {
+        updateState(
+            wechatUserId, contentType, contentId,
+            title, RecommendationState.DISLIKED);
     }
 
     // ---- internal ----
 
     private void updateState(
             String wechatUserId, ContentType contentType,
-            String contentId, RecommendationState newState) {
+            String contentId, String title, RecommendationState newState) {
         Optional<BilibiliRecommendationHistory> existing =
             repository.findByWechatUserIdAndContentTypeAndContentId(
                 wechatUserId, contentType, contentId);
@@ -140,6 +164,9 @@ public class RecommendationHistoryService {
         if (existing.isPresent()) {
             BilibiliRecommendationHistory history = existing.get();
             history.setState(newState);
+            if (title != null && !title.isBlank()) {
+                history.setTitle(title.trim());
+            }
             history.setStateChangedAt(Instant.now());
             history.setUpdatedAt(Instant.now());
             repository.save(history);
@@ -147,7 +174,7 @@ public class RecommendationHistoryService {
             BilibiliRecommendationHistory history = new BilibiliRecommendationHistory(
                 wechatUserId, contentType, contentId);
             history.setState(newState);
-            history.setTitle(""); // 无标题，之后可通过查询补齐
+            history.setTitle(title == null ? "" : title.trim());
             repository.save(history);
         }
     }

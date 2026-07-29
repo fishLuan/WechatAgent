@@ -1,9 +1,11 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.base.MessageHandler;
-import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
+import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionResult;
+import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
+import com.github.wechat.ilink.sdk.core.model.VoiceItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 
 import java.util.regex.Matcher;
@@ -14,15 +16,18 @@ public class BilibiliLinkMessageHandler implements MessageHandler {
     private static final Pattern BILIBILI_LINK = Pattern.compile(
         "(?i)((?:https?://)?(?:(?:[a-z0-9-]+\\.)?bilibili\\.com|b23\\.tv)/\\S+)");
 
-    private final BilibiliContentSource contentSource;
+    private final BilibiliSubscriptionService subscriptionService;
     private final BilibiliMessageFormatter formatter;
+    private final WeChatOutboundGateway outboundGateway;
 
     public BilibiliLinkMessageHandler(
-        BilibiliContentSource contentSource,
-        BilibiliMessageFormatter formatter
+        BilibiliSubscriptionService subscriptionService,
+        BilibiliMessageFormatter formatter,
+        WeChatOutboundGateway outboundGateway
     ) {
-        this.contentSource = contentSource;
+        this.subscriptionService = subscriptionService;
         this.formatter = formatter;
+        this.outboundGateway = outboundGateway;
     }
 
     @Override
@@ -35,17 +40,22 @@ public class BilibiliLinkMessageHandler implements MessageHandler {
     public void handle(ILinkClient client, WeixinMessage msg) {
         String from = msg.getFrom_user_id();
         String link = firstBilibiliLink(extractText(msg));
-        if (link == null) return;
+        if (from == null || from.isBlank() || link == null) return;
 
+        String reply;
         try {
-            String reply = formatter.formatResolvedContent(contentSource.resolveUrl(link));
-            client.sendTextWithTyping(from, reply, typingMillis(reply));
-            System.out.println("[BILIBILI] resolved " + link);
+            SubscriptionResult result =
+                subscriptionService.subscribeByUrl(from, link);
+            reply = BilibiliMessageFormatter
+                .formatSubscriptionResult(result);
+            System.out.println(
+                "[BILIBILI] URL subscription processed " + link);
         } catch (Exception e) {
-            String reply = formatter.formatResolveFailure(e.getMessage());
-            safeSend(client, from, reply);
-            System.err.println("[BILIBILI] resolve failed " + link + ": " + e.getMessage());
+            reply = formatter.formatResolveFailure(e.getMessage());
+            System.err.println("[BILIBILI] URL subscription failed "
+                + link + ": " + e.getMessage());
         }
+        safeSend(from, reply);
     }
 
     @Override
@@ -53,16 +63,12 @@ public class BilibiliLinkMessageHandler implements MessageHandler {
         return 40;
     }
 
-    private void safeSend(ILinkClient client, String to, String text) {
+    private void safeSend(String to, String text) {
         try {
-            client.sendTextWithTyping(to, text, typingMillis(text));
+            outboundGateway.sendText(to, text);
         } catch (Exception e) {
             System.err.println("[BILIBILI] send failed: " + e.getMessage());
         }
-    }
-
-    private long typingMillis(String text) {
-        return Math.min(2000, 300L + (text == null ? 0 : text.length()) * 20L);
     }
 
     private String firstBilibiliLink(String text) {
@@ -87,6 +93,12 @@ public class BilibiliLinkMessageHandler implements MessageHandler {
         for (MessageItem item : msg.getItem_list()) {
             if (item.getType() == 1 && item.getText_item() != null) {
                 text.append(item.getText_item().getText());
+            } else if (item.getVoice_item() != null) {
+                VoiceItem voice = item.getVoice_item();
+                if (voice.getText() != null
+                    && !voice.getText().isBlank()) {
+                    text.append(voice.getText());
+                }
             }
         }
         return text.toString();

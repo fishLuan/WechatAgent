@@ -1,8 +1,9 @@
 package com.clawbot.wechatbot;
 
 import com.clawbot.wechatbot.base.MessageHandler;
-import com.clawbot.wechatbot.base.MessageSender;
 import com.clawbot.wechatbot.config.BotConfig;
+import com.clawbot.wechatbot.memory.ConversationMemoryService;
+import com.clawbot.wechatbot.messaging.WeChatClientRegistry;
 import com.clawbot.wechatbot.notification.NotificationService;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 import com.github.wechat.ilink.sdk.ILinkClient;
@@ -32,6 +33,8 @@ public class WeChatBot implements SmartLifecycle {
     private final BotConfig config;
     private final List<MessageHandler> handlers;
     private final NotificationService notifications;
+    private final WeChatClientRegistry clientRegistry;
+    private final ConversationMemoryService memoryService;
     private final List<BotSession> sessions = new CopyOnWriteArrayList<>();
     private final String routeNamespace = "clawbot-" + UUID.randomUUID();
 
@@ -40,11 +43,15 @@ public class WeChatBot implements SmartLifecycle {
     private int nextSessionIndex = 1;
 
     public WeChatBot(BotConfig config, List<MessageHandler> handlers,
-                     NotificationService notifications) {
+                     NotificationService notifications,
+                     WeChatClientRegistry clientRegistry,
+                     ConversationMemoryService memoryService) {
         this.config = config;
         this.handlers = new ArrayList<>(handlers);
         this.handlers.sort(Comparator.comparingInt(MessageHandler::priority));
         this.notifications = notifications;
+        this.clientRegistry = clientRegistry;
+        this.memoryService = memoryService;
     }
 
     @Override
@@ -86,6 +93,7 @@ public class WeChatBot implements SmartLifecycle {
                 .onMessage(messages -> routeMessages(session.client, messages))
                 .build();
             session.client = builtClient;
+            clientRegistry.registerClient(builtClient);
 
             System.out.println(session.prefix() + " [2/3] Getting QR code...");
             String qrContent = builtClient.executeLogin();
@@ -139,10 +147,17 @@ public class WeChatBot implements SmartLifecycle {
         }
     }
 
-    private void routeMessages(ILinkClient currentClient, List<WeixinMessage> messages) {
+    void routeMessages(ILinkClient currentClient, List<WeixinMessage> messages) {
         if (currentClient == null || messages == null || messages.isEmpty()) return;
         for (WeixinMessage message : messages) {
             if (message == null) continue;
+            String from = message.getFrom_user_id();
+            if (isDuplicateMessage(from, message.getMessage_id())) {
+                System.out.println("[WECHAT-RECV] 忽略重复消息 messageId="
+                    + message.getMessage_id() + " userId=" + from);
+                continue;
+            }
+            clientRegistry.bindUser(from, currentClient);
             for (MessageHandler handler : handlers) {
                 try {
                     if (handler.canHandle(message)) {
@@ -159,6 +174,20 @@ public class WeChatBot implements SmartLifecycle {
         }
     }
 
+    private boolean isDuplicateMessage(String userId, Long messageId) {
+        if (messageId == null || userId == null || userId.isBlank()) {
+            return false;
+        }
+        try {
+            return !memoryService.markMessageProcessed(userId, messageId);
+        } catch (Exception e) {
+            System.err.println("[WECHAT-RECV] 消息去重暂时不可用，将继续处理："
+                + e.getMessage());
+            notifications.notifyError("微信消息去重", e);
+            return false;
+        }
+    }
+
     @Override
     public synchronized void stop() {
         running = false;
@@ -166,6 +195,7 @@ public class WeChatBot implements SmartLifecycle {
             session.stop();
         }
         sessions.clear();
+        clientRegistry.clear();
     }
 
     @Override
@@ -296,6 +326,7 @@ public class WeChatBot implements SmartLifecycle {
             ILinkClient current = client;
             client = null;
             if (current != null) {
+                clientRegistry.unregisterClient(current);
                 try {
                     current.close();
                 } catch (Exception e) {
@@ -322,36 +353,4 @@ public class WeChatBot implements SmartLifecycle {
         System.out.println();
     }
 
-    @Component
-    public class BotMessageSender implements MessageSender {
-        @Override
-        public void sendText(String userId, String text) {
-            if (!isRunning() || sessions.isEmpty()) return;
-            BotSession s = sessions.get(0);
-            if (s.client != null && s.client.isLoggedIn()) {
-                int max = 1500;
-                if (text.length() <= max) {
-                    try { s.client.sendText(userId, text); } catch (Exception ignored) {}
-                } else {
-                    int i = 0;
-                    while (i < text.length()) {
-                        int end = Math.min(i + max, text.length());
-                        try { s.client.sendText(userId, text.substring(i, end)); } catch (Exception ignored) {}
-                        i = end;
-                    }
-                }
-            }
-        }
-        @Override public void sendImage(String userId, byte[] bytes, String fileName) {
-            if (!isRunning() || sessions.isEmpty()) return;
-            try { sessions.get(0).client.sendImage(userId, bytes, fileName, null); } catch (Exception ignored) {}
-        }
-        @Override public void sendFile(String userId, byte[] bytes, String fileName, String caption) {
-            if (!isRunning() || sessions.isEmpty()) return;
-            try { sessions.get(0).client.sendFile(userId, bytes, fileName, caption); } catch (Exception ignored) {}
-        }
-        @Override public boolean isReady() {
-            return isRunning() && !sessions.isEmpty() && sessions.get(0).client != null && sessions.get(0).client.isLoggedIn();
-        }
-    }
 }
