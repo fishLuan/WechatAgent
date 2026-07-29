@@ -1,0 +1,118 @@
+package com.clawbot.wechatbot.feature.bilibili.source;
+
+import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
+import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
+import com.clawbot.wechatbot.feature.bilibili.source.client.BilibiliHttpClient;
+import com.clawbot.wechatbot.feature.bilibili.source.parser.BilibiliPageParser;
+import com.clawbot.wechatbot.feature.bilibili.source.parser.BilibiliUrlParser;
+import org.junit.jupiter.api.Test;
+
+import java.net.http.HttpClient;
+import java.time.Duration;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class PublicPageBilibiliSourceTests {
+
+    @Test
+    void returnsEmptyCandidatesWhenAnonymousSearchIsPermissionLimited()
+        throws Exception {
+        PublicPageBilibiliSource source = new PublicPageBilibiliSource(
+            new StubBilibiliHttpClient(null),
+            new BilibiliUrlParser(),
+            new BilibiliPageParser());
+
+        assertTrue(source.findCandidates(ContentType.MOVIE, 3).isEmpty());
+    }
+
+    @Test
+    void findsCandidatesFromPgcIndexBeforeSearchFallback() throws Exception {
+        String json = """
+            {
+              "code": 0,
+              "data": {
+                "list": [
+                  {
+                    "media_id": 835,
+                    "season_id": 835,
+                    "season_type": 1,
+                    "title": "测试番剧",
+                    "score": "9.6",
+                    "link": "https://www.bilibili.com/bangumi/play/ss835"
+                  }
+                ]
+              }
+            }
+            """;
+        PublicPageBilibiliSource source = new PublicPageBilibiliSource(
+            new StubBilibiliHttpClient(json),
+            new BilibiliUrlParser(),
+            new BilibiliPageParser());
+
+        List<BilibiliContent> bangumi = source.findCandidates(ContentType.BANGUMI, 3);
+
+        assertEquals(1, bangumi.size());
+        assertEquals(ContentType.BANGUMI, bangumi.get(0).getContentType());
+        assertEquals("835", bangumi.get(0).getContentId());
+    }
+
+    @Test
+    void fallsBackToSearchWhenPgcIndexIsEmpty() throws Exception {
+        String json = """
+            {
+              "data": {
+                "result": [
+                  {"season_type": 1, "season_type_name": "番剧", "media_id": 11, "season_id": 22, "title": "测试番剧"},
+                  {"season_type": 2, "season_type_name": "电影", "media_id": 33, "season_id": 44, "title": "测试电影"}
+                ]
+              }
+            }
+            """;
+        PublicPageBilibiliSource source = new PublicPageBilibiliSource(
+            new StubBilibiliHttpClient(json),
+            new BilibiliUrlParser(),
+            new BilibiliPageParser());
+
+        List<BilibiliContent> movies = source.findCandidates(ContentType.MOVIE, 3);
+
+        assertEquals(1, movies.size());
+        assertEquals(ContentType.MOVIE, movies.get(0).getContentType());
+        assertEquals("33", movies.get(0).getContentId());
+    }
+
+    @Test
+    void reportsMissingContentWhenBilibiliReturnsNotFound() {
+        PublicPageBilibiliSource source = new PublicPageBilibiliSource(
+            new StubBilibiliHttpClient("{\"code\":-404,\"message\":\"啥都木有\"}"),
+            new BilibiliUrlParser(),
+            new BilibiliPageParser());
+
+        IllegalArgumentException error = assertThrows(
+            IllegalArgumentException.class,
+            () -> source.resolveUrl("https://www.bilibili.com/bangumi/play/ep691680"));
+
+        assertEquals("该 B 站内容不存在或已下架", error.getMessage());
+    }
+
+    private static class StubBilibiliHttpClient extends BilibiliHttpClient {
+        private final String anonymousSearchBody;
+
+        StubBilibiliHttpClient(String anonymousSearchBody) {
+            super(HttpClient.newHttpClient(), Duration.ofSeconds(1), 0);
+            this.anonymousSearchBody = anonymousSearchBody;
+        }
+
+        @Override
+        public String getAnonymousSearchText(String url) {
+            return anonymousSearchBody;
+        }
+
+        @Override
+        public String getText(String url) {
+            return anonymousSearchBody;
+        }
+    }
+}
