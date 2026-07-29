@@ -1,4 +1,4 @@
-package com.clawbot.wechatbot.tools.searchWeatherTool;
+package com.clawbot.wechatbot.tools.searchweathertool;
 
 import com.clawbot.wechatbot.tools.FunctionTool;
 import com.fasterxml.jackson.databind.JsonNode;
