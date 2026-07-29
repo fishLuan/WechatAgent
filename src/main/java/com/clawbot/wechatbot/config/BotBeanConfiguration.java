@@ -37,8 +37,10 @@ import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
 import com.clawbot.wechatbot.tools.FunctionTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.tools.idcardtool.IdCardTool;
+import com.clawbot.wechatbot.tools.pathplantool.PathPlanTool;
+import com.clawbot.wechatbot.tools.calculatezodiacinfotool.CalculateZodiacInfoTool;
 import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
-import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
+import com.clawbot.wechatbot.tools.searchWeatherTool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
 import com.clawbot.wechatbot.tools.webaccess.SafeHttpFetcher;
@@ -183,6 +185,21 @@ public class BotBeanConfiguration {
     @Bean
     IdCardTool idCardTool(ObjectMapper mapper) {
         return new IdCardTool(mapper);
+    }
+
+    @Bean
+    PathPlanTool pathPlanTool(BotConfig config) {
+        return new PathPlanTool(
+            config.getAmapWeatherApiKey(),
+            "https://restapi.amap.com/v3/geocode/geo",
+            config.getAmapConnectTimeoutSeconds(),
+            config.getAmapRequestTimeoutSeconds());
+    }
+
+
+    @Bean
+    CalculateZodiacInfoTool calculateZodiacInfoTool(ObjectMapper mapper) {
+        return new CalculateZodiacInfoTool(mapper);
     }
 
     @Bean
