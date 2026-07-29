@@ -30,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
     properties = {
         "wechat.bot.enabled=false",
         "clawbot.memory.enabled=false",
+        "clawbot.bilibili.enabled=false",
         "spring.main.web-application-type=none"
     }
 )
@@ -70,7 +71,7 @@ class ApplicationTests {
     @Test
     void contextLoads() {
         assertEquals(10, toolRegistry.size());
-        assertEquals(3, handlers.size());
+        assertEquals(4, handlers.size());
         assertEquals(2, agentTaskHandlers.size());
         assertTrue(toolRegistry.definitions().findValuesAsText("name").contains("convert_currency"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name")
