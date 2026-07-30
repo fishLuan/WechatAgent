@@ -2,6 +2,7 @@ package com.clawbot.spring;
 
 import com.clawbot.wechatbot.WeChatBotApplication;
 import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.config.BotConfig;
 import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliContentRepository;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliPreferenceRepository;
@@ -48,6 +49,9 @@ class ApplicationTests {
     private AgentOrchestrator agentOrchestrator;
 
     @Autowired
+    private BotConfig botConfig;
+
+    @Autowired
     private List<AgentTaskHandler> agentTaskHandlers;
 
     @Autowired
@@ -83,6 +87,10 @@ class ApplicationTests {
         assertTrue(toolRegistry.definitions().findValuesAsText("name")
             .contains("scheduler_manage"));
         assertInstanceOf(DeepSeekChatService.class, chatService);
+        assertTrue(
+            botConfig.getSystemPrompt().contains("不寒暄、不卖萌"),
+            botConfig.getSystemPrompt());
+        assertTrue(botConfig.getSystemPrompt().contains("API供应商"));
         assertTrue(agentOrchestrator.isConfigured() == chatService.isConfigured());
         assertFalse(bilibiliProperties.isEnabled());
         assertTrue(bilibiliProperties.getDefaultMinimumRating()

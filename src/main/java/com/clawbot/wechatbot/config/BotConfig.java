@@ -3,6 +3,8 @@ package com.clawbot.wechatbot.config;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * Spring 管理的类型安全配置门面。
  *
@@ -166,7 +168,30 @@ public class BotConfig {
     private String get(String key) {
         String value = environment.getProperty(key);
         if (value == null) throw new IllegalStateException("缺少配置项：" + key);
-        return value.trim();
+        return normalizeUtf8Value(value.trim());
+    }
+
+    /**
+     * Spring 的传统 .properties 加载链可能把 UTF-8 中文按 ISO-8859-1 解码。
+     * 仅当重新解码后能得到更多中文字符时采用修复结果，避免改动正常环境变量。
+     */
+    private String normalizeUtf8Value(String value) {
+        if (value.isEmpty()) return value;
+        byte[] originalBytes = value.getBytes(StandardCharsets.ISO_8859_1);
+        String decoded = new String(originalBytes, StandardCharsets.UTF_8);
+        if (decoded.indexOf('\uFFFD') >= 0) return value;
+        return countChinese(decoded) > countChinese(value) ? decoded : value;
+    }
+
+    private int countChinese(String value) {
+        int count = 0;
+        for (int offset = 0; offset < value.length();) {
+            int codePoint = value.codePointAt(offset);
+            Character.UnicodeScript script = Character.UnicodeScript.of(codePoint);
+            if (script == Character.UnicodeScript.HAN) count++;
+            offset += Character.charCount(codePoint);
+        }
+        return count;
     }
 
     private int getInt(String key) {

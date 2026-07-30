@@ -105,6 +105,23 @@ class BilibiliCommandParserTests {
         assertEquals(BilibiliCommandParser.CmdType.SUBSCRIBE_BY_URL, c.type());
     }
 
+    @Test
+    void removesPoliteParticleFromSubscriptionTitle() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("订阅一下牧神记");
+        assertEquals(BilibiliCommandParser.CmdType.SUBSCRIBE_BY_TITLE, command.type());
+        assertEquals("牧神记", command.title());
+
+        command = BilibiliCommandParser.parse("帮我订阅一下《牧神记》");
+        assertEquals("牧神记", command.title());
+
+        command = BilibiliCommandParser.parse("我想追更一下牧神记");
+        assertEquals("牧神记", command.title());
+
+        command = BilibiliCommandParser.parse("订阅牧神记");
+        assertEquals("牧神记", command.title());
+    }
+
     // ============================
     // 4. 查看/取消/暂停/恢复订阅
     // ============================
@@ -166,6 +183,21 @@ class BilibiliCommandParserTests {
         c = BilibiliCommandParser.parse("设置剧集推送时间 19:45");
         assertEquals(ContentType.SERIES, c.contentType());
         assertEquals("19:45", c.fieldValue());
+    }
+
+    @Test
+    void parsesNaturalDailyMoviePushBeforeImmediateRecommendation() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("每天晚上十点十分给我推送3部9.2分以上的高分电影");
+
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals(ContentType.MOVIE, command.contentType());
+        assertEquals("22:10", command.fieldValue());
+        assertEquals(9.2, command.minimumRating());
+        assertEquals(3, command.recommendationCount());
+        assertTrue(command.pushEnabled());
     }
 
     @Test

@@ -87,8 +87,12 @@ public class BilibiliRecommendationScheduler {
                 String pushKey = pref.getWechatUserId() + ":" + type.name() + ":" + todayKey;
                 if (pushedToday.contains(pushKey)) continue;
 
-                doPush(pref.getWechatUserId(), type);
-                pushedToday.add(pushKey);
+                if (doPush(
+                    pref.getWechatUserId(),
+                    type,
+                    Math.max(1, pref.getRecommendationCount()))) {
+                    pushedToday.add(pushKey);
+                }
             }
         }
     }
@@ -97,7 +101,12 @@ public class BilibiliRecommendationScheduler {
      * 手动触发今日推荐推送（用于测试或运维）。
      */
     public void pushNow(String wechatUserId, ContentType contentType) {
-        doPush(wechatUserId, contentType);
+        BilibiliPreference preference =
+            preferenceService.getOrCreate(wechatUserId, contentType);
+        doPush(
+            wechatUserId,
+            contentType,
+            Math.max(1, preference.getRecommendationCount()));
     }
 
     /**
@@ -109,27 +118,33 @@ public class BilibiliRecommendationScheduler {
 
     // ---- internal ----
 
-    private void doPush(String wechatUserId, ContentType contentType) {
+    private boolean doPush(
+        String wechatUserId,
+        ContentType contentType,
+        int recommendationCount
+    ) {
         if (notificationPort == null) {
             log.warn("BilibiliNotificationPort 未注册，无法推送");
-            return;
+            return false;
         }
         try {
             RecommendationResult result = recommendationService.recommend(
                 wechatUserId, contentType,
-                properties.recommendationCount(contentType));
+                recommendationCount);
 
             if (result.items().isEmpty()) {
                 log.info("用户 {} {} 今日无合适推荐", wechatUserId, contentType);
-                return;
+                return true;
             }
 
             notificationPort.notifyDailyRecommendation(wechatUserId, result);
             log.info("已推送 {} 推荐给用户 {}（{} 部）",
                 contentType, wechatUserId, result.items().size());
+            return true;
         } catch (Exception e) {
             log.error("推送 {} 推荐给用户 {} 失败: {}",
                 contentType, wechatUserId, e.getMessage(), e);
+            return false;
         }
     }
 
