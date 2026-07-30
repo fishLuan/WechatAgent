@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.DayOfWeek;
+import java.util.Set;
+
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -67,5 +70,23 @@ class BilibiliToolTests {
 
         assertFalse(result.path("success").asBoolean());
         assertTrue(result.path("reply_text").asText().contains("未知操作类型"));
+    }
+
+    @Test
+    void excludesWeekdaysThroughFunctionCalling() throws Exception {
+        BilibiliTool.CURRENT_USER_ID.set("wechat-user");
+        when(commandHandler.handleWeekdayPushPolicy(
+            "wechat-user", null, Set.of(DayOfWeek.SATURDAY), true))
+            .thenReturn("✅ 已设置周六不发送每日推荐。");
+
+        JsonNode result = mapper.readTree(tool.execute(
+            mapper.readTree("""
+                {
+                  "action":"exclude_push_days",
+                  "weekdays":["saturday"]
+                }
+                """)));
+
+        assertTrue(result.path("success").asBoolean());
     }
 }

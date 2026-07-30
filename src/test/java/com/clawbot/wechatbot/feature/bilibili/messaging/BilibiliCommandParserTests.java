@@ -240,6 +240,27 @@ class BilibiliCommandParserTests {
         assertFalse(c.pushEnabled());
     }
 
+    @Test
+    void parsesExcludedAndRestoredWeekdays() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("电影周六周日不推送");
+        assertEquals(
+            BilibiliCommandParser.CmdType.SET_WEEKDAY_PUSH_POLICY,
+            command.type());
+        assertEquals(ContentType.MOVIE, command.contentType());
+        assertEquals("SATURDAY,SUNDAY", command.fieldValue());
+        assertEquals("exclude", command.state());
+
+        command = BilibiliCommandParser.parse("恢复周六动漫推送");
+        assertEquals(ContentType.BANGUMI, command.contentType());
+        assertEquals("SATURDAY", command.fieldValue());
+        assertEquals("include", command.state());
+
+        command = BilibiliCommandParser.parse("星期三不要推送");
+        assertNull(command.contentType());
+        assertEquals("WEDNESDAY", command.fieldValue());
+    }
+
     // ============================
     // 6. 查看设置 + 立即检查更新
     // ============================

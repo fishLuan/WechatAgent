@@ -3,6 +3,8 @@ package com.clawbot.wechatbot.feature.bilibili.messaging;
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 
 import java.time.LocalTime;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -35,6 +37,7 @@ public final class BilibiliCommandParser {
         SET_PUSH_TIME,
         SET_MIN_RATING,
         SET_RECOMMEND_COUNT,
+        SET_WEEKDAY_PUSH_POLICY,
         TOGGLE_PUSH,
         SHOW_PREFERENCES,
         CHECK_UPDATES_NOW,
@@ -86,6 +89,8 @@ public final class BilibiliCommandParser {
         "^(?:(?:我想|我要|请|帮我)\\s*)?(?:订阅|追更)\\s*(?:一下|下)?\\s*(?:作品)?\\s*(.+?)\\s*$");
     private static final Pattern TITLE_STATE = Pattern.compile(
         "^(?:我)?(?:已经|刚刚|刚)?\\s*(看过|看完了|想看|不喜欢)\\s*(?:了)?\\s*(.+?)\\s*$");
+    private static final Pattern WEEKDAY = Pattern.compile(
+        "(?:周|星期)([一二三四五六日天])");
     private static final Pattern ARABIC_TIME = Pattern.compile(
         "(?:每天|每日)?.*?((?:[01]?\\d|2[0-3])[:：][0-5]\\d)");
     private static final Pattern RATING = Pattern.compile(
@@ -110,6 +115,9 @@ public final class BilibiliCommandParser {
 
         ParsedCommand daily = parseDailyRecommendation(text);
         if (daily != null) return daily;
+
+        ParsedCommand weekdayPolicy = parseWeekdayPushPolicy(text);
+        if (weekdayPolicy != null) return weekdayPolicy;
 
         Matcher matcher = EXACT_TIME.matcher(text);
         if (matcher.matches()) {
@@ -208,6 +216,29 @@ public final class BilibiliCommandParser {
                 null, null, null, null);
         }
         return ParsedCommand.unknown();
+    }
+
+    private static ParsedCommand parseWeekdayPushPolicy(String text) {
+        if (!text.contains("推送")) return null;
+        boolean exclude = text.matches(".*不(?:要)?\\s*推送.*")
+            || text.matches(".*(?:停止|暂停|取消|关闭).*推送.*");
+        boolean include = text.matches(".*(?:恢复|开启|打开|重新开启).*推送.*");
+        if (exclude == include) return null;
+
+        Set<String> days = new LinkedHashSet<>();
+        Matcher matcher = WEEKDAY.matcher(text);
+        while (matcher.find()) days.add(dayName(matcher.group(1)));
+        if (text.contains("周末")) {
+            days.add("SATURDAY");
+            days.add("SUNDAY");
+        }
+        if (days.isEmpty()) return null;
+
+        return new ParsedCommand(
+            CmdType.SET_WEEKDAY_PUSH_POLICY,
+            null, null, inferType(text), null,
+            "excluded_push_days", String.join(",", days), null,
+            null, exclude ? "exclude" : "include", null, null);
     }
 
     private static ParsedCommand parseDailyRecommendation(String text) {
@@ -322,6 +353,18 @@ public final class BilibiliCommandParser {
             case "想看" -> "want_to_watch";
             case "不喜欢" -> "disliked";
             default -> "watched";
+        };
+    }
+
+    private static String dayName(String value) {
+        return switch (value) {
+            case "一" -> "MONDAY";
+            case "二" -> "TUESDAY";
+            case "三" -> "WEDNESDAY";
+            case "四" -> "THURSDAY";
+            case "五" -> "FRIDAY";
+            case "六" -> "SATURDAY";
+            default -> "SUNDAY";
         };
     }
 

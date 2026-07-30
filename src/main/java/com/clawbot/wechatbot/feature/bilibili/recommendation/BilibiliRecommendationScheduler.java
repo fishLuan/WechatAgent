@@ -69,7 +69,8 @@ public class BilibiliRecommendationScheduler {
             return;
         }
 
-        String todayKey = LocalDate.now().toString();
+        LocalDate today = LocalDate.now();
+        String todayKey = today.toString();
 
         // 对每个内容类型独立检查
         for (ContentType type : List.of(ContentType.BANGUMI, ContentType.SERIES, ContentType.MOVIE)) {
@@ -79,6 +80,9 @@ public class BilibiliRecommendationScheduler {
             // 查找所有开启推送的用户
             List<BilibiliPreference> users = preferenceService.findAllWithPushEnabled(type);
             for (BilibiliPreference pref : users) {
+                if (pref.getExcludedPushDays().contains(today.getDayOfWeek())) {
+                    continue;
+                }
                 // 如用户有自定义推送时间，以用户为准
                 LocalTime effectiveTime = pref.getPushTime() != null
                     ? pref.getPushTime() : targetTime;

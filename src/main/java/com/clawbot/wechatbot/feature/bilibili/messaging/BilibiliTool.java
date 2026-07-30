@@ -8,6 +8,11 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Component;
 
+import java.time.DayOfWeek;
+import java.util.LinkedHashSet;
+import java.util.Locale;
+import java.util.Set;
+
 /**
  * 供Agent内循环使用的B站Function Tool。
  *
@@ -59,7 +64,8 @@ public final class BilibiliTool implements FunctionTool {
             "mark_want_by_title", "mark_watched_by_title",
             "mark_disliked_by_title", "set_push_time",
             "set_min_rating", "set_recommend_count",
-            "enable_push", "disable_push"
+            "enable_push", "disable_push",
+            "exclude_push_days", "restore_push_days"
         }) values.add(value);
         properties.putObject("content_type")
             .put("type", "string")
@@ -72,6 +78,17 @@ public final class BilibiliTool implements FunctionTool {
             .put("description", "HH:mm格式，例如22:10");
         properties.putObject("minimum_rating").put("type", "number");
         properties.putObject("recommend_count").put("type", "integer");
+        ObjectNode weekdays = properties.putObject("weekdays");
+        weekdays.put("type", "array");
+        weekdays.put("description",
+            "要排除或恢复的星期，例如[monday,saturday]；仅影响每日推荐");
+        ArrayNode weekdayValues = weekdays.putObject("items")
+            .put("type", "string")
+            .putArray("enum");
+        for (String day : new String[] {
+            "monday", "tuesday", "wednesday", "thursday",
+            "friday", "saturday", "sunday"
+        }) weekdayValues.add(day);
         parameters.putArray("required").add("action");
         parameters.put("additionalProperties", false);
         return root;
@@ -142,6 +159,12 @@ public final class BilibiliTool implements FunctionTool {
                     commands.handleTogglePush(userId, type(arguments), true);
                 case "disable_push" ->
                     commands.handleTogglePush(userId, type(arguments), false);
+                case "exclude_push_days" ->
+                    commands.handleWeekdayPushPolicy(
+                        userId, optionalType(arguments), weekdays(arguments), true);
+                case "restore_push_days" ->
+                    commands.handleWeekdayPushPolicy(
+                        userId, optionalType(arguments), weekdays(arguments), false);
                 default -> throw new IllegalArgumentException(
                     "未知操作类型：" + action);
             };
@@ -158,6 +181,33 @@ public final class BilibiliTool implements FunctionTool {
             case "series", "剧集", "电视剧" -> ContentType.SERIES;
             default -> ContentType.BANGUMI;
         };
+    }
+
+    private ContentType optionalType(JsonNode arguments) {
+        return text(arguments, "content_type").isBlank()
+            ? null : type(arguments);
+    }
+
+    private Set<DayOfWeek> weekdays(JsonNode arguments) {
+        JsonNode node = arguments == null ? null : arguments.get("weekdays");
+        if (node == null || !node.isArray()) return Set.of();
+        Set<DayOfWeek> days = new LinkedHashSet<>();
+        for (JsonNode item : node) {
+            String value = item.asText("").trim().toLowerCase(Locale.ROOT);
+            days.add(switch (value) {
+                case "monday", "周一", "星期一" -> DayOfWeek.MONDAY;
+                case "tuesday", "周二", "星期二" -> DayOfWeek.TUESDAY;
+                case "wednesday", "周三", "星期三" -> DayOfWeek.WEDNESDAY;
+                case "thursday", "周四", "星期四" -> DayOfWeek.THURSDAY;
+                case "friday", "周五", "星期五" -> DayOfWeek.FRIDAY;
+                case "saturday", "周六", "星期六" -> DayOfWeek.SATURDAY;
+                case "sunday", "周日", "周天", "星期日", "星期天" ->
+                    DayOfWeek.SUNDAY;
+                default -> throw new IllegalArgumentException(
+                    "无法识别星期：" + value);
+            });
+        }
+        return days;
     }
 
     private Integer integer(JsonNode arguments, String field) {

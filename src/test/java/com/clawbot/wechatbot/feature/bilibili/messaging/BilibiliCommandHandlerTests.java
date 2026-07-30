@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Set;
+import java.time.DayOfWeek;
 import java.time.LocalTime;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -255,6 +256,19 @@ class BilibiliCommandHandlerTests {
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    void weekdayExclusionWithoutTypeAppliesToAllRecommendationTypes() {
+        String reply = handler.handle("user-1", "周六不推送");
+
+        assertTrue(reply.contains("周六不发送每日推荐"));
+        for (ContentType type : List.of(
+            ContentType.BANGUMI, ContentType.SERIES, ContentType.MOVIE
+        )) {
+            verify(preferenceService).setExcludedPushDays(
+                "user-1", type, Set.of(DayOfWeek.SATURDAY), true);
+        }
     }
 
     private RecommendedContent item(String contentId, String seasonId) {
