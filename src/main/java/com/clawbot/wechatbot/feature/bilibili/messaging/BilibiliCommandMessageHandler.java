@@ -1,6 +1,8 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.intent.IntentRecognizer;
+import com.clawbot.wechatbot.intent.IntentResult;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.VoiceItem;
@@ -13,13 +15,16 @@ public class BilibiliCommandMessageHandler implements MessageHandler {
 
     private final BilibiliCommandHandler commandHandler;
     private final WeChatOutboundGateway outboundGateway;
+    private final IntentRecognizer intentRecognizer;
 
     public BilibiliCommandMessageHandler(
         @Lazy BilibiliCommandHandler commandHandler,
-        WeChatOutboundGateway outboundGateway
+        WeChatOutboundGateway outboundGateway,
+        IntentRecognizer intentRecognizer
     ) {
         this.commandHandler = commandHandler;
         this.outboundGateway = outboundGateway;
+        this.intentRecognizer = intentRecognizer;
     }
 
     @Override
@@ -34,7 +39,10 @@ public class BilibiliCommandMessageHandler implements MessageHandler {
         if (text == null) return false;
         String trimmed = text.trim();
         if (trimmed.isBlank()) return false;
-        BilibiliCommandParser.ParsedCommand cmd = BilibiliCommandParser.parse(trimmed);
+        IntentResult intent = intentRecognizer.recognize(trimmed);
+        if (intent.isBilibiliIntent()) return true;
+        BilibiliCommandParser.ParsedCommand cmd =
+            BilibiliCommandParser.parse(trimmed);
         return cmd != null && cmd.type() != BilibiliCommandParser.CmdType.UNKNOWN;
     }
 
@@ -49,7 +57,25 @@ public class BilibiliCommandMessageHandler implements MessageHandler {
 
         String reply;
         try {
-            reply = commandHandler.handle(from, text);
+            IntentResult intent = intentRecognizer.recognize(text);
+            System.out.println("[INTENT] type=" + intent.type()
+                + " confidence="
+                + String.format("%.2f", intent.confidence())
+                + " slots=" + intent.slots());
+            reply = switch (intent.type()) {
+                case BILIBILI_SUBSCRIBE_TITLE ->
+                    commandHandler.handleSubscribeByTitle(
+                        from, intent.slot("title"));
+                case BILIBILI_SEARCH_TITLE ->
+                    commandHandler.handleSearchByTitle(
+                        from, intent.slot("title"));
+                case BILIBILI_MARK_TITLE ->
+                    commandHandler.handleMarkStateByTitle(
+                        from,
+                        intent.slot("title"),
+                        intent.slot("state"));
+                default -> commandHandler.handle(from, text);
+            };
         } catch (Exception e) {
             reply = "❌ B站命令处理失败：" + e.getMessage();
             System.err.println("[BILIBILI-HANDLER] 处理失败: " + e.getMessage());

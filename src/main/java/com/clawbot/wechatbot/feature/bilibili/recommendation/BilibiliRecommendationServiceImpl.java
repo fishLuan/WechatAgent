@@ -198,41 +198,16 @@ public class BilibiliRecommendationServiceImpl implements BilibiliRecommendation
         if (latestEpTitle == null && c.getLatestEpisodeNumber() != null) {
             latestEpTitle = "第 " + c.getLatestEpisodeNumber() + " 集";
         }
-        String seasonId = c.getSeasonId();
-        String extracted = null;
-        if (seasonId == null || seasonId.isBlank()) {
-            extracted = extractSeasonId(c.getPageUrl());
-            seasonId = extracted;
-        }
-        log.debug("推荐条目 [{}] contentId={}, seasonId={}(from={}), pageUrl={}",
-            c.getTitle(), c.getContentId(), seasonId,
-            (extracted != null ? "url提取" : "原始数据"), c.getPageUrl());
         return new RecommendedContent(
             c.getContentType(),
             c.getContentId(),
-            seasonId,
+            c.getSeasonId(),
             c.getTitle(),
             c.getRating(),
             c.getGenres(),
             c.getPageUrl(),
             latestEpTitle,
             reason);
-    }
-
-    private String extractSeasonId(String pageUrl) {
-        if (pageUrl == null || pageUrl.isBlank()) return null;
-        int playIdx = pageUrl.indexOf("/play/");
-        if (playIdx < 0) return null;
-        String afterPlay = pageUrl.substring(playIdx + 6);
-        int slashIdx = afterPlay.indexOf('/');
-        if (slashIdx > 0) {
-            return afterPlay.substring(0, slashIdx);
-        }
-        int queryIdx = afterPlay.indexOf('?');
-        if (queryIdx > 0) {
-            return afterPlay.substring(0, queryIdx);
-        }
-        return afterPlay;
     }
 
     private void markState(String wechatUserId, int itemNumber, String state) {

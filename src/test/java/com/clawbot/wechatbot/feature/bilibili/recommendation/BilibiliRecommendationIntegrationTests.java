@@ -577,6 +577,13 @@ class BilibiliRecommendationIntegrationTests {
         }
 
         @Override
+        public Optional<BilibiliContent> findBySeasonId(
+            ContentType type, String seasonId
+        ) {
+            return Optional.empty();
+        }
+
+        @Override
         public List<BilibiliContent> findCandidates(ContentType type, int limit) {
             if (returnEmpty) return List.of();
             ensureCandidates(type);

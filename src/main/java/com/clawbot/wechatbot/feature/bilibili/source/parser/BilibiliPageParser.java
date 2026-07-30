@@ -35,13 +35,6 @@ public class BilibiliPageParser {
             JsonNode root = objectMapper.readTree(json);
             JsonNode result = firstPresent(root, "/result", "/data/result", "/data");
             if (result.isMissingNode()) return Optional.empty();
-            if (result.isArray()) return Optional.empty();
-            if (!result.has("media_id") && !result.has("season_id")) {
-                JsonNode media = result.path("media");
-                if (!media.isMissingNode() && !media.isNull()) {
-                    result = media;
-                }
-            }
             return Optional.ofNullable(parsePgcResult(result, pageUrl));
         } catch (Exception e) {
             return Optional.empty();
@@ -88,6 +81,16 @@ public class BilibiliPageParser {
                 dto.setPageUrl(text(item, "url", pageUrl));
                 dto.setRating(doubleValue(firstPresent(item, "/media_score/score", "/rating/score")));
                 dto.setGenres(parseGenres(item));
+                String indexShow = text(item, "index_show", "");
+                dto.setFinished(indexShow.startsWith("全")
+                    || indexShow.contains("已完结"));
+                if (!indexShow.isBlank()) {
+                    dto.setLatestEpisode(new BilibiliEpisodeDto(
+                        "",
+                        indexShow,
+                        intValue(item.path("index_show")),
+                        dto.getPageUrl()));
+                }
                 if (hasRequired(dto)) contents.add(dto);
             }
         } catch (Exception ignored) {
@@ -191,10 +194,8 @@ public class BilibiliPageParser {
         Integer seasonType = intValue(result.path("season_type"));
         String typeName = text(result, "type_name", "");
         dto.setContentType(resolvePgcType(seasonType, typeName));
-        String mediaId = text(result, "media_id", "");
-        String seasonId = text(result, "season_id", "");
-        dto.setContentId(mediaId != null && !mediaId.isBlank() ? mediaId : seasonId);
-        dto.setSeasonId(seasonId);
+        dto.setContentId(text(result, "media_id", text(result, "season_id", "")));
+        dto.setSeasonId(text(result, "season_id", ""));
         dto.setTitle(text(result, "title", text(result, "season_title", "")));
         dto.setDescription(text(result, "evaluate", text(result, "description", "")));
         dto.setCoverUrl(text(result, "cover", ""));

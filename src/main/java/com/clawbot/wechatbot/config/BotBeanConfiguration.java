@@ -6,7 +6,9 @@ import com.clawbot.wechatbot.handler.ImageMessageHandler;
 import com.clawbot.wechatbot.handler.TextMessageHandler;
 import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliLinkMessageHandler;
 import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliMessageFormatter;
-import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
+import com.clawbot.wechatbot.feature.bilibili.messaging.WeChatOutboundGateway;
+import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
+import com.clawbot.wechatbot.intent.IntentRecognizer;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.memory.MemoryProperties;
 import com.clawbot.wechatbot.notification.DingTalkNotificationService;
@@ -40,8 +42,10 @@ import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
 import com.clawbot.wechatbot.tools.FunctionTool;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.tools.idcardtool.IdCardTool;
+import com.clawbot.wechatbot.tools.pathplantool.PathPlanTool;
+import com.clawbot.wechatbot.tools.calculatezodiacinfotool.CalculateZodiacInfoTool;
 import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
-import com.clawbot.wechatbot.tools.searchweathertool.AmapWeatherTool;
+import com.clawbot.wechatbot.tools.searchWeatherTool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
 import com.clawbot.wechatbot.tools.webaccess.SafeHttpFetcher;
@@ -60,6 +64,7 @@ import java.util.stream.Collectors;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 
 /**
  * 应用对象装配中心。业务类保持纯 Java 构造器，生命周期和依赖关系由 Spring 管理。
@@ -186,6 +191,21 @@ public class BotBeanConfiguration {
     @Bean
     IdCardTool idCardTool(ObjectMapper mapper) {
         return new IdCardTool(mapper);
+    }
+
+    @Bean
+    PathPlanTool pathPlanTool(BotConfig config) {
+        return new PathPlanTool(
+            config.getAmapWeatherApiKey(),
+            "https://restapi.amap.com/v3/geocode/geo",
+            config.getAmapConnectTimeoutSeconds(),
+            config.getAmapRequestTimeoutSeconds());
+    }
+
+
+    @Bean
+    CalculateZodiacInfoTool calculateZodiacInfoTool(ObjectMapper mapper) {
+        return new CalculateZodiacInfoTool(mapper);
     }
 
     @Bean
@@ -329,10 +349,12 @@ public class BotBeanConfiguration {
 
     @Bean
     MessageHandler bilibiliLinkMessageHandler(
-        BilibiliContentSource contentSource,
-        BilibiliMessageFormatter formatter
+        @Lazy BilibiliSubscriptionService subscriptionService,
+        BilibiliMessageFormatter formatter,
+        WeChatOutboundGateway outboundGateway
     ) {
-        return new BilibiliLinkMessageHandler(contentSource, formatter);
+        return new BilibiliLinkMessageHandler(
+            subscriptionService, formatter, outboundGateway);
     }
 
     @Bean
@@ -343,7 +365,8 @@ public class BotBeanConfiguration {
                                       BotConfig config,
                                       ConversationMemoryService memoryService,
                                       MemoryProperties memoryProperties,
-                                      LongReplyManager longReplyManager) {
+                                      LongReplyManager longReplyManager,
+                                      IntentRecognizer intentRecognizer) {
         SpeechSynthesisService optionalSpeech = config.isDashscopeConfigured() ? speech : null;
         return new TextMessageHandler(
             chat,
@@ -353,7 +376,8 @@ public class BotBeanConfiguration {
             news,
             memoryService,
             memoryProperties,
-            longReplyManager
+            longReplyManager,
+            intentRecognizer
         );
     }
 }

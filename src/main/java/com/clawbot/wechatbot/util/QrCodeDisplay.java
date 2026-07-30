@@ -17,10 +17,6 @@ public final class QrCodeDisplay {
 
     private QrCodeDisplay() {}
 
-    public static void display(String qrContent) {
-        display(qrContent, "qrcode.html", "微信扫码登录");
-    }
-
     public static void display(String qrContent, String fileName, String title) {
         if (qrContent == null || qrContent.trim().isEmpty()) {
             System.out.println("[WARN] 没有获取到二维码");

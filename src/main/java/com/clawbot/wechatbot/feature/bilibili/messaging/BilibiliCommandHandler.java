@@ -1,5 +1,7 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
+import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
+import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliPreference;
 import com.clawbot.wechatbot.feature.bilibili.model.CheckResult;
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
@@ -11,13 +13,13 @@ import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionResult;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionView;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliPreferenceService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliRecommendationService;
+import com.clawbot.wechatbot.feature.bilibili.recommendation.RecommendationHistoryService;
+import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
 import com.clawbot.wechatbot.scheduler.controller.SchedulerControlService;
 import com.clawbot.wechatbot.scheduler.model.ScheduledSubscription;
 import com.clawbot.wechatbot.scheduler.model.TaskType;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
@@ -30,7 +32,6 @@ import java.util.regex.Pattern;
 
 @Component
 public class BilibiliCommandHandler {
-    private static final Logger log = LoggerFactory.getLogger(BilibiliCommandHandler.class);
     private static final DateTimeFormatter HHMM = DateTimeFormatter.ofPattern("HH:mm");
     private static final Pattern HHMM_REGEX = Pattern.compile("^([01]?\\d|2[0-3]):([0-5]\\d)$");
 
@@ -40,6 +41,9 @@ public class BilibiliCommandHandler {
     private final SchedulerControlService schedulerService;
     private final WeChatSessionRegistry sessionRegistry;
     private final ObjectMapper objectMapper;
+    private final BilibiliContentSource contentSource;
+    private final BilibiliProperties properties;
+    private final RecommendationHistoryService historyService;
 
     public BilibiliCommandHandler(
         @Lazy BilibiliSubscriptionService subscriptionService,
@@ -47,7 +51,10 @@ public class BilibiliCommandHandler {
         @Lazy BilibiliPreferenceService preferenceService,
         @Lazy SchedulerControlService schedulerService,
         WeChatSessionRegistry sessionRegistry,
-        ObjectMapper objectMapper
+        ObjectMapper objectMapper,
+        BilibiliContentSource contentSource,
+        BilibiliProperties properties,
+        RecommendationHistoryService historyService
     ) {
         this.subscriptionService = subscriptionService;
         this.recommendationService = recommendationService;
@@ -55,6 +62,9 @@ public class BilibiliCommandHandler {
         this.schedulerService = schedulerService;
         this.sessionRegistry = sessionRegistry;
         this.objectMapper = objectMapper;
+        this.contentSource = contentSource;
+        this.properties = properties;
+        this.historyService = historyService;
     }
 
     /* ========== 入口：统一字符串处理（Handler 直接调这个） ========== */
@@ -80,6 +90,8 @@ public class BilibiliCommandHandler {
             case TOGGLE_PUSH -> handleTogglePush(userId, cmd.contentType(), cmd.pushEnabled());
             case SHOW_PREFERENCES -> handleShowPreference(userId);
             case CHECK_UPDATES_NOW -> handleCheckUpdatesNow(userId);
+            case SEARCH_BY_TITLE ->
+                handleSearchByTitle(userId, cmd.fieldValue());
             case UNKNOWN -> "【UNHANDLED-BILIBILI-UNKNOWN】";  // 交给 AI
         };
     }
@@ -108,17 +120,195 @@ public class BilibiliCommandHandler {
             if (item == null) {
                 return "❌ 找不到第 " + index + " 部推荐作品，可能已经过了推荐时间？\n先回复「今日动漫推荐」获取最新列表哦～";
             }
-            log.info("订阅条目: title={}, contentId={}, seasonId={}, pageUrl={}",
-                item.title(), item.contentId(), item.seasonId(), item.pageUrl());
             if (ContentType.MOVIE.equals(item.contentType())) {
                 return BilibiliMessageFormatter.formatMovieSubscriptionRejected(item.title());
             }
-            SubscriptionResult r = subscriptionService.subscribeByContentId(
-                userId, item.contentType(), item.seasonId());
+            SubscriptionResult r;
+            if (item.seasonId() != null && !item.seasonId().isBlank()) {
+                r = subscriptionService.subscribeBySeasonId(
+                    userId, item.contentType(), item.seasonId());
+            } else {
+                r = subscriptionService.subscribeByContentId(
+                    userId, item.contentType(), item.contentId());
+            }
             return BilibiliMessageFormatter.formatSubscriptionResult(r);
         } catch (Exception e) {
             return logAndReturn("订阅失败", e);
         }
+    }
+
+    public String handleSearchByTitle(String userId, String title) {
+        sessionRegistry.markActive(userId);
+        if (title == null || title.isBlank()) {
+            return "❌ 请输入要搜索的作品名，例如：搜索 老友记";
+        }
+        try {
+            List<BilibiliContent> results = contentSource.searchByTitle(
+                title.trim(), properties.getSearchResultCount());
+            return BilibiliMessageFormatter.formatTitleSearchResults(
+                title.trim(), results);
+        } catch (Exception e) {
+            return logAndReturn("搜索作品失败", e);
+        }
+    }
+
+    public String handleSubscribeByTitle(String userId, String title) {
+        sessionRegistry.markActive(userId);
+        if (title == null || title.isBlank()) {
+            return "❌ 请输入要订阅的作品名，例如：订阅 紫罗兰的永恒花园";
+        }
+        String keyword = title.trim();
+        try {
+            List<BilibiliContent> results = contentSource.searchByTitle(
+                keyword, properties.getSearchResultCount());
+            if (results == null || results.isEmpty()) {
+                return "🔎 没有找到与“" + keyword
+                    + "”相关的B站作品，请换个作品名再试。";
+            }
+
+            String normalizedKeyword = normalizeTitle(keyword);
+            List<BilibiliContent> exactMatches = results.stream()
+                .filter(content -> normalizeTitle(content.getTitle())
+                    .equals(normalizedKeyword))
+                .toList();
+            if (exactMatches.size() == 1) {
+                return subscribeToMatchedContent(
+                    userId, exactMatches.get(0));
+            }
+            if (results.size() == 1) {
+                return subscribeToMatchedContent(userId, results.get(0));
+            }
+            return "找到多个相关作品，请把目标作品的链接发给我：\n\n"
+                + BilibiliMessageFormatter.formatTitleSearchResults(
+                    keyword, results);
+        } catch (Exception e) {
+            return logAndReturn("按作品名订阅失败", e);
+        }
+    }
+
+    public String handleMarkStateByTitle(
+        String userId,
+        String title,
+        String state
+    ) {
+        sessionRegistry.markActive(userId);
+        if (title == null || title.isBlank()) {
+            return "❌ 请输入作品名，例如：已经看过 航海王：红发歌姬";
+        }
+        if (!Set.of("want_to_watch", "watched", "disliked")
+            .contains(state)) {
+            return "❌ 不支持的作品状态";
+        }
+
+        String keyword = title.trim();
+        try {
+            List<BilibiliContent> results = contentSource.searchByTitle(
+                keyword, properties.getSearchResultCount());
+            if (results == null || results.isEmpty()) {
+                return "❌ 没有找到与“" + keyword + "”相关的B站作品";
+            }
+
+            List<BilibiliContent> exactMatches = results.stream()
+                .filter(content -> normalizeTitle(content.getTitle())
+                    .equals(normalizeTitle(keyword)))
+                .toList();
+            BilibiliContent selected;
+            if (exactMatches.size() == 1) {
+                selected = exactMatches.get(0);
+            } else if (results.size() == 1) {
+                selected = results.get(0);
+            } else {
+                return "找到多个相关作品，请使用完整作品名重新发送，例如“"
+                    + statePrompt(state) + " 完整作品名”：\n\n"
+                    + BilibiliMessageFormatter.formatTitleSearchResults(
+                        keyword, results);
+            }
+
+            if (selected.getContentType() == null
+                || selected.getContentId() == null
+                || selected.getContentId().isBlank()) {
+                return "❌ 搜索结果缺少作品标识，无法记录状态";
+            }
+            String selectedTitle = selected.getTitle() == null
+                ? keyword
+                : selected.getTitle().trim();
+            switch (state) {
+                case "want_to_watch" -> historyService.markWantToWatch(
+                    userId, selected.getContentType(),
+                    selected.getContentId(), selectedTitle);
+                case "watched" -> historyService.markWatched(
+                    userId, selected.getContentType(),
+                    selected.getContentId(), selectedTitle);
+                case "disliked" -> historyService.markDisliked(
+                    userId, selected.getContentType(),
+                    selected.getContentId(), selectedTitle);
+                default -> throw new IllegalStateException(
+                    "不支持的作品状态");
+            }
+            return "✅ 已将《" + selectedTitle + "》标记为"
+                + stateDescription(state) + "，后续推荐会应用这个偏好。";
+        } catch (Exception e) {
+            return logAndReturn("按作品名标记失败", e);
+        }
+    }
+
+    private String subscribeToMatchedContent(
+        String userId,
+        BilibiliContent content
+    ) {
+        if (content == null || content.getContentType() == null) {
+            return "❌ 搜索结果缺少作品信息，无法订阅";
+        }
+        if (!content.getContentType().isEpisodeTrackable()) {
+            return "❌ 找到的作品“" + content.getTitle()
+                + "”不支持按集追更，请从搜索结果中选择动漫或电视剧。";
+        }
+        if (content.isFinished()) {
+            return "❌ “" + content.getTitle()
+                + "”已经完结，无需创建追更提醒。";
+        }
+
+        SubscriptionResult result;
+        if (content.getSeasonId() != null
+            && !content.getSeasonId().isBlank()) {
+            result = subscriptionService.subscribeBySeasonId(
+                userId,
+                content.getContentType(),
+                content.getSeasonId().trim());
+        } else if (content.getPageUrl() != null
+            && !content.getPageUrl().isBlank()) {
+            result = subscriptionService.subscribeByUrl(
+                userId, content.getPageUrl().trim());
+        } else {
+            result = subscriptionService.subscribeByContentId(
+                userId,
+                content.getContentType(),
+                content.getContentId());
+        }
+        return BilibiliMessageFormatter.formatSubscriptionResult(result);
+    }
+
+    private String normalizeTitle(String title) {
+        if (title == null) return "";
+        return title.toLowerCase()
+            .replace("的", "")
+            .replaceAll("[\\s·・:：\\-—_《》【】（）()]+", "");
+    }
+
+    private String stateDescription(String state) {
+        return switch (state) {
+            case "want_to_watch" -> "想看";
+            case "disliked" -> "不喜欢";
+            default -> "看过";
+        };
+    }
+
+    private String statePrompt(String state) {
+        return switch (state) {
+            case "want_to_watch" -> "想看";
+            case "disliked" -> "不喜欢";
+            default -> "已经看过";
+        };
     }
 
     /* ========== 2. 查看订阅列表 ========== */
@@ -214,7 +404,14 @@ public class BilibiliCommandHandler {
                 return "❌ 找不到第 " + index + " 部推荐作品～先回复「今日动漫推荐」获取最新推荐吧";
             }
             String stateDesc = switch (actionStr) {
-                case "want_to_watch" -> "标记想看";
+                case "want_to_watch" -> {
+                    historyService.markWantToWatch(
+                        userId,
+                        item.contentType(),
+                        item.contentId(),
+                        item.title());
+                    yield "标记想看";
+                }
                 case "watched" -> {
                     recommendationService.markWatched(userId, index);
                     yield "标记看过";

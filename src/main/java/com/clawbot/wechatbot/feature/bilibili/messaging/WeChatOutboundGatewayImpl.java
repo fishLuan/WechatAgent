@@ -1,14 +1,13 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.base.MessageSender;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 @Component
 public class WeChatOutboundGatewayImpl implements WeChatOutboundGateway {
     private final MessageSender messageSender;
 
-    public WeChatOutboundGatewayImpl(@Lazy MessageSender messageSender) {
+    public WeChatOutboundGatewayImpl(MessageSender messageSender) {
         this.messageSender = messageSender;
     }
 

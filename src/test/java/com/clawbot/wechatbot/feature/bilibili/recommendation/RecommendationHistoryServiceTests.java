@@ -138,6 +138,24 @@ class RecommendationHistoryServiceTests {
                 && h.getState() == RecommendationState.WATCHED));
     }
 
+    @Test
+    void titleIsStoredWhenMarkingContentByName() {
+        when(repository.findByWechatUserIdAndContentTypeAndContentId(
+                userId, ContentType.MOVIE, "movie-red"))
+            .thenReturn(Optional.empty());
+        when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.markWatched(
+            userId,
+            ContentType.MOVIE,
+            "movie-red",
+            "航海王：红发歌姬");
+
+        verify(repository).save(argThat(history ->
+            "航海王：红发歌姬".equals(history.getTitle())
+                && history.getState() == RecommendationState.WATCHED));
+    }
+
     private static BilibiliRecommendationHistory createHistory(
             String wechatUserId, ContentType contentType,
             String contentId, RecommendationState state) {

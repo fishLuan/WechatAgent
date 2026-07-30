@@ -18,8 +18,16 @@ public interface BilibiliContentSource {
     Optional<BilibiliContent> findByContentId(
         ContentType contentType, String contentId) throws Exception;
 
+    Optional<BilibiliContent> findBySeasonId(
+        ContentType contentType, String seasonId) throws Exception;
+
     List<BilibiliContent> findCandidates(
         ContentType contentType, int limit) throws Exception;
+
+    default List<BilibiliContent> searchByTitle(String title, int limit)
+        throws Exception {
+        return List.of();
+    }
 
     BilibiliContent refresh(BilibiliContent content) throws Exception;
 }

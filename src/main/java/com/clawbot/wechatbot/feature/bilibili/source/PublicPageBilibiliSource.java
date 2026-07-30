@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -67,10 +68,10 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         BilibiliUrlParser.ParsedBilibiliUrl parsed = urlParser.parse(sourceUrl)
             .orElseThrow(() -> new IllegalArgumentException("无法识别 B 站链接"));
         Optional<BilibiliContentDto> dto = switch (parsed.idType()) {
-            case "season" -> fetchPgc(String.format(PGC_BY_SEASON,
-                normalizeSeasonId(parsed.contentId())), parsed.normalizedUrl());
-            case "episode" -> fetchPgc(String.format(PGC_BY_EPISODE,
-                normalizeSeasonId(parsed.contentId())), parsed.normalizedUrl());
+            case "season" -> fetchPgc(String.format(PGC_BY_SEASON, parsed.contentId()),
+                parsed.normalizedUrl());
+            case "episode" -> fetchPgc(String.format(PGC_BY_EPISODE, parsed.contentId()),
+                parsed.normalizedUrl());
             case "media" -> fetchMedia(String.format(PGC_BY_MEDIA, parsed.contentId()),
                 parsed.normalizedUrl());
             case "bvid" -> fetchVideo(String.format(VIDEO_BY_BVID, parsed.contentId()),
@@ -96,12 +97,11 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
             return Optional.empty();
         }
         if (contentType == ContentType.BANGUMI
-                || contentType == ContentType.MOVIE
-                || contentType == ContentType.SERIES) {
-            String seasonId = normalizeSeasonId(contentId);
-            return fetchPgc(String.format(PGC_BY_SEASON, seasonId), "")
-                .map(this::toContent)
-                .map(c -> { c.setContentType(contentType); return c; });
+            || contentType == ContentType.MOVIE
+            || contentType == ContentType.SERIES) {
+            return fetchMedia(
+                String.format(PGC_BY_MEDIA, contentId.trim()), "")
+                .map(this::toContent);
         }
         if (contentType == ContentType.UPLOADER) {
             return fetchUploader(String.format(UPLOADER_BY_MID, contentId), "").map(this::toContent);
@@ -109,11 +109,19 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         return Optional.empty();
     }
 
-    private String normalizeSeasonId(String id) {
-        if (id == null || id.isBlank()) return id;
-        String trimmed = id.trim();
-        if (trimmed.startsWith("ss")) return trimmed.substring(2);
-        return trimmed;
+    @Override
+    public Optional<BilibiliContent> findBySeasonId(
+        ContentType contentType, String seasonId
+    ) throws Exception {
+        if (contentType == null
+            || !contentType.isEpisodeTrackable()
+            || seasonId == null
+            || seasonId.isBlank()) {
+            return Optional.empty();
+        }
+        return fetchPgc(
+            String.format(PGC_BY_SEASON, seasonId.trim()), "")
+            .map(this::toContent);
     }
 
     @Override
@@ -141,6 +149,43 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
             if (contents.size() >= limit) break;
         }
         return contents;
+    }
+
+    @Override
+    public List<BilibiliContent> searchByTitle(String title, int limit)
+        throws Exception {
+        if (title == null || title.isBlank() || limit < 1) {
+            return List.of();
+        }
+        int safeLimit = Math.min(limit, 20);
+        Map<String, BilibiliContent> unique = new LinkedHashMap<>();
+        collectTitleSearchResults(
+            unique, "media_bangumi", title.trim(), safeLimit);
+        collectTitleSearchResults(
+            unique, "media_ft", title.trim(), safeLimit);
+        return unique.values().stream().limit(safeLimit).toList();
+    }
+
+    private void collectTitleSearchResults(
+        Map<String, BilibiliContent> target,
+        String searchType,
+        String title,
+        int limit
+    ) throws Exception {
+        String url = String.format(
+            SEARCH,
+            searchType,
+            URLEncoder.encode(title, StandardCharsets.UTF_8),
+            limit);
+        String body = httpClient.getAnonymousSearchText(url);
+        if (body == null || body.isBlank()) return;
+        for (BilibiliContentDto dto
+            : pageParser.parseSearchMediaJson(body, "")) {
+            BilibiliContent content = toContent(dto);
+            String key =
+                content.getContentType() + ":" + content.getContentId();
+            target.putIfAbsent(key, content);
+        }
     }
 
     private List<BilibiliContent> tryFindPgcIndexCandidates(
@@ -198,10 +243,15 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
     @Override
     public BilibiliContent refresh(BilibiliContent content) throws Exception {
         if (content == null) throw new IllegalArgumentException("content 不能为空");
-        String id = content.getSeasonId() == null || content.getSeasonId().isBlank()
-            ? content.getContentId()
-            : content.getSeasonId();
-        return findByContentId(content.getContentType(), id).orElse(content);
+        if (content.getSeasonId() != null
+            && !content.getSeasonId().isBlank()) {
+            return findBySeasonId(
+                content.getContentType(), content.getSeasonId())
+                .orElse(content);
+        }
+        return findByContentId(
+            content.getContentType(), content.getContentId())
+            .orElse(content);
     }
 
     private Optional<BilibiliContentDto> fetchPgc(String apiUrl, String pageUrl)
@@ -264,7 +314,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
     private BilibiliContent toContent(BilibiliContentDto dto) {
         BilibiliContent content = new BilibiliContent(
             dto.getContentType(), dto.getContentId(), dto.getTitle());
-        content.setSeasonId(normalizeSeasonId(dto.getSeasonId()));
+        content.setSeasonId(dto.getSeasonId());
         content.setDescription(dto.getDescription());
         content.setGenres(dto.getGenres());
         content.setRating(dto.getRating());

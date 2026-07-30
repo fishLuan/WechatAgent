@@ -1,7 +1,7 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
-import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliPreference;
+import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 import com.clawbot.wechatbot.feature.bilibili.model.EpisodeUpdateNotification;
 import com.clawbot.wechatbot.feature.bilibili.model.OperationResult;
@@ -10,7 +10,6 @@ import com.clawbot.wechatbot.feature.bilibili.model.RecommendedContent;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionResult;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionStatus;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionView;
-import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -18,7 +17,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Set;
 
-@Component
 public class BilibiliMessageFormatter {
     private static final ZoneId BJ = ZoneId.of("Asia/Shanghai");
     private static final DateTimeFormatter DTF = DateTimeFormatter.ofPattern("MM-dd HH:mm");
@@ -235,57 +233,49 @@ public class BilibiliMessageFormatter {
             "以后我会通过每日推荐留意资源～";
     }
 
-    public static String formatResolvedContent(BilibiliContent content) {
-        if (content == null) {
-            return "❌ 链接解析失败：未获取到作品信息";
+    public String formatResolveFailure(String message) {
+        String reason = message == null || message.isBlank()
+            ? "暂时无法读取该B站链接"
+            : message;
+        return "❌ B站链接处理失败：" + reason;
+    }
+
+    public static String formatTitleSearchResults(
+        String keyword,
+        List<BilibiliContent> results
+    ) {
+        if (results == null || results.isEmpty()) {
+            return "🔎 没有找到与“" + keyword
+                + "”相关的B站作品，请换个关键词再试。";
         }
         StringBuilder sb = new StringBuilder();
-        ContentType type = content.getContentType();
-        String typeName = typeNameOf(type);
-        String icon = iconOf(type);
-
-        sb.append("✅ **B站链接解析成功**\n\n");
-        sb.append(icon).append(" **").append(content.getTitle() == null ? "未知作品" : content.getTitle()).append("**\n");
-        sb.append("🏷️ 类型：").append(typeName).append("\n");
-
-        if (content.getRating() != null && content.getRating() > 0) {
-            sb.append("⭐ 评分：").append(String.format("%.1f", content.getRating())).append(" 分\n");
-        }
-        if (content.getGenres() != null && !content.getGenres().isEmpty()) {
-            sb.append("🎭 题材：").append(String.join(" · ", content.getGenres())).append("\n");
-        }
-        if (content.getLatestEpisodeNumber() != null && type.isEpisodeTrackable()) {
-            sb.append("📝 最新：第 ").append(content.getLatestEpisodeNumber()).append(" 话");
-            if (content.getLatestEpisodeTitle() != null) {
-                sb.append("「").append(content.getLatestEpisodeTitle()).append("」");
+        sb.append("🔎 B站作品搜索：").append(keyword).append("\n\n");
+        int index = 1;
+        for (BilibiliContent content : results) {
+            sb.append(index++).append(". ")
+                .append(iconOf(content.getContentType()))
+                .append(" **").append(content.getTitle()).append("**");
+            if (content.getRating() != null
+                && content.getRating() > 0) {
+                sb.append(" ⭐")
+                    .append(String.format("%.1f", content.getRating()));
+            }
+            sb.append("\n");
+            if (content.getLatestEpisodeTitle() != null
+                && !content.getLatestEpisodeTitle().isBlank()) {
+                sb.append("   📝 ")
+                    .append(content.getLatestEpisodeTitle())
+                    .append("\n");
+            }
+            if (content.getPageUrl() != null
+                && !content.getPageUrl().isBlank()) {
+                sb.append("   🔗 ")
+                    .append(content.getPageUrl())
+                    .append("\n");
             }
             sb.append("\n");
         }
-        if (content.isFinished()) {
-            sb.append("🏁 状态：已完结\n");
-        }
-        if (content.getPageUrl() != null) {
-            sb.append("🔗 ").append(content.getPageUrl()).append("\n");
-        }
-
-        sb.append("\n💡 回复 **订阅** 即可加入追更，以后有新集会微信通知你～");
-        if (ContentType.MOVIE.equals(type)) {
-            sb.append("\n🎬 电影不支持追更，回复 **想看** 加入想看清单");
-        }
-        return sb.toString();
-    }
-
-    public static String formatResolveFailure(String errorMessage) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("❌ 链接解析失败");
-        if (errorMessage != null && !errorMessage.isBlank()) {
-            sb.append("：").append(errorMessage);
-        }
-        sb.append("\n\n请检查：\n");
-        sb.append("1. 链接是否正确（支持 bilibili.com 和 b23.tv）\n");
-        sb.append("2. 作品是否存在\n");
-        sb.append("3. 稍后再试，可能是B站访问限制");
-        return sb.toString();
+        return sb.toString().trim();
     }
 
     private static String typeNameOf(ContentType t) {

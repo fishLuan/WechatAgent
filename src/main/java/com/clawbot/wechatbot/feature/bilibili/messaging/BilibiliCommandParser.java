@@ -28,6 +28,7 @@ public class BilibiliCommandParser {
         TOGGLE_PUSH,
         SHOW_PREFERENCES,
         CHECK_UPDATES_NOW,
+        SEARCH_BY_TITLE,
         UNKNOWN
     }
 
@@ -79,6 +80,9 @@ public class BilibiliCommandParser {
 
     private static final Pattern CHECK_NOW = Pattern.compile(
         "^(立即|马上|现在)?\\s*(检查更新|刷新更新|扫一下更新)\\s*$");
+
+    private static final Pattern SEARCH_BY_TITLE = Pattern.compile(
+        "^(?:搜索|查找|搜一下|找一下|帮我找(?:一下)?)\\s*(?:B站)?\\s*(.+?)\\s*$");
 
     public static ParsedCommand parse(String text) {
         if (text == null) return ParsedCommand.unknown();
@@ -188,6 +192,12 @@ public class BilibiliCommandParser {
         if (CHECK_NOW.matcher(t).find()) {
             return new ParsedCommand(CmdType.CHECK_UPDATES_NOW,
                 null, null, null, null, null, null, null);
+        }
+
+        m = SEARCH_BY_TITLE.matcher(t);
+        if (m.find() && !m.group(1).isBlank()) {
+            return new ParsedCommand(CmdType.SEARCH_BY_TITLE,
+                null, null, null, null, "title", m.group(1).trim(), null);
         }
 
         // ========= 第2优先级：今日推荐精确句型 =========

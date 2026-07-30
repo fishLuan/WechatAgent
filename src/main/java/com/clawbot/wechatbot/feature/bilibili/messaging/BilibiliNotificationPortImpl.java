@@ -2,7 +2,6 @@ package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.feature.bilibili.model.EpisodeUpdateNotification;
 import com.clawbot.wechatbot.feature.bilibili.model.RecommendationResult;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -10,7 +9,7 @@ public class BilibiliNotificationPortImpl implements BilibiliNotificationPort {
     private final WeChatOutboundGateway outboundGateway;
     private final WeChatSessionRegistry sessionRegistry;
 
-    public BilibiliNotificationPortImpl(@Lazy WeChatOutboundGateway outboundGateway,
+    public BilibiliNotificationPortImpl(WeChatOutboundGateway outboundGateway,
                                         WeChatSessionRegistry sessionRegistry) {
         this.outboundGateway = outboundGateway;
         this.sessionRegistry = sessionRegistry;
