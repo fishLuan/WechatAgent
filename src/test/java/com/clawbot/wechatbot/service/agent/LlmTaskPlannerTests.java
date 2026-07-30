@@ -49,6 +49,23 @@ class LlmTaskPlannerTests {
     }
 
     @Test
+    void parsesImageUnderstandingAndDocumentAnalysisTasks() throws Exception {
+        LlmTaskPlanner planner = planner(5);
+
+        List<AgentTask> tasks = planner.parseTasks(
+            "分析附件",
+            """
+                {"tasks":[
+                  {"id":"image","type":"IMAGE_UNDERSTANDING","instruction":"分析图片","depends_on":[]},
+                  {"id":"document","type":"DOCUMENT_ANALYSIS","instruction":"总结文档","depends_on":[]}
+                ]}
+                """);
+
+        assertEquals(AgentTaskType.IMAGE_UNDERSTANDING, tasks.get(0).type());
+        assertEquals(AgentTaskType.DOCUMENT_ANALYSIS, tasks.get(1).type());
+    }
+
+    @Test
     void fallsBackToChatTaskForInvalidPlannerOutput() throws Exception {
         LlmTaskPlanner planner = planner(5);
 

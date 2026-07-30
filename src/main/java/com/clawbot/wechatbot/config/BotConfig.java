@@ -75,6 +75,18 @@ public class BotConfig {
     public int getAgentExecutionTimeoutSeconds() {
         return getInt("agent.guard.execution-timeout-seconds");
     }
+    public int getAgentMaxInputAttachments() {
+        return getInt("agent.input.max-attachments");
+    }
+    public int getAgentMaxSingleInputBytes() {
+        return getInt("agent.input.max-single-bytes");
+    }
+    public int getAgentMaxTotalInputBytes() {
+        return getInt("agent.input.max-total-bytes");
+    }
+    public int getAgentMaxDocumentChars() {
+        return getInt("agent.input.max-document-chars");
+    }
     public int getDeepSeekConnectTimeoutSeconds() { return getInt("deepseek.connect-timeout-seconds"); }
     public int getDeepSeekRequestTimeoutSeconds() { return getInt("deepseek.request-timeout-seconds"); }
 
@@ -134,6 +146,15 @@ public class BotConfig {
     public String getTianapiApiKey() { return get("tianapi.api.key"); }
     public int getLoginTimeoutMs() { return getInt("wechat.login.timeout-ms"); }
     public int getMaxSessions() { return getInt("wechat.max-sessions"); }
+    public int getMessageDispatchParallelism() {
+        return getInt("wechat.dispatch.parallelism");
+    }
+    public int getMessageDispatchMaxPending() {
+        return getInt("wechat.dispatch.max-pending-messages");
+    }
+    public int getMessageDispatchShutdownWaitSeconds() {
+        return getInt("wechat.dispatch.shutdown-wait-seconds");
+    }
     public int getLongReplyThreshold() { return getInt("wechat.reply.long-text-threshold"); }
     public int getLongReplyChunkSize() { return getInt("wechat.reply.chunk-size"); }
     public int getLongReplyPendingExpireMinutes() {

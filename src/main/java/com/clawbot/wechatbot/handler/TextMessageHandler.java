@@ -4,21 +4,23 @@ import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.VoiceItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
-import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.base.PlannedMessageHandler;
 import com.clawbot.wechatbot.memory.ConversationMemory;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.memory.ConversationMessage;
 import com.clawbot.wechatbot.memory.MemoryProperties;
-import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliTool;
 import com.clawbot.wechatbot.intent.IntentRecognizer;
 import com.clawbot.wechatbot.intent.IntentResult;
-import com.clawbot.wechatbot.scheduler.tool.SchedulerTool;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
 import com.clawbot.wechatbot.service.agent.AgentAttachment;
+import com.clawbot.wechatbot.service.agent.AgentInputAttachment;
+import com.clawbot.wechatbot.service.agent.AgentInputAttachmentLoader;
 import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
+import com.clawbot.wechatbot.service.agent.AgentRequestContext;
 import com.clawbot.wechatbot.service.agent.AgentResponse;
+import com.clawbot.wechatbot.service.agent.AgentTask;
 import com.clawbot.wechatbot.service.reply.LongReplyManager;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.util.JsonUtils;
@@ -35,7 +37,7 @@ import java.util.List;
  * 注意：这是文本消息的统一入口。图片生成等复合需求由内部 Agent 外循环调度，
  * 不再由独立的图片生成消息 Handler 提前截断。
  */
-public class TextMessageHandler implements MessageHandler {
+public class TextMessageHandler implements PlannedMessageHandler {
 
     private final ChatService chatService;
     private final AgentOrchestrator agentOrchestrator;
@@ -46,6 +48,7 @@ public class TextMessageHandler implements MessageHandler {
     private final MemoryProperties memoryProperties;
     private final LongReplyManager longReplyManager;
     private final IntentRecognizer intentRecognizer;
+    private final AgentInputAttachmentLoader inputAttachmentLoader;
 
     public TextMessageHandler(
         ChatService chatService,
@@ -56,7 +59,8 @@ public class TextMessageHandler implements MessageHandler {
         ConversationMemoryService memoryService,
         MemoryProperties memoryProperties,
         LongReplyManager longReplyManager,
-        IntentRecognizer intentRecognizer
+        IntentRecognizer intentRecognizer,
+        AgentInputAttachmentLoader inputAttachmentLoader
     ) {
         this.chatService = chatService;
         this.agentOrchestrator = agentOrchestrator;
@@ -67,6 +71,7 @@ public class TextMessageHandler implements MessageHandler {
         this.memoryProperties = memoryProperties;
         this.longReplyManager = longReplyManager;
         this.intentRecognizer = intentRecognizer;
+        this.inputAttachmentLoader = inputAttachmentLoader;
         DocumentService.silencePdfLogs();  // 屏蔽 PDF 库的噪音日志
     }
 
@@ -81,6 +86,23 @@ public class TextMessageHandler implements MessageHandler {
 
     @Override
     public void handle(ILinkClient client, WeixinMessage msg) {
+        handleInternal(client, msg, null);
+    }
+
+    @Override
+    public void handlePlanned(
+        ILinkClient client,
+        WeixinMessage msg,
+        List<AgentTask> tasks
+    ) {
+        handleInternal(client, msg, tasks);
+    }
+
+    private void handleInternal(
+        ILinkClient client,
+        WeixinMessage msg,
+        List<AgentTask> preplannedTasks
+    ) {
         String from = msg.getFrom_user_id();
         String userText = extractText(msg);
         IntentResult intent = intentRecognizer.recognize(userText);
@@ -139,16 +161,23 @@ public class TextMessageHandler implements MessageHandler {
             } else {
                 chatInput = textForChat;
             }
-            AgentResponse agentResponse;
-            SchedulerTool.CURRENT_USER_ID.set(from);
-            BilibiliTool.CURRENT_USER_ID.set(from);
-            try {
-                agentResponse = agentOrchestrator.execute(
-                    chatInput, context.isEmpty() ? "" : context);
-            } finally {
-                SchedulerTool.CURRENT_USER_ID.remove();
-                BilibiliTool.CURRENT_USER_ID.remove();
-            }
+            AgentRequestContext requestContext = new AgentRequestContext(
+                from, msg.getMessage_id());
+            List<AgentInputAttachment> inputAttachments =
+                preplannedTasks == null
+                    ? List.of()
+                    : inputAttachmentLoader.load(client, msg);
+            AgentResponse agentResponse = preplannedTasks == null
+                ? agentOrchestrator.execute(
+                    chatInput,
+                    context.isEmpty() ? "" : context,
+                    requestContext)
+                : agentOrchestrator.executePlanned(
+                    chatInput,
+                    context.isEmpty() ? "" : context,
+                    preplannedTasks,
+                    requestContext,
+                    inputAttachments);
 
             // 3. 发送文字回复（清理大模型可能自作主张加的"（用男声）"等标记）
             String textReply = cleanBotReply(agentResponse.text());
@@ -395,9 +424,21 @@ public class TextMessageHandler implements MessageHandler {
     private boolean shouldTriggerDocGen(String userText) {
         if (userText == null) return false;
         String t = userText.trim().toLowerCase();
-        return t.contains("pdf")
-            || t.contains("word")
-            || t.contains("文档");
+        return containsAny(
+            t,
+            "生成pdf", "导出pdf", "制作pdf", "转成pdf", "保存为pdf",
+            "pdf格式", "以pdf", "用pdf",
+            "生成word", "导出word", "制作word", "转成word", "保存为word",
+            "word格式", "以word", "用word",
+            "生成文档", "导出文档", "制作文档", "转成文档",
+            "文档格式", "文档形式", "以文档");
+    }
+
+    private boolean containsAny(String text, String... candidates) {
+        for (String candidate : candidates) {
+            if (text.contains(candidate)) return true;
+        }
+        return false;
     }
 
     /**

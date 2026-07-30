@@ -57,6 +57,16 @@ class BilibiliCommandParserTests {
 
         c = BilibiliCommandParser.parse("订阅 1");
         assertEquals(1, c.index());
+
+        c = BilibiliCommandParser.parse("订阅第三个");
+        assertEquals(BilibiliCommandParser.CmdType.SUBSCRIBE_BY_INDEX, c.type());
+        assertEquals(3, c.index());
+
+        c = BilibiliCommandParser.parse("订阅第3个");
+        assertEquals(3, c.index());
+
+        c = BilibiliCommandParser.parse("追更第十二部");
+        assertEquals(12, c.index());
     }
 
     @Test

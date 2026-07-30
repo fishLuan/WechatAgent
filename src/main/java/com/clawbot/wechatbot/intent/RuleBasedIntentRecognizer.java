@@ -11,7 +11,8 @@ public class RuleBasedIntentRecognizer implements IntentRecognizer {
     private static final Pattern BILIBILI_URL = Pattern.compile(
         "(?i)((?:https?://)?(?:(?:[a-z0-9-]+\\.)?bilibili\\.com|b23\\.tv)/\\S+)");
     private static final Pattern SUBSCRIBE_INDEX = Pattern.compile(
-        "^(?:订阅|追更)\\s*(\\d{1,2})\\s*$");
+        "^(?:订阅|追更)\\s*(?:第\\s*)?"
+            + "(\\d{1,2}|[一二两三四五六七八九十]{1,3})\\s*(?:个|部)?\\s*$");
     private static final Pattern SUBSCRIBE_TITLE = Pattern.compile(
         "^(?:(?:我想|我要|我想要|帮我|请帮我)\\s*)?"
             + "(?:订阅|追更)\\s*(?:一下)?\\s*(.+?)\\s*$");

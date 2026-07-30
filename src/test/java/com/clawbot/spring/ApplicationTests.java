@@ -76,7 +76,7 @@ class ApplicationTests {
     void contextLoads() {
         assertEquals(13, toolRegistry.size());
         assertEquals(5, handlers.size());
-        assertEquals(2, agentTaskHandlers.size());
+        assertEquals(4, agentTaskHandlers.size());
         assertTrue(toolRegistry.definitions().findValuesAsText("name").contains("convert_currency"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name")
             .contains("calculate_bazi_fortune"));
