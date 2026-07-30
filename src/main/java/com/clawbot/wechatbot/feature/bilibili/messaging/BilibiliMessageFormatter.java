@@ -10,6 +10,7 @@ import com.clawbot.wechatbot.feature.bilibili.model.RecommendedContent;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionResult;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionView;
 
+import java.time.DayOfWeek;
 import java.util.List;
 import java.util.Locale;
 
@@ -126,6 +127,7 @@ public final class BilibiliMessageFormatter {
         return typeName(preference.getContentType()) + "推荐设置："
             + "\n推送：" + (preference.isPushEnabled() ? "已开启" : "已关闭")
             + "\n时间：" + preference.getPushTime()
+            + "\n不推送日期：" + formatExcludedDays(preference)
             + "\n最低评分：" + preference.getMinimumRating()
             + "\n数量：" + preference.getRecommendationCount();
     }
@@ -156,6 +158,27 @@ public final class BilibiliMessageFormatter {
             case SERIES -> "剧集";
             case BANGUMI -> "动漫";
             case UPLOADER -> "UP主内容";
+        };
+    }
+
+    private static String formatExcludedDays(BilibiliPreference preference) {
+        if (preference.getExcludedPushDays().isEmpty()) return "无";
+        return preference.getExcludedPushDays().stream()
+            .sorted()
+            .map(BilibiliMessageFormatter::dayName)
+            .reduce((left, right) -> left + "、" + right)
+            .orElse("无");
+    }
+
+    private static String dayName(DayOfWeek day) {
+        return switch (day) {
+            case MONDAY -> "周一";
+            case TUESDAY -> "周二";
+            case WEDNESDAY -> "周三";
+            case THURSDAY -> "周四";
+            case FRIDAY -> "周五";
+            case SATURDAY -> "周六";
+            case SUNDAY -> "周日";
         };
     }
 }

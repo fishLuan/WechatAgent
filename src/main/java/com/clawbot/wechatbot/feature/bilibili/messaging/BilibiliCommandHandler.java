@@ -20,8 +20,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
+import java.time.DayOfWeek;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -106,6 +109,12 @@ public final class BilibiliCommandHandler {
                     handleSetPreference(
                         userId, command.contentType(),
                         command.fieldName(), command.fieldValue());
+                case SET_WEEKDAY_PUSH_POLICY ->
+                    handleWeekdayPushPolicy(
+                        userId,
+                        command.contentType(),
+                        parseDays(command.fieldValue()),
+                        "exclude".equals(command.state()));
                 case TOGGLE_PUSH ->
                     handleTogglePush(
                         userId, command.contentType(), command.pushEnabled());
@@ -290,6 +299,30 @@ public final class BilibiliCommandHandler {
             + "每日推送已" + (actualEnabled ? "开启" : "关闭") + "。";
     }
 
+    public String handleWeekdayPushPolicy(
+        String userId,
+        ContentType type,
+        Set<DayOfWeek> days,
+        boolean excluded
+    ) {
+        sessions.markActive(userId);
+        if (days == null || days.isEmpty()) {
+            return "❌ 请指定需要设置的星期。";
+        }
+        List<ContentType> types = type == null
+            ? List.of(ContentType.BANGUMI, ContentType.SERIES, ContentType.MOVIE)
+            : List.of(type);
+        for (ContentType actualType : types) {
+            preferences.setExcludedPushDays(
+                userId, actualType, days, excluded);
+        }
+        String target = type == null
+            ? "动漫、剧集和电影"
+            : BilibiliMessageFormatter.typeName(type);
+        return "✅ 已设置" + target + "在" + formatDays(days)
+            + (excluded ? "不发送每日推荐。" : "恢复每日推荐。");
+    }
+
     private String handleDailyConfiguration(
         String userId, BilibiliCommandParser.ParsedCommand command
     ) {
@@ -391,6 +424,33 @@ public final class BilibiliCommandHandler {
     private Set<String> safeGenres(BilibiliPreference preference) {
         return preference.getPreferredGenres() == null
             ? Set.of() : preference.getPreferredGenres();
+    }
+
+    private Set<DayOfWeek> parseDays(String value) {
+        if (!hasText(value)) return Set.of();
+        Set<DayOfWeek> days = new LinkedHashSet<>();
+        Arrays.stream(value.split(","))
+            .map(String::trim)
+            .filter(day -> !day.isEmpty())
+            .map(DayOfWeek::valueOf)
+            .forEach(days::add);
+        return days;
+    }
+
+    private String formatDays(Set<DayOfWeek> days) {
+        return days.stream()
+            .sorted()
+            .map(day -> switch (day) {
+                case MONDAY -> "周一";
+                case TUESDAY -> "周二";
+                case WEDNESDAY -> "周三";
+                case THURSDAY -> "周四";
+                case FRIDAY -> "周五";
+                case SATURDAY -> "周六";
+                case SUNDAY -> "周日";
+            })
+            .reduce((left, right) -> left + "、" + right)
+            .orElse("");
     }
 
     private void requireUser(String userId) {
