@@ -1,8 +1,12 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
-/** 定时任务和业务通知主动发送微信消息的统一出口。 */
+/**
+ * B站模块唯一的微信出站端口。
+ *
+ * <p>业务代码不持有微信 SDK 客户端，只通过用户 ID 发送消息。</p>
+ */
 public interface WeChatOutboundGateway {
-    boolean isAvailable(String wechatUserId);
-
     void sendText(String wechatUserId, String content);
+
+    boolean isAvailable(String wechatUserId);
 }

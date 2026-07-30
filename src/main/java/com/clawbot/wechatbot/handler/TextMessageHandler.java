@@ -202,13 +202,13 @@ public class TextMessageHandler implements MessageHandler {
                             safeSendText(client, from, "完整回复发送失败，请稍后重试。");
                         }
                     } else {
-                        safeSendText(client, from, "（文档生成失败，但上面的文字回复已经发了～）");
+                        safeSendText(client, from, "文档生成失败，文字回复已经发送。");
                     }
                 }
             }
         } catch (Exception e) {
             System.err.println("[ERROR] DeepSeek: " + e.getMessage());
-            safeSendText(client, from, "抱歉，大脑暂时短路了：" + e.getMessage());
+            safeSendText(client, from, "请求处理失败：" + e.getMessage());
         }
     }
 
@@ -489,7 +489,7 @@ public class TextMessageHandler implements MessageHandler {
 
         // 用户没指定内容 → 把最近对话拼接起来（如果对话为空，给一个默认提示）
         if (memory.getRecentMessages().isEmpty()) {
-            return "（暂无对话内容，试着和我聊几句，然后再生成文档吧～）";
+            return "暂无可用于生成文档的对话内容。";
         }
 
         StringBuilder sb = new StringBuilder();

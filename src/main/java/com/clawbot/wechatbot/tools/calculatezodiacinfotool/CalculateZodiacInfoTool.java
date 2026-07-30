@@ -266,32 +266,31 @@ public class CalculateZodiacInfoTool implements FunctionTool {
         LocalDate nextBirthdayDate = nextBirthday(birth, today);
 
         // ===== 6. 构造 reply 文案（数字全部精确计算，LLM 直接原样输出即可） =====
-        String genderHonorific = gender.equals("男") ? "同学" : gender.equals("女") ? "同学" : "朋友";
         StringBuilder replySb = new StringBuilder();
-        replySb.append("🎂 查完啦！根据您提供的公历生日 **").append(DATE_FMT_CN.format(birth)).append("**，为您计算好全部信息啦 ✨\n\n");
-        replySb.append("🐲 **生肖（按农历春节分界）**：**").append(zodiac.nameWithGanZhi).append("**\n");
+        replySb.append("计算结果（公历生日：**").append(DATE_FMT_CN.format(birth)).append("**）\n\n");
+        replySb.append("**生肖（按农历春节分界）**：**").append(zodiac.nameWithGanZhi).append("**\n");
         replySb.append("   · 生肖五行：**").append(zodiac.element).append("**\n");
         replySb.append("   · 性格关键词：").append(zodiac.traits).append("\n");
         replySb.append("   · 幸运色：").append(String.join("、", zodiac.luckyColors)).append("\n");
         replySb.append("   · ").append(lunarYearDesc).append("\n\n");
-        replySb.append("⭐ **星座**：**").append(constellation.cnName).append(" ").append(constellation.enName).append("**\n");
+        replySb.append("**星座**：**").append(constellation.cnName).append(" ").append(constellation.enName).append("**\n");
         replySb.append("   · 元素属性：**").append(constellation.element).append("**｜守护星：**").append(constellation.rulingPlanet).append("**\n");
         replySb.append("   · 性格关键词：").append(constellation.traits).append("\n");
         replySb.append("   · 幸运色：").append(String.join("、", constellation.luckyColors)).append("\n");
         replySb.append("   · 日期范围：").append(formatMD(constellation.start)).append(" ~ ").append(formatMD(constellation.end)).append("\n\n");
-        replySb.append("🎈 **年龄**：\n");
-        replySb.append("   · 周岁（实岁）：**").append(fullAge).append(" 岁**").append(birthdayPassedThisYear ? "（今年生日已过🎉）" : "（今年生日还没到哦）").append("\n");
+        replySb.append("**年龄**：\n");
+        replySb.append("   · 周岁（实岁）：**").append(fullAge).append(" 岁**").append(birthdayPassedThisYear ? "（今年生日已过）" : "（今年生日尚未到）").append("\n");
         replySb.append("   · 虚岁（传统算法）：**").append(nominalAge).append(" 岁**（出生即 1 岁，每过农历春节 +1）\n\n");
-        replySb.append("⏰ **倒计时 & 本命年**：\n");
-        replySb.append("   · 距离下次生日（").append(DATE_FMT_CN.format(nextBirthdayDate)).append("）还有 **").append(daysToNextBirthday).append(" 天** 🎁\n");
+        replySb.append("**生日倒计时与本命年**：\n");
+        replySb.append("   · 距离下次生日（").append(DATE_FMT_CN.format(nextBirthdayDate)).append("）还有 **").append(daysToNextBirthday).append(" 天**\n");
         if (isThisYearBenMing) {
-            replySb.append("   · 🔴 **今年是本命年！** 红红火火顺顺利利，建议穿红色哦 🧧\n");
+            replySb.append("   · **今年是本命年**。\n");
         } else if (nextYearIsBenMing) {
-            replySb.append("   · 🟠 **明年就是本命年啦**（").append(nextSpringFestival.getYear()).append(" 年春节后进入本命年）\n");
+            replySb.append("   · **明年是本命年**（").append(nextSpringFestival.getYear()).append(" 年春节后进入本命年）\n");
         } else {
-            replySb.append("   · 今年/明年暂未到本命年，平常心就好～\n");
+            replySb.append("   · 今年和明年均不是本命年。\n");
         }
-        replySb.append("\n💡 小贴士：本工具纯本地精确计算，不会上传任何生日信息，放心使用哦～");
+        replySb.append("\n隐私说明：本工具在本地计算，不会上传生日信息。");
 
         String reply = replySb.toString();
 
@@ -391,10 +390,10 @@ public class CalculateZodiacInfoTool implements FunctionTool {
         if (before) {
             ZodiacInfo pre = findZodiacByYear(y - 1);
             ZodiacInfo cur = findZodiacByYear(y);
-            return "说明：您生日在当年春节（" + DATE_FMT_CN.format(sfDate) + "）之前，所以属相是 " + pre.name + "（不是公历年份 " + y + " 对应的" + cur.name + "，这是最容易搞错的地方哦⚠️）";
+            return "说明：生日在当年春节（" + DATE_FMT_CN.format(sfDate) + "）之前，因此属相是 " + pre.name + "，不是公历年份 " + y + " 对应的" + cur.name + "。";
         } else {
             ZodiacInfo cur = findZodiacByYear(y);
-            return "说明：您生日在当年春节（" + DATE_FMT_CN.format(sfDate) + "）及之后，属相为 " + cur.name + " ✅";
+            return "说明：生日在当年春节（" + DATE_FMT_CN.format(sfDate) + "）及之后，属相为 " + cur.name + "。";
         }
     }
 
@@ -511,8 +510,8 @@ public class CalculateZodiacInfoTool implements FunctionTool {
         proof.put("error", message);
         ObjectNode out = mapper.createObjectNode();
         out.put("success", false);
-        out.put("reply", "不好意思，生日信息算不出来哦😅 原因：" + message
-            + "。请确认一下公历出生日期是否正确（格式 yyyy-MM-dd，例如 1998-05-20），再试一下就好啦～");
+        out.put("reply", "生日信息计算失败：" + message
+            + "。请确认公历出生日期是否正确，格式为 yyyy-MM-dd，例如 1998-05-20。");
         out.put("_internal_proof", Base64.getEncoder().encodeToString(mapper.writeValueAsString(proof).getBytes(StandardCharsets.UTF_8)));
         return mapper.writeValueAsString(out);
     }

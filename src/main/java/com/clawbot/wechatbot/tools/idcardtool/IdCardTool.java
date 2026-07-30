@@ -135,11 +135,11 @@ public class IdCardTool implements FunctionTool {
         if (actualLast != expectedCheck) {
             String first17 = id.substring(0, 17);
             String correctedId = first17 + expectedCheck;
-            String reply = "查完啦！这个身份证号**无效**❌\n"
+            String reply = "校验结果：身份证号**无效**。\n"
                 + "原因：**校验位不匹配**（正确末位第18位应为 **" + expectedCheck
                 + "**，实际末位是 **" + actualLast + "**）。\n"
                 + "如果前17位数字都没错，那修正后的完整号码应该是：`" + correctedId
-                + "`。可能是某位数字打错了，仔细核对一下吧～🔍😄";
+                + "`。请核对输入内容。";
             ObjectNode proof = mapper.createObjectNode();
             proof.put("actual_check_digit", String.valueOf(actualLast));
             proof.put("expected_check_digit", String.valueOf(expectedCheck));
@@ -178,13 +178,12 @@ public class IdCardTool implements FunctionTool {
         String genderDesc = (genderDigit % 2 == 1) ? "奇数" : "偶数";
 
         // ---- 6. 成功结果（reply 写死所有数字，LLM 只需要直接输出这一段）----
-        String reply = "查完啦！这个身份证号**有效**✅\n"
-            + "🗺️ 签发地区：**" + province + "**（行政区划码 " + areaCode + "）\n"
-            + "🎂 出生日期：**" + formatBirthDisplay(birthStr) + "**（今年 " + age + " 岁）\n"
-            + "⚧️ 性别：**" + gender + "**（第17位为 " + genderDigit + "，" + genderDesc + "）\n"
-            + "🔐 校验位：末位 **" + actualLast + "** 匹配通过\n"
-            + "⚠️ 温馨提示：身份证号是敏感个人信息，不要随意发给陌生人哦，"
-            + "本校验纯本地计算，不会存储或上传任何数据～";
+        String reply = "校验结果：身份证号**有效**。\n"
+            + "签发地区：**" + province + "**（行政区划码 " + areaCode + "）\n"
+            + "出生日期：**" + formatBirthDisplay(birthStr) + "**（今年 " + age + " 岁）\n"
+            + "性别：**" + gender + "**（第17位为 " + genderDigit + "，" + genderDesc + "）\n"
+            + "校验位：末位 **" + actualLast + "** 匹配通过\n"
+            + "隐私提示：身份证号属于敏感个人信息。本校验在本地完成，不会存储或上传数据。";
 
         ObjectNode proof = mapper.createObjectNode();
         proof.put("id_number", id);
@@ -233,8 +232,7 @@ public class IdCardTool implements FunctionTool {
         String proofStr = mapper.writeValueAsString(proof);
         ObjectNode out = mapper.createObjectNode();
         out.put("valid", false);
-        out.put("reply", "不好意思，这个身份证号没法校验哦😅 原因：" + message
-            + "。请再检查一下输入的内容是否正确～");
+        out.put("reply", "身份证号校验失败：" + message + "。请检查输入内容。");
         out.put("_internal_proof", Base64.getEncoder().encodeToString(proofStr.getBytes(StandardCharsets.UTF_8)));
         return mapper.writeValueAsString(out);
     }

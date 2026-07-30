@@ -2,7 +2,9 @@ package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
+import com.clawbot.wechatbot.feature.bilibili.model.BilibiliPreference;
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
+import com.clawbot.wechatbot.feature.bilibili.model.PreferenceUpdate;
 import com.clawbot.wechatbot.feature.bilibili.model.RecommendedContent;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionResult;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionStatus;
@@ -18,17 +20,21 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Set;
+import java.time.LocalTime;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 class BilibiliCommandHandlerTests {
     private BilibiliSubscriptionService subscriptionService;
     private BilibiliRecommendationService recommendationService;
     private BilibiliContentSource contentSource;
     private RecommendationHistoryService historyService;
+    private BilibiliPreferenceService preferenceService;
     private BilibiliCommandHandler handler;
 
     @BeforeEach
@@ -37,11 +43,12 @@ class BilibiliCommandHandlerTests {
         recommendationService = mock(BilibiliRecommendationService.class);
         contentSource = mock(BilibiliContentSource.class);
         historyService = mock(RecommendationHistoryService.class);
+        preferenceService = mock(BilibiliPreferenceService.class);
         BilibiliProperties properties = new BilibiliProperties();
         handler = new BilibiliCommandHandler(
             subscriptionService,
             recommendationService,
-            mock(BilibiliPreferenceService.class),
+            preferenceService,
             mock(SchedulerControlService.class),
             new WeChatSessionRegistry(),
             new ObjectMapper(),
@@ -213,6 +220,41 @@ class BilibiliCommandHandlerTests {
             ContentType.BANGUMI,
             "media-want",
             "测试动漫");
+    }
+
+    @Test
+    void naturalDailyPushUpdatesPreferenceWithoutImmediateRecommendation() {
+        BilibiliPreference current =
+            new BilibiliPreference("user-1", ContentType.MOVIE);
+        current.setPushTime(LocalTime.of(19, 30));
+        current.setMinimumRating(8.0);
+        current.setRecommendationCount(3);
+        current.setPushEnabled(true);
+        when(preferenceService.getOrCreate("user-1", ContentType.MOVIE))
+            .thenReturn(current);
+        BilibiliPreference saved =
+            new BilibiliPreference("user-1", ContentType.MOVIE);
+        saved.setPushTime(LocalTime.of(22, 10));
+        saved.setMinimumRating(9.0);
+        saved.setRecommendationCount(3);
+        saved.setPushEnabled(true);
+        when(preferenceService.update(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(ContentType.MOVIE),
+            any(PreferenceUpdate.class))).thenReturn(saved);
+
+        String reply = handler.handle(
+            "user-1", "每天晚上十点十分给我推送高分电影");
+
+        assertTrue(reply.contains("22:10"));
+        verify(preferenceService).update(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(ContentType.MOVIE),
+            any(PreferenceUpdate.class));
+        verify(recommendationService, never()).recommend(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyInt());
     }
 
     private RecommendedContent item(String contentId, String seasonId) {
