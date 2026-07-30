@@ -17,34 +17,31 @@ public class BilibiliNotificationPortImpl implements BilibiliNotificationPort {
 
     @Override
     public void notifyEpisodeUpdate(String wechatUserId, EpisodeUpdateNotification notification) {
-        if (!isValidTarget(wechatUserId) || notification == null) {
-            return;
-        }
+        requireValidTarget(wechatUserId, notification);
         String msg = BilibiliMessageFormatter.formatEpisodeUpdate(notification);
-        safeSend(wechatUserId, msg);
+        outboundGateway.sendText(wechatUserId.trim(), msg);
     }
 
     @Override
     public void notifyDailyRecommendation(String wechatUserId, RecommendationResult recommendation) {
-        if (!isValidTarget(wechatUserId) || recommendation == null) {
-            return;
-        }
+        requireValidTarget(wechatUserId, recommendation);
         String msg = BilibiliMessageFormatter.formatRecommendation(recommendation);
-        safeSend(wechatUserId, msg);
+        outboundGateway.sendText(wechatUserId.trim(), msg);
     }
 
-    private boolean isValidTarget(String userId) {
-        if (userId == null || userId.isBlank()) return false;
-        if (!sessionRegistry.isActive(userId)) return false;
-        return outboundGateway.isAvailable(userId);
-    }
-
-    private void safeSend(String userId, String msg) {
-        try {
-            outboundGateway.sendText(userId, msg);
-        } catch (Exception e) {
-            System.err.println("[BILIBILI-NOTIFY] 发送失败 userId=" + userId
-                + " err=" + e.getMessage());
+    private void requireValidTarget(String userId, Object payload) {
+        if (payload == null) {
+            throw new IllegalArgumentException("通知内容不能为空");
+        }
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("wechatUserId 不能为空");
+        }
+        String target = userId.trim();
+        if (!sessionRegistry.isActive(target)) {
+            throw new IllegalStateException("微信会话未激活");
+        }
+        if (!outboundGateway.isAvailable(target)) {
+            throw new IllegalStateException("微信发送通道不可用");
         }
     }
 }
