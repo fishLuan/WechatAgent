@@ -21,11 +21,14 @@ public final class LlmTaskPlanner implements TaskPlanner {
         输出格式：
         {"tasks":[
           {"id":"t1","type":"CHAT_TOOL","instruction":"完整任务描述","depends_on":[]},
-          {"id":"t2","type":"IMAGE_GENERATION","instruction":"完整图片描述","depends_on":["t1"]}
+          {"id":"t2","type":"IMAGE_UNDERSTANDING","instruction":"分析用户上传的图片","depends_on":[]},
+          {"id":"t3","type":"IMAGE_GENERATION","instruction":"完整图片描述","depends_on":["t2"]}
         ]}
 
         任务类型：
         - CHAT_TOOL：普通问答，以及需要天气、汇率、新闻、网页、时间等 function-calling 工具的任务。
+        - IMAGE_UNDERSTANDING：描述、识别、分析用户上传的图片，或回答与上传图片有关的问题。
+        - DOCUMENT_ANALYSIS：读取、总结、分析用户上传的 PDF、Word 或 TXT 文档。
         - IMAGE_GENERATION：画图、生成图片、来一张图片等文生图任务。
 
         规则：
@@ -35,7 +38,14 @@ public final class LlmTaskPlanner implements TaskPlanner {
         4. 相互独立的任务 depends_on 为空，可以并行。
         5. 如果后一个任务必须使用前一个任务的结果，将前一个任务 id 写入 depends_on。
         6. “根据杭州天气生成图片”应拆成天气 CHAT_TOOL 和依赖天气结果的 IMAGE_GENERATION。
-        7. 单一需求也必须输出一个结构化任务。
+        7. 多个操作即使都属于 CHAT_TOOL 也必须拆开。例如“订阅牧神记，然后设置电影推送时间20:00”
+           必须拆成“订阅牧神记”和“设置电影推送时间20:00”两个独立 CHAT_TOOL。
+        8. B站的订阅、搜索、推荐、标记、推送设置都属于 CHAT_TOOL，由后续 function-calling 执行。
+        9. 单一需求也必须输出一个结构化任务。
+        10. 输入中“【附件】”只描述用户实际上传的附件，不是用户要求。涉及上传图片或文档时，
+            必须使用对应的 IMAGE_UNDERSTANDING 或 DOCUMENT_ANALYSIS，不能用 CHAT_TOOL 假装读取附件。
+        11. “分析上传图片并根据图片生成新图”应让 IMAGE_GENERATION 依赖 IMAGE_UNDERSTANDING。
+        12. “总结上传文档并根据总结执行其他操作”应让后续任务依赖 DOCUMENT_ANALYSIS。
         """;
 
     private final DeepSeekClient client;
@@ -59,6 +69,11 @@ public final class LlmTaskPlanner implements TaskPlanner {
         String content = response.path("choices").path(0).path("message")
             .path("content").asText("");
         return parseTasks(userText.trim(), content);
+    }
+
+    @Override
+    public boolean isConfigured() {
+        return client.isConfigured();
     }
 
     List<AgentTask> parseTasks(String originalText, String modelContent) throws Exception {
@@ -135,6 +150,16 @@ public final class LlmTaskPlanner implements TaskPlanner {
             || normalized.equals("IMAGE_GEN")
             || normalized.equals("IMAGE_GENERATION")) {
             return AgentTaskType.IMAGE_GENERATION;
+        }
+        if (normalized.equals("VISION")
+            || normalized.equals("IMAGE_ANALYSIS")
+            || normalized.equals("IMAGE_UNDERSTANDING")) {
+            return AgentTaskType.IMAGE_UNDERSTANDING;
+        }
+        if (normalized.equals("DOCUMENT")
+            || normalized.equals("DOCUMENT_SUMMARY")
+            || normalized.equals("DOCUMENT_ANALYSIS")) {
+            return AgentTaskType.DOCUMENT_ANALYSIS;
         }
         return AgentTaskType.CHAT_TOOL;
     }

@@ -11,14 +11,21 @@ import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionS
 import com.clawbot.wechatbot.intent.IntentRecognizer;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.memory.MemoryProperties;
+import com.clawbot.wechatbot.messaging.MessageDispatchCoordinator;
+import com.clawbot.wechatbot.messaging.PerUserMessageDispatchCoordinator;
 import com.clawbot.wechatbot.notification.DingTalkNotificationService;
 import com.clawbot.wechatbot.notification.NoOpNotificationService;
 import com.clawbot.wechatbot.notification.NotificationService;
 import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
+import com.clawbot.wechatbot.service.agent.AgentInputAttachmentLoader;
+import com.clawbot.wechatbot.service.agent.AgentRequestContextHolder;
 import com.clawbot.wechatbot.service.agent.AgentTaskHandler;
 import com.clawbot.wechatbot.service.agent.ChatAgentTaskHandler;
+import com.clawbot.wechatbot.service.agent.DocumentAnalysisAgentTaskHandler;
 import com.clawbot.wechatbot.service.agent.ImageGenerationAgentTaskHandler;
+import com.clawbot.wechatbot.service.agent.ImageUnderstandingAgentTaskHandler;
 import com.clawbot.wechatbot.service.agent.LlmTaskPlanner;
+import com.clawbot.wechatbot.service.agent.MultiTaskPlanningGate;
 import com.clawbot.wechatbot.service.agent.TaskPlanner;
 import com.clawbot.wechatbot.service.agent.guard.AgentExecutionGuard;
 import com.clawbot.wechatbot.service.agent.guard.AgentGuardPolicy;
@@ -76,6 +83,15 @@ public class BotBeanConfiguration {
     @Bean
     ObjectMapper objectMapper() {
         return new ObjectMapper();
+    }
+
+    @Bean(destroyMethod = "close")
+    MessageDispatchCoordinator messageDispatchCoordinator(BotConfig config) {
+        return new PerUserMessageDispatchCoordinator(
+            config.getMessageDispatchParallelism(),
+            config.getMessageDispatchMaxPending(),
+            Duration.ofSeconds(
+                config.getMessageDispatchShutdownWaitSeconds()));
     }
 
     @Bean(destroyMethod = "close")
@@ -260,6 +276,19 @@ public class BotBeanConfiguration {
     }
 
     @Bean
+    MultiTaskPlanningGate multiTaskPlanningGate(
+        TaskPlanner planner,
+        BotConfig config
+    ) {
+        return new MultiTaskPlanningGate(planner, config.isAgentEnabled());
+    }
+
+    @Bean
+    AgentRequestContextHolder agentRequestContextHolder() {
+        return new AgentRequestContextHolder();
+    }
+
+    @Bean
     AgentTaskHandler chatAgentTaskHandler(DeepSeekChatService chatService) {
         return new ChatAgentTaskHandler(chatService);
     }
@@ -269,11 +298,31 @@ public class BotBeanConfiguration {
         return new ImageGenerationAgentTaskHandler(imageGenService);
     }
 
+    @Bean
+    AgentTaskHandler imageUnderstandingAgentTaskHandler(
+        VisionService visionService
+    ) {
+        return new ImageUnderstandingAgentTaskHandler(visionService);
+    }
+
+    @Bean
+    AgentTaskHandler documentAnalysisAgentTaskHandler(
+        DocumentService documentService,
+        DeepSeekChatService chatService,
+        BotConfig config
+    ) {
+        return new DocumentAnalysisAgentTaskHandler(
+            documentService,
+            chatService,
+            config.getAgentMaxDocumentChars());
+    }
+
     @Bean(destroyMethod = "close")
     AgentOrchestrator agentOrchestrator(
         DeepSeekChatService singleTaskChatService,
         TaskPlanner taskPlanner,
         List<AgentTaskHandler> taskHandlers,
+        AgentRequestContextHolder requestContextHolder,
         BotConfig config
     ) {
         return new AgentOrchestrator(
@@ -283,7 +332,8 @@ public class BotBeanConfiguration {
             config.isAgentEnabled(),
             config.getAgentMaxOuterRounds(),
             config.getAgentMaxParallelism(),
-            Duration.ofSeconds(config.getAgentExecutionTimeoutSeconds()));
+            Duration.ofSeconds(config.getAgentExecutionTimeoutSeconds()),
+            requestContextHolder);
     }
 
     @Bean
@@ -320,6 +370,18 @@ public class BotBeanConfiguration {
     DocumentService documentService(PdfDocumentService pdf, WordDocumentService word) {
         DocumentService.silencePdfLogs();
         return new DocumentService(pdf, word);
+    }
+
+    @Bean
+    AgentInputAttachmentLoader agentInputAttachmentLoader(
+        DocumentService documentService,
+        BotConfig config
+    ) {
+        return new AgentInputAttachmentLoader(
+            documentService,
+            config.getAgentMaxInputAttachments(),
+            config.getAgentMaxSingleInputBytes(),
+            config.getAgentMaxTotalInputBytes());
     }
 
     @Bean
@@ -366,7 +428,8 @@ public class BotBeanConfiguration {
                                       ConversationMemoryService memoryService,
                                       MemoryProperties memoryProperties,
                                       LongReplyManager longReplyManager,
-                                      IntentRecognizer intentRecognizer) {
+                                      IntentRecognizer intentRecognizer,
+                                      AgentInputAttachmentLoader inputAttachmentLoader) {
         SpeechSynthesisService optionalSpeech = config.isDashscopeConfigured() ? speech : null;
         return new TextMessageHandler(
             chat,
@@ -377,7 +440,8 @@ public class BotBeanConfiguration {
             memoryService,
             memoryProperties,
             longReplyManager,
-            intentRecognizer
+            intentRecognizer,
+            inputAttachmentLoader
         );
     }
 }

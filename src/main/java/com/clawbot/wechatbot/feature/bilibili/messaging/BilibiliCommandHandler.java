@@ -43,6 +43,7 @@ public final class BilibiliCommandHandler {
     private final BilibiliContentSource contentSource;
     private final BilibiliProperties properties;
     private final RecommendationHistoryService history;
+    private final PendingSearchResultStore pendingSearchResults;
 
     public BilibiliCommandHandler(
         @Lazy BilibiliSubscriptionService subscriptions,
@@ -53,7 +54,8 @@ public final class BilibiliCommandHandler {
         ObjectMapper ignoredMapper,
         BilibiliContentSource contentSource,
         BilibiliProperties properties,
-        RecommendationHistoryService history
+        RecommendationHistoryService history,
+        PendingSearchResultStore pendingSearchResults
     ) {
         this.subscriptions = subscriptions;
         this.recommendations = recommendations;
@@ -62,6 +64,7 @@ public final class BilibiliCommandHandler {
         this.contentSource = contentSource;
         this.properties = properties;
         this.history = history;
+        this.pendingSearchResults = pendingSearchResults;
     }
 
     public String handle(String userId, String input) {
@@ -145,6 +148,24 @@ public final class BilibiliCommandHandler {
     ) {
         sessions.markActive(userId);
         if (index == null || index < 1) return "❌ 推荐编号不正确。";
+        BilibiliContent searchedItem =
+            pendingSearchResults.findByItemNumber(userId, index);
+        if (searchedItem != null) {
+            if (searchedItem.isFinished()) {
+                return "ℹ️ 《" + searchedItem.getTitle()
+                    + "》已经完结，无需追更订阅。";
+            }
+            SubscriptionResult result = hasText(searchedItem.getSeasonId())
+                ? subscriptions.subscribeBySeasonId(
+                    userId,
+                    searchedItem.getContentType(),
+                    searchedItem.getSeasonId())
+                : subscriptions.subscribeByContentId(
+                    userId,
+                    searchedItem.getContentType(),
+                    searchedItem.getContentId());
+            return BilibiliMessageFormatter.formatSubscription(result);
+        }
         RecommendedContent item = recommendations.findPendingItem(userId, index);
         if (item == null) {
             return "❌ 找不到第 " + index + " 个推荐，请先获取最新推荐。";
@@ -169,7 +190,8 @@ public final class BilibiliCommandHandler {
             }
             BilibiliContent exact = uniqueExactMatch(title, matches);
             if (exact == null) {
-                return "找到多个相关作品，请发送其中一个链接完成订阅：\n\n"
+                pendingSearchResults.put(userId, matches);
+                return "找到多个相关作品，请回复“订阅第几个”或发送对应链接：\n\n"
                     + BilibiliMessageFormatter.formatSearchResults(title, matches);
             }
             if (exact.isFinished()) {
@@ -189,7 +211,9 @@ public final class BilibiliCommandHandler {
     public String handleSearchByTitle(String userId, String title) {
         sessions.markActive(userId);
         try {
-            return BilibiliMessageFormatter.formatSearchResults(title, search(title));
+            List<BilibiliContent> matches = search(title);
+            pendingSearchResults.put(userId, matches);
+            return BilibiliMessageFormatter.formatSearchResults(title, matches);
         } catch (Exception error) {
             return failure("搜索作品失败", error);
         }

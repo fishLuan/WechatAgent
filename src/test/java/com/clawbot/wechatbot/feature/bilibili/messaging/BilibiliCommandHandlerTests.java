@@ -36,6 +36,7 @@ class BilibiliCommandHandlerTests {
     private BilibiliContentSource contentSource;
     private RecommendationHistoryService historyService;
     private BilibiliPreferenceService preferenceService;
+    private PendingSearchResultStore pendingSearchResults;
     private BilibiliCommandHandler handler;
 
     @BeforeEach
@@ -45,6 +46,7 @@ class BilibiliCommandHandlerTests {
         contentSource = mock(BilibiliContentSource.class);
         historyService = mock(RecommendationHistoryService.class);
         preferenceService = mock(BilibiliPreferenceService.class);
+        pendingSearchResults = new PendingSearchResultStore();
         BilibiliProperties properties = new BilibiliProperties();
         handler = new BilibiliCommandHandler(
             subscriptionService,
@@ -55,7 +57,8 @@ class BilibiliCommandHandlerTests {
             new ObjectMapper(),
             contentSource,
             properties,
-            historyService);
+            historyService,
+            pendingSearchResults);
     }
 
     @Test
@@ -118,6 +121,43 @@ class BilibiliCommandHandlerTests {
         assertTrue(reply.contains(
             "https://www.bilibili.com/bangumi/play/ss38729"));
         verify(contentSource).searchByTitle("老友记", 5);
+    }
+
+    @Test
+    void subscribesToThirdSearchResultUsingChineseOrdinal() throws Exception {
+        BilibiliContent first = content("media-1", "ss1", "第一部", false);
+        BilibiliContent second = content("media-2", "ss2", "第二部", false);
+        BilibiliContent third = content("media-3", "ss3", "第三部", false);
+        when(contentSource.searchByTitle("间谍过家家", 5))
+            .thenReturn(List.of(first, second, third));
+        when(subscriptionService.subscribeBySeasonId(
+            "user-1", ContentType.BANGUMI, "ss3"))
+            .thenReturn(success());
+
+        handler.handleSearchByTitle("user-1", "间谍过家家");
+        String reply = handler.handle("user-1", "订阅第三个");
+
+        assertTrue(reply.contains("订阅成功"));
+        verify(subscriptionService).subscribeBySeasonId(
+            "user-1", ContentType.BANGUMI, "ss3");
+    }
+
+    @Test
+    void doesNotSubscribeToFinishedSearchResult() throws Exception {
+        BilibiliContent first = content("media-1", "ss1", "第一部", false);
+        BilibiliContent second = content("media-2", "ss2", "第二部", false);
+        BilibiliContent third = content("media-3", "ss3", "第三部", true);
+        when(contentSource.searchByTitle("间谍过家家", 5))
+            .thenReturn(List.of(first, second, third));
+
+        handler.handleSearchByTitle("user-1", "间谍过家家");
+        String reply = handler.handle("user-1", "订阅第三个");
+
+        assertTrue(reply.contains("已经完结"));
+        verify(subscriptionService, never()).subscribeBySeasonId(
+            "user-1", ContentType.BANGUMI, "ss3");
+        verify(subscriptionService, never()).subscribeByContentId(
+            "user-1", ContentType.BANGUMI, "media-3");
     }
 
     @Test
@@ -300,5 +340,18 @@ class BilibiliCommandHandlerTests {
             SubscriptionStatus.ACTIVE,
             7,
             "订阅成功");
+    }
+
+    private BilibiliContent content(
+        String contentId,
+        String seasonId,
+        String title,
+        boolean finished
+    ) {
+        BilibiliContent content =
+            new BilibiliContent(ContentType.BANGUMI, contentId, title);
+        content.setSeasonId(seasonId);
+        content.setFinished(finished);
+        return content;
     }
 }

@@ -53,7 +53,7 @@ public class ImageMessageHandler implements MessageHandler {
             System.out.println("[INFO] 正在调用百炼图片理解模型...");
             String description = visionService.understandImage(imageBytes,
                 question.isEmpty()
-                    ? "用生动口语化的语气描述这张图片，2-3 句话就行，不要分点、不要写详细分析，最后可以带一个合适的 emoji 表情"
+                    ? "用生动口语化的语气描述这张图片，2-3 句话就行，不要分点、不要写详细分析"
                     : question);
             safeSendText(client, from, description);
             System.out.println("[SEND] " + description.replace("\n", " | "));

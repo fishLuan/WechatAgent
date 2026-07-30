@@ -3,6 +3,7 @@ package com.clawbot.wechatbot.scheduler.tool;
 import com.clawbot.wechatbot.scheduler.controller.SchedulerControlService;
 import com.clawbot.wechatbot.scheduler.model.ScheduledSubscription;
 import com.clawbot.wechatbot.scheduler.model.TaskType;
+import com.clawbot.wechatbot.service.agent.AgentRequestContextHolder;
 import com.clawbot.wechatbot.tools.FunctionTool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,17 +21,18 @@ public class SchedulerTool implements FunctionTool {
     private static final String SUB_CREATE = "create_subscription";
     private static final String SUB_CANCEL = "cancel_subscription";
     private static final String SUB_LIST = "list_subscriptions";
-    /** 当前对话用户上下文（InheritableThreadLocal：创建子线程自动继承，支持异步线程池）。
-     * TextMessageHandler 在调用 AgentOrchestrator 前 set，调用结束后 remove。
-     * AI 不需要知道 user_id，系统自动注入。 */
-    public static final InheritableThreadLocal<String> CURRENT_USER_ID = new InheritableThreadLocal<>();
-
     private final SchedulerControlService controlService;
     private final ObjectMapper mapper;
+    private final AgentRequestContextHolder requestContextHolder;
 
-    public SchedulerTool(@Lazy SchedulerControlService controlService, ObjectMapper mapper) {
+    public SchedulerTool(
+        @Lazy SchedulerControlService controlService,
+        ObjectMapper mapper,
+        AgentRequestContextHolder requestContextHolder
+    ) {
         this.controlService = controlService;
         this.mapper = mapper;
+        this.requestContextHolder = requestContextHolder;
     }
 
     @Override
@@ -96,8 +98,7 @@ public class SchedulerTool implements FunctionTool {
 
         ArrayNode required = params.putArray("required");
         required.add("action");
-        // user_id 字段直接从 schema 里删掉，AI 连这个字段都看不到，自然不会再问用户要了！
-        // 系统通过 TextMessageHandler 的 InheritableThreadLocal 自动注入当前对话用户ID
+        // user_id 不暴露给模型，由 Agent 请求上下文绑定当前微信用户。
 
         return root;
     }
@@ -105,10 +106,8 @@ public class SchedulerTool implements FunctionTool {
     @Override
     public String execute(JsonNode args) throws Exception {
         String action = args.path("action").asText("");
-        String userId = args.path("user_id").asText("");
-        // 【双层兜底：优先用 AI 传的 user_id（即使 schema 里没这个字段，AI 乱传也收得到），否则从对话上下文自动取】
-        if (userId.isBlank()) userId = CURRENT_USER_ID.get();
-        if (userId == null || userId.isBlank()) {
+        String userId = requestContextHolder.currentUserId();
+        if (userId.isBlank()) {
             return "{\"success\":false,\"error\":\"找不到当前对话用户，请在用户消息对话中创建/取消订阅\"}";
         }
 

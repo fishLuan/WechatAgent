@@ -72,7 +72,8 @@ public final class BilibiliCommandParser {
     private static final Pattern BILIBILI_URL = Pattern.compile(
         "(?i)(https?://)?(?:(?:www|m)\\.)?(?:bilibili\\.com|b23\\.tv)/[^\\s，。！？]+");
     private static final Pattern INDEX_ACTION = Pattern.compile(
-        "^(订阅|追更|想看|看过|不喜欢)\\s*(\\d{1,2})\\s*$");
+        "^(订阅|追更|想看|看过|不喜欢)\\s*(?:第\\s*)?"
+            + "(\\d{1,2}|[一二两三四五六七八九十]{1,3})\\s*(?:个|部)?\\s*$");
     private static final Pattern MANAGE_SUBSCRIPTION = Pattern.compile(
         "^(取消|删除|移除|暂停|恢复|继续)\\s*订阅\\s*(\\d{1,2}|[0-9a-fA-F]{20,})\\s*$");
     private static final Pattern EXACT_TIME = Pattern.compile(
@@ -154,7 +155,7 @@ public final class BilibiliCommandParser {
                 default -> CmdType.MARK_DISLIKED;
             };
             return new ParsedCommand(
-                type, Integer.parseInt(matcher.group(2)), null, null,
+                type, parseIndex(matcher.group(2)), null, null,
                 null, null, null, null, null, null, null, null);
         }
 
@@ -298,6 +299,12 @@ public final class BilibiliCommandParser {
             result = result * 10 + digit(normalized.charAt(i));
         }
         return result;
+    }
+
+    private static int parseIndex(String value) {
+        return value.matches("\\d{1,2}")
+            ? Integer.parseInt(value)
+            : chineseNumber(value);
     }
 
     private static int digit(char value) {

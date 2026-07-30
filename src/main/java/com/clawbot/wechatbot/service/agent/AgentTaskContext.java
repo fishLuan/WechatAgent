@@ -1,13 +1,15 @@
 package com.clawbot.wechatbot.service.agent;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /** 传给任务处理器的只读执行上下文。 */
 public record AgentTaskContext(
     String history,
     String supportingContext,
-    Map<String, AgentTaskResult> dependencyResults
+    Map<String, AgentTaskResult> dependencyResults,
+    List<AgentInputAttachment> inputAttachments
 ) {
     public AgentTaskContext {
         history = history == null ? "" : history;
@@ -15,6 +17,17 @@ public record AgentTaskContext(
         dependencyResults = dependencyResults == null
             ? Map.of()
             : Map.copyOf(new LinkedHashMap<>(dependencyResults));
+        inputAttachments = inputAttachments == null
+            ? List.of()
+            : List.copyOf(inputAttachments);
+    }
+
+    public AgentTaskContext(
+        String history,
+        String supportingContext,
+        Map<String, AgentTaskResult> dependencyResults
+    ) {
+        this(history, supportingContext, dependencyResults, List.of());
     }
 
     public String dependencyText() {

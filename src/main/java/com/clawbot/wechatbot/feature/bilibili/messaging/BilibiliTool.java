@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
+import com.clawbot.wechatbot.service.agent.AgentRequestContextHolder;
 import com.clawbot.wechatbot.tools.FunctionTool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,18 +22,19 @@ import java.util.Set;
 @Component
 public final class BilibiliTool implements FunctionTool {
     public static final String TOOL_NAME = "bilibili_manage";
-    public static final InheritableThreadLocal<String> CURRENT_USER_ID =
-        new InheritableThreadLocal<>();
 
     private final BilibiliCommandHandler commands;
     private final ObjectMapper mapper;
+    private final AgentRequestContextHolder requestContextHolder;
 
     public BilibiliTool(
         BilibiliCommandHandler commands,
-        ObjectMapper mapper
+        ObjectMapper mapper,
+        AgentRequestContextHolder requestContextHolder
     ) {
         this.commands = commands;
         this.mapper = mapper;
+        this.requestContextHolder = requestContextHolder;
     }
 
     @Override
@@ -96,8 +98,8 @@ public final class BilibiliTool implements FunctionTool {
 
     @Override
     public String execute(JsonNode arguments) {
-        String userId = CURRENT_USER_ID.get();
-        if (userId == null || userId.isBlank()) {
+        String userId = requestContextHolder.currentUserId();
+        if (userId.isBlank()) {
             return result(false, "当前工具调用缺少微信用户上下文");
         }
         String action = text(arguments, "action");
