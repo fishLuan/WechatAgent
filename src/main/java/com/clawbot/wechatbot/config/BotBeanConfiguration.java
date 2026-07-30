@@ -4,6 +4,9 @@ import com.clawbot.wechatbot.base.MessageHandler;
 import com.clawbot.wechatbot.handler.DocumentMessageHandler;
 import com.clawbot.wechatbot.handler.ImageMessageHandler;
 import com.clawbot.wechatbot.handler.TextMessageHandler;
+import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliLinkMessageHandler;
+import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliMessageFormatter;
+import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.memory.MemoryProperties;
 import com.clawbot.wechatbot.notification.DingTalkNotificationService;
@@ -317,6 +320,19 @@ public class BotBeanConfiguration {
     MessageHandler documentMessageHandler(DeepSeekChatService singleTaskChatService,
                                           DocumentService documents) {
         return new DocumentMessageHandler(singleTaskChatService, documents);
+    }
+
+    @Bean
+    BilibiliMessageFormatter bilibiliMessageFormatter() {
+        return new BilibiliMessageFormatter();
+    }
+
+    @Bean
+    MessageHandler bilibiliLinkMessageHandler(
+        BilibiliContentSource contentSource,
+        BilibiliMessageFormatter formatter
+    ) {
+        return new BilibiliLinkMessageHandler(contentSource, formatter);
     }
 
     @Bean

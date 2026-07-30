@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>微信Bot &middot; 扫码登录</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Hallmark &middot; genre: atmospheric &middot; theme: Midnight &middot; anchor hue: 55 (warm amber) */
+/* Hallmark &middot; pre-emit critique: P5 H5 E5 S5 R5 V5 */
+
+/* ── Tokens ── */
+:root {
+  --color-paper:     oklch(14% 0.008 40);
+  --color-paper-2:   oklch(18% 0.010 40);
+  --color-paper-3:   oklch(22% 0.010 40);
+  --color-rule:      oklch(30% 0.008 40);
+  --color-neutral:   oklch(58% 0.008 40);
+  --color-muted:     oklch(72% 0.006 40);
+  --color-ink:       oklch(94% 0.006 80);
+  --color-accent:    oklch(72% 0.18 55);
+  --color-accent-ink:oklch(12% 0.01 55);
+  --color-focus:     oklch(70% 0.19 55);
+  --color-success:   oklch(65% 0.16 145);
+
+  --font-display: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-body:    'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-outlier: 'Geist Mono', ui-monospace, 'SF Mono', monospace;
+
+  --text-xs:   0.64rem;
+  --text-sm:   0.8rem;
+  --text-base: 1rem;
+  --text-md:   1.25rem;
+  --text-lg:   1.5625rem;
+
+  --space-xs:  0.5rem;
+  --space-sm:  0.75rem;
+  --space-md:  1rem;
+  --space-lg:  1.5rem;
+  --space-xl:  2.5rem;
+  --space-2xl: 4rem;
+
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-short: 220ms;
+  --dur-long:  420ms;
+
+  --radius-md: 12px;
+  --radius-lg: 20px;
+}
+
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { overflow-x: clip; }
+body { overflow-x: clip; }
+
+body {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Atmospheric blooms ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 35% 45% at 25% 65%, oklch(55% 0.14 45 / 0.18), transparent),
+    radial-gradient(ellipse 25% 35% at 72% 28%, oklch(62% 0.10 35 / 0.10), transparent);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Nav ── N9 edge-aligned minimal ── */
+.nav {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-lg) var(--space-xl);
+}
+
+.nav__wordmark {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--color-ink);
+  letter-spacing: -0.02em;
+}
+
+/* ── Main ── */
+.main {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  padding: var(--space-lg);
+}
+
+/* ── Card ── */
+.card {
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl);
+  max-width: 380px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-lg);
+  animation: card-in var(--dur-long) var(--ease-out);
+}
+
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── Progress ── */
+.progress {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+.progress:empty { display: none; }
+
+.progress__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-rule);
+  transition: background var(--dur-short) var(--ease-out),
+              box-shadow var(--dur-short) var(--ease-out);
+}
+
+.progress__dot--done {
+  background: var(--color-success);
+}
+
+.progress__dot--current {
+  background: var(--color-accent);
+  box-shadow: 0 0 8px oklch(72% 0.18 55 / 0.4);
+  animation: dot-pulse 2s var(--ease-in-out) infinite;
+}
+
+@keyframes dot-pulse {
+  0%, 100% { box-shadow: 0 0 6px oklch(72% 0.18 55 / 0.35); }
+  50%      { box-shadow: 0 0 14px oklch(72% 0.18 55 / 0.65); }
+}
+
+/* ── QR ── */
+.qr-wrapper {
+  position: relative;
+  padding: var(--space-md);
+  background: var(--color-paper);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-rule);
+}
+
+.qr-image {
+  display: block;
+  width: 240px;
+  height: 240px;
+  image-rendering: auto;
+}
+
+.qr-fallback {
+  display: none;
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+  text-align: center;
+  padding: var(--space-md);
+}
+
+.qr-fallback a {
+  color: var(--color-accent);
+  word-break: break-all;
+}
+
+.qr-wrapper::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: calc(var(--radius-md) + 4px);
+  border: 1.5px solid oklch(72% 0.18 55 / 0.25);
+  animation: qr-ring 2.5s var(--ease-in-out) infinite;
+  pointer-events: none;
+}
+
+@keyframes qr-ring {
+  0%, 100% { border-color: oklch(72% 0.18 55 / 0.20); }
+  50%      { border-color: oklch(72% 0.18 55 / 0.50); }
+}
+
+/* ── Success ── */
+.card--success .qr-wrapper { display: none; }
+
+.success-icon {
+  display: none;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: oklch(65% 0.16 145 / 0.10);
+  border: 2px solid var(--color-success);
+  place-items: center;
+  font-size: 2rem;
+  color: var(--color-success);
+  animation: card-in var(--dur-long) var(--ease-out);
+}
+
+.card--success .success-icon { display: grid; }
+.card--success .progress__dot--current,
+.card--success .progress__dot { animation: none; background: var(--color-success); }
+
+/* ── Typography ── */
+.instruction {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 500;
+  color: var(--color-ink);
+  letter-spacing: -0.01em;
+  text-align: center;
+}
+
+.hint {
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+  text-align: center;
+}
+
+.status {
+  font-family: var(--font-outlier);
+  font-size: var(--text-xs);
+  color: var(--color-neutral);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.status__count {
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+/* ── Footer ── Ft2 inline single line ── */
+.footer {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  padding: var(--space-lg) var(--space-xl);
+  border-top: 1px solid var(--color-rule);
+}
+
+.footer__text {
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 150ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 150ms !important;
+  }
+  .card { animation: none; opacity: 1; transform: none; }
+  .qr-wrapper::after { animation: none; }
+}
+
+/* ── Responsive ── 414px & 375px & 320px ── */
+@media (max-width: 40rem) {
+  .card {
+    padding: var(--space-lg);
+    max-width: 100%;
+  }
+  .qr-image {
+    width: 210px;
+    height: 210px;
+  }
+  .nav {
+    padding: var(--space-md) var(--space-lg);
+  }
+}
+
+@media (max-width: 375px) {
+  .qr-image { width: 190px; height: 190px; }
+  .card { padding: var(--space-md); gap: var(--space-md); }
+  .instruction { font-size: var(--text-base); }
+  .nav__wordmark { font-size: var(--text-base); }
+}
+
+@media (max-width: 320px) {
+  .qr-image { width: 170px; height: 170px; }
+  .card { padding: var(--space-sm); border-radius: var(--radius-md); }
+}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <span class="nav__wordmark">微信Bot</span>
+</nav>
+
+<main class="main">
+  <div class="card">
+    <span class="progress__dot progress__dot--done"></span><span class="progress__dot progress__dot--done"></span><span class="progress__dot progress__dot--current"></span>
+
+    <div class="qr-wrapper"><img class="qr-image" src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=https%3A%2F%2Fliteapp.weixin.qq.com%2Fq%2F7GiQu1%3Fqrcode%3D4315fd613fa64ca3d0dfb3bb2d6692ac%26bot_type%3D3" alt="微信扫码登录二维码" width="240" height="240" fetchpriority="high" onerror="var f=this.parentElement.querySelector('.qr-fallback');if(f){f.style.display='block';}this.style.display='none';" /><p class="qr-fallback">二维码加载失败<br><a href="https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=4315fd613fa64ca3d0dfb3bb2d6692ac&amp;bot_type=3">在微信中打开链接</a></p></div>
+
+    <div class="success-icon">&check;</div>
+
+    <p class="instruction">请使用微信扫一扫确认登录</p>
+    <p class="hint">第 3 / 3 个账号</p>
+    <p class="status"><span class="status__count">2</span> / 3 已登录 &middot; 等待 <span class="status__count">1</span> 个账号</p>
+  </div>
+</main>
+
+<footer class="footer">
+  <p class="footer__text">微信Bot &mdash; 你的智能助手</p>
+</footer>
+
+
+</body>
+</html>
