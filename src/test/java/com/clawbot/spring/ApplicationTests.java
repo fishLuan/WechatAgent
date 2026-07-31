@@ -70,7 +70,7 @@ class ApplicationTests {
 
     @Test
     void contextLoads() {
-        assertEquals(11, toolRegistry.size());
+        assertEquals(13, toolRegistry.size());
         assertEquals(5, handlers.size());
         assertEquals(2, agentTaskHandlers.size());
         assertTrue(toolRegistry.definitions().findValuesAsText("name").contains("convert_currency"));
