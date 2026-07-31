@@ -14,6 +14,7 @@ import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionView;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliPreferenceService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliRecommendationService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.RecommendationHistoryService;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliContentRepository;
 import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
 import com.clawbot.wechatbot.scheduler.controller.SchedulerControlService;
@@ -23,7 +24,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -44,6 +48,7 @@ public class BilibiliCommandHandler {
     private final BilibiliContentSource contentSource;
     private final BilibiliProperties properties;
     private final RecommendationHistoryService historyService;
+    private final BilibiliContentRepository contentRepository;
 
     public BilibiliCommandHandler(
         @Lazy BilibiliSubscriptionService subscriptionService,
@@ -54,7 +59,8 @@ public class BilibiliCommandHandler {
         ObjectMapper objectMapper,
         BilibiliContentSource contentSource,
         BilibiliProperties properties,
-        RecommendationHistoryService historyService
+        RecommendationHistoryService historyService,
+        BilibiliContentRepository contentRepository
     ) {
         this.subscriptionService = subscriptionService;
         this.recommendationService = recommendationService;
@@ -65,6 +71,7 @@ public class BilibiliCommandHandler {
         this.contentSource = contentSource;
         this.properties = properties;
         this.historyService = historyService;
+        this.contentRepository = contentRepository;
     }
 
     /* ========== 入口：统一字符串处理（Handler 直接调这个） ========== */
@@ -90,6 +97,8 @@ public class BilibiliCommandHandler {
             case TOGGLE_PUSH -> handleTogglePush(userId, cmd.contentType(), cmd.pushEnabled());
             case SHOW_PREFERENCES -> handleShowPreference(userId);
             case CHECK_UPDATES_NOW -> handleCheckUpdatesNow(userId);
+            case TODAY_UPDATES_ANIME -> handleTodayUpdates(userId, ContentType.BANGUMI);
+            case TODAY_UPDATES_SERIES -> handleTodayUpdates(userId, ContentType.SERIES);
             case SEARCH_BY_TITLE ->
                 handleSearchByTitle(userId, cmd.fieldValue());
             case UNKNOWN -> "【UNHANDLED-BILIBILI-UNKNOWN】";  // 交给 AI
@@ -529,6 +538,47 @@ public class BilibiliCommandHandler {
                 r.checkedCount(), r.updateCount(), r.updates());
         } catch (Exception e) {
             return logAndReturn("检查更新失败", e);
+        }
+    }
+
+    /* ========== 8. 今日更新推荐 ========== */
+    public String handleTodayUpdates(String userId, ContentType contentType) {
+        sessionRegistry.markActive(userId);
+        if (contentType == null) contentType = ContentType.BANGUMI;
+        try {
+            List<BilibiliContent> updatedToday;
+            ZoneId bj = ZoneId.of("Asia/Shanghai");
+            Instant todayStart = LocalDate.now(bj).atStartOfDay(bj).toInstant();
+
+            // 1) DB 查有 pubTime 的今日数据（最准确）
+            updatedToday = contentRepository.findTodayUpdates(contentType, todayStart);
+            if (updatedToday != null && !updatedToday.isEmpty()) {
+                System.out.println("[BILIBILI] DB pubTime 查询命中 " + updatedToday.size() + " 条");
+            } else {
+                // 2) B站 PGC 索引 st=2（连载中），方法内部已过滤 finished + 集数
+                try {
+                    updatedToday = contentSource.findTodayAiring(contentType);
+                    System.out.println("[BILIBILI] st=2 返回 "
+                        + (updatedToday == null ? 0 : updatedToday.size()) + " 条");
+                } catch (Exception e) {
+                    System.err.println("[BILIBILI] st=2 失败: " + e.getMessage());
+                }
+            }
+
+            if (updatedToday == null || updatedToday.isEmpty()) {
+                return "📭 今天暂时没有" + typeNameOf(contentType) + "更新哦～\n可能B站还没上新，晚点再来看看吧！";
+            }
+
+            int totalCount = updatedToday.size();
+            int count = resolveDefaultCount(userId, contentType);
+            List<String> excluded = historyService.findExcludedContentIds(userId, contentType);
+            List<BilibiliContent> filtered = updatedToday.stream()
+                .filter(c -> !excluded.contains(c.getContentId()))
+                .limit(count)
+                .toList();
+            return BilibiliMessageFormatter.formatTodayUpdates(contentType, totalCount, filtered);
+        } catch (Exception e) {
+            return logAndReturn("获取今日更新失败", e);
         }
     }
 

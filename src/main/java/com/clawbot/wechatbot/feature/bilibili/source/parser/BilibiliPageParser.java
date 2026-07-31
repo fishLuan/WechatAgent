@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.MissingNode;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashSet;
@@ -205,11 +206,21 @@ public class BilibiliPageParser {
         JsonNode episodes = result.path("episodes");
         if (episodes.isArray() && episodes.size() > 0) {
             JsonNode latest = episodes.get(episodes.size() - 1);
+            Instant pubTime = parseEpisodePubTime(latest);
             dto.setLatestEpisode(new BilibiliEpisodeDto(
                 text(latest, "id", text(latest, "ep_id", "")),
                 text(latest, "long_title", text(latest, "title", "")),
                 intValue(latest.path("title")),
-                text(latest, "link", pageUrl)));
+                text(latest, "link", pageUrl),
+                pubTime));
+            dto.setLatestEpisodePubTime(pubTime);
+        }
+        // episodes 数组里 pub_ts 常为 0，顶层 new_ep 才有真正的发布时间
+        if (dto.getLatestEpisodePubTime() == null) {
+            JsonNode newEp = result.path("new_ep");
+            if (!newEp.isMissingNode() && !newEp.isNull()) {
+                dto.setLatestEpisodePubTime(parseEpisodePubTime(newEp));
+            }
         }
         Integer isFinish = intValue(result.path("is_finish"));
         dto.setFinished(Integer.valueOf(1).equals(isFinish)
@@ -309,5 +320,49 @@ public class BilibiliPageParser {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    private Instant parseEpisodePubTime(JsonNode episode) {
+        if (episode == null || episode.isMissingNode()) return null;
+        // pub_ts: Unix 秒级时间戳
+        JsonNode pubTs = episode.path("pub_ts");
+        if (pubTs.isLong() || pubTs.isInt()) {
+            long ts = pubTs.asLong();
+            if (ts > 0) {
+                return Instant.ofEpochSecond(ts);
+            }
+        }
+        // pub_time: "2024-07-31 12:00:00" 格式字符串
+        JsonNode pubTime = episode.path("pub_time");
+        if (pubTime.isTextual()) {
+            String text = pubTime.asText().trim();
+            if (!text.isBlank()) {
+                try {
+                    return Instant.from(
+                        java.time.format.DateTimeFormatter
+                            .ofPattern("yyyy-MM-dd HH:mm:ss")
+                            .withZone(java.time.ZoneId.of("Asia/Shanghai"))
+                            .parse(text));
+                } catch (Exception firstTry) {
+                    // 尝试只有日期格式 "2024-07-31"
+                    try {
+                        java.time.LocalDate ld = java.time.LocalDate.parse(text,
+                            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+                        return ld.atStartOfDay(java.time.ZoneId.of("Asia/Shanghai")).toInstant();
+                    } catch (Exception ignored) {}
+                    System.err.println("[BILIBILI] pub_time 解析失败: '" + text + "' " + firstTry.getMessage());
+                }
+            }
+        }
+        // 尝试 pub_index_text（有些 API 用这个字段）
+        JsonNode pubIndexText = episode.path("pub_index_text");
+        if (pubIndexText.isMissingNode()) pubIndexText = episode.path("pub_time_text");
+        if (pubIndexText.isTextual()) {
+            String text = pubIndexText.asText().trim();
+            if (!text.isBlank()) {
+                System.err.println("[BILIBILI] pub_index_text = '" + text + "'");
+            }
+        }
+        return null;
     }
 }

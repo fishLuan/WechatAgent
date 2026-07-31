@@ -33,15 +33,31 @@ public class BilibiliTool implements FunctionTool {
         ObjectNode func = root.putObject("function");
         func.put("name", TOOL_NAME);
         func.put("description",
-            "B站动漫/剧集/电视剧/电影推荐和追更订阅管理工具。当用户表达以下任何意图时调用：\n" +
-            "1) 想看今日推荐、高分推荐、找好看的动漫番剧/连载电视剧/院线电影（包含模糊表达如『最近有啥好看的番』『找点热血漫』『9分以上治愈电影』『最近热播的剧』『好看的国产剧推荐』）\n" +
-            "2) 用户发送了B站作品链接（bilibili.com 或 b23.tv），想订阅/追更该作品\n" +
-            "3) 用户想订阅/取消/暂停/恢复某个推荐编号的作品（『昨天推荐的第2个帮我订上』『取消第三个订阅』）\n" +
-            "4) 用户想按推荐编号或作品名标记『想看』『看过』『不喜欢』（『看过3』『已经看过航海王：红发歌姬』）\n" +
-            "5) 用户想设置动漫/电影的每日推送时间、最低评分、推荐数量（『动漫改成每天21点推』『电影最低分调到9.0』）\n" +
-            "6) 用户想开启/关闭每日推送、查看自己的偏好设置\n" +
-            "7) 用户想查看自己订阅了哪些作品、想立即检查有没有新集更新\n" +
-            "8) 用户按作品名搜索或订阅，例如『搜索老友记』『我想订阅紫罗兰的永恒花园』\n" +
+            "B站动漫/剧集/电影推荐和追更订阅管理工具。当用户意图涉及B站内容时调用。\n" +
+            "\n" +
+            "【推荐类 action】推荐高分作品，不关心更新日期：\n" +
+            "- recommend_anime：用户想看动漫推荐/高分番剧/找好看的番（『最近有啥好看的番』『推荐几部热血番』『找点好看的动漫』『今日动漫推荐』『动漫推荐』）\n" +
+            "- recommend_movie：用户想看B站电影推荐（『推荐几部电影』『有什么好看的电影』）\n" +
+            "- recommend_series：用户想看B站电视剧/剧集推荐（『推荐几部剧』『有啥好看的国产剧』）\n" +
+            "\n" +
+            "【今日更新类 action】严格只看今天新上线的集数，不关心评分：\n" +
+            "- today_updates_anime：用户明确想看『今天更新了哪些动漫』『今天有什么新番』『今日更新的番剧』『今天上了什么动漫』——关键词是「今天/今日」+「更新/上新/新」+「番/动漫」\n" +
+            "- today_updates_series：同上但针对电视剧/剧集（『今天更新了哪些剧』）\n" +
+            "\n" +
+            "【订阅管理类 action】\n" +
+            "- subscribe_by_url：用户发了B站链接想追更\n" +
+            "- subscribe_by_index：用户按推荐编号订阅（『订阅第2个』）\n" +
+            "- subscribe_by_title：用户按作品名订阅（『订阅鬼灭之刃』）\n" +
+            "- search_by_title：用户按作品名搜索\n" +
+            "- list_subscriptions：查看我的订阅列表\n" +
+            "- cancel/pause/resume_subscription：取消/暂停/恢复订阅\n" +
+            "- check_updates_now：立即检查我的订阅有没有更新\n" +
+            "\n" +
+            "【标记类 action】mark_want_to_watch/mark_watched/mark_disliked（按编号或按标题）\n" +
+            "\n" +
+            "【设置类 action】set_push_time/set_min_rating/set_recommend_count/toggle_push_on/toggle_push_off/show_preferences\n" +
+            "\n" +
+            "⚠️ 重要区分：『今日推荐』/『推荐』→ recommend_anime；『今日更新』/『今天更新了什么』/『今天有什么新番』→ today_updates_anime。\n" +
             "注意：该工具不需要传user_id，系统自动识别当前对话用户。");
 
         ObjectNode params = func.putObject("parameters");
@@ -61,8 +77,17 @@ public class BilibiliTool implements FunctionTool {
              .add("mark_watched_by_title").add("mark_disliked_by_title")
              .add("set_push_time").add("set_min_rating").add("set_recommend_count")
              .add("toggle_push_on").add("toggle_push_off")
-             .add("show_preferences").add("check_updates_now");
-        action.put("description", "操作类型：recommend_anime=动漫推荐 / recommend_movie=电影推荐 / recommend_series=剧集电视剧推荐");
+             .add("show_preferences").add("check_updates_now")
+             .add("today_updates_anime").add("today_updates_series");
+        action.put("description",
+            "操作类型：\n" +
+            "recommend_anime=高分动漫推荐（与更新日期无关）/ recommend_movie=电影推荐 / recommend_series=剧集推荐\n" +
+            "today_updates_anime=今日新更新的动漫（只看今天上线的新集）/ today_updates_series=今日新更新的剧集\n" +
+            "subscribe_by_url/by_index/by_title=订阅追更 / search_by_title=搜索作品\n" +
+            "list_subscriptions/cancel_subscription/pause_subscription/resume_subscription=订阅管理\n" +
+            "mark_want_to_watch/mark_watched/mark_disliked=按编号标记 / mark_xxx_by_title=按作品名标记\n" +
+            "set_push_time/set_min_rating/set_recommend_count=偏好设置\n" +
+            "toggle_push_on/toggle_push_off=开关推送 / show_preferences=查看偏好 / check_updates_now=检查订阅更新");
 
         ObjectNode urlNode = props.putObject("bilibili_url");
         urlNode.put("type", "string");
@@ -169,6 +194,8 @@ public class BilibiliTool implements FunctionTool {
                 case "toggle_push_off" -> commandHandler.handleTogglePush(userId, parseType(args), false);
                 case "show_preferences" -> commandHandler.handleShowPreference(userId);
                 case "check_updates_now" -> commandHandler.handleCheckUpdatesNow(userId);
+                case "today_updates_anime" -> commandHandler.handleTodayUpdates(userId, ContentType.BANGUMI);
+                case "today_updates_series" -> commandHandler.handleTodayUpdates(userId, ContentType.SERIES);
                 default -> throw new IllegalArgumentException(
                     "未知操作类型：" + action);
             };

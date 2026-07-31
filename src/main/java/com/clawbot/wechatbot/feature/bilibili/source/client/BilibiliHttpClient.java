@@ -103,6 +103,8 @@ public class BilibiliHttpClient {
             .header("User-Agent", USER_AGENT)
             .header("Accept", "application/json,text/html;q=0.9,*/*;q=0.8")
             .header("Accept-Language", "zh-CN,zh;q=0.9")
+            .header("Referer", "https://www.bilibili.com")
+            .header("Origin", "https://www.bilibili.com")
             .GET()
             .build();
     }

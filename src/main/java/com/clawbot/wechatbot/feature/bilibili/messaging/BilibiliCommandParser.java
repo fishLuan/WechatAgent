@@ -13,6 +13,8 @@ public class BilibiliCommandParser {
         TODAY_RECOMMEND_ANIME,
         TODAY_RECOMMEND_MOVIE,
         TODAY_RECOMMEND_SERIES,
+        TODAY_UPDATES_ANIME,
+        TODAY_UPDATES_SERIES,
         SUBSCRIBE_BY_INDEX,
         MARK_WANT_TO_WATCH,
         MARK_WATCHED,
@@ -80,6 +82,9 @@ public class BilibiliCommandParser {
 
     private static final Pattern CHECK_NOW = Pattern.compile(
         "^(立即|马上|现在)?\\s*(检查更新|刷新更新|扫一下更新)\\s*$");
+
+    private static final Pattern TODAY_UPDATES = Pattern.compile(
+        "^(?:今天|今日|现在).*?(?:更新|上新|出了|上线|新番|新动漫).*?(动漫|番剧|番(?!茄|号)|剧集|电视剧|剧)(?:呢|吗|啊|呀)?\\s*$");
 
     private static final Pattern SEARCH_BY_TITLE = Pattern.compile(
         "^(?:搜索|查找|搜一下|找一下|帮我找(?:一下)?)\\s*(?:B站)?\\s*(.+?)\\s*$");
@@ -194,6 +199,14 @@ public class BilibiliCommandParser {
                 null, null, null, null, null, null, null);
         }
 
+        // 11. 今日更新（"今天更新了哪些动漫"/"今日更新的番"/"今天有什么新番"）
+        m = TODAY_UPDATES.matcher(t);
+        if (m.find()) {
+            ContentType ct = parseContentType(m.group(1));
+            CmdType ty = ct == ContentType.SERIES ? CmdType.TODAY_UPDATES_SERIES : CmdType.TODAY_UPDATES_ANIME;
+            return new ParsedCommand(ty, null, null, ct, null, null, null, null);
+        }
+
         m = SEARCH_BY_TITLE.matcher(t);
         if (m.find() && !m.group(1).isBlank()) {
             return new ParsedCommand(CmdType.SEARCH_BY_TITLE,
@@ -223,7 +236,37 @@ public class BilibiliCommandParser {
                 null, null, null, m.group(), null, null, null);
         }
 
-        // ========= 第4优先级（兜底）：今日推荐宽松匹配（未命中任何结构才到这） =========
+        // ========= 第4优先级（兜底）：今日更新/推荐宽松匹配 =========
+
+        // 4a. 先检查是否为"今日更新"类（"今日新番"/"今天更新的动漫"/"有什么新番"）
+        boolean isTodayUpdate = t.startsWith("今天") || t.startsWith("今日");
+        boolean hasUpdateKeyword = t.contains("更新") || t.contains("上新")
+            || t.contains("新番") || t.contains("新动漫")
+            || t.contains("新的番") || t.contains("新的动漫")
+            || t.contains("有什么新") || t.contains("有啥新");
+        boolean isBangumi = t.contains("动漫") || t.contains("番剧")
+            || t.contains("番") && !t.contains("番号") && !t.contains("番茄");
+        boolean isSeries = t.contains("剧集") || t.contains("电视剧")
+            || (t.contains("剧") && !t.contains("番剧") && !t.contains("剧场")
+                && !t.contains("喜剧") && !t.contains("剧情") && !t.contains("悲剧")
+                && !t.contains("闹剧") && !t.contains("恶作剧"));
+
+        if (isTodayUpdate && hasUpdateKeyword) {
+            if (isBangumi && !isSeries) {
+                return new ParsedCommand(CmdType.TODAY_UPDATES_ANIME,
+                    null, null, ContentType.BANGUMI, null, null, null, null);
+            }
+            if (isSeries && !isBangumi) {
+                return new ParsedCommand(CmdType.TODAY_UPDATES_SERIES,
+                    null, null, ContentType.SERIES, null, null, null, null);
+            }
+            if (isBangumi) {
+                return new ParsedCommand(CmdType.TODAY_UPDATES_ANIME,
+                    null, null, ContentType.BANGUMI, null, null, null, null);
+            }
+        }
+
+        // 4b. 旧有的推荐兜底
         boolean hasIntent = t.matches(".*?(推荐|推|好看|看看|有啥|找点|看点|来点|找|有没有|推荐一下|有什么|推荐点).*")
             || t.endsWith("看看") || t.endsWith("呗") || t.endsWith("啊") || t.endsWith("呢");
         boolean hasBangumi =
