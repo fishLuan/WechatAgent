@@ -54,7 +54,6 @@ public final class BilibiliTool implements FunctionTool {
         ObjectNode parameters = function.putObject("parameters");
         parameters.put("type", "object");
         ObjectNode properties = parameters.putObject("properties");
-
         ObjectNode action = properties.putObject("action");
         action.put("type", "string");
         ArrayNode values = action.putArray("enum");
@@ -67,7 +66,8 @@ public final class BilibiliTool implements FunctionTool {
             "mark_disliked_by_title", "set_push_time",
             "set_min_rating", "set_recommend_count",
             "enable_push", "disable_push",
-            "exclude_push_days", "restore_push_days"
+            "exclude_push_days", "restore_push_days",
+            "today_updates_anime", "today_updates_series"
         }) values.add(value);
         properties.putObject("content_type")
             .put("type", "string")
@@ -77,19 +77,16 @@ public final class BilibiliTool implements FunctionTool {
         properties.putObject("index").put("type", "integer");
         properties.putObject("push_time_hhmm")
             .put("type", "string")
-            .put("description", "HH:mm格式，例如22:10");
+            .put("description", "HH:mm格式");
         properties.putObject("minimum_rating").put("type", "number");
         properties.putObject("recommend_count").put("type", "integer");
         ObjectNode weekdays = properties.putObject("weekdays");
         weekdays.put("type", "array");
-        weekdays.put("description",
-            "要排除或恢复的星期，例如[monday,saturday]；仅影响每日推荐");
+        weekdays.put("description", "要排除的星期，如[monday,saturday]");
         ArrayNode weekdayValues = weekdays.putObject("items")
-            .put("type", "string")
-            .putArray("enum");
+            .put("type", "string").putArray("enum");
         for (String day : new String[] {
-            "monday", "tuesday", "wednesday", "thursday",
-            "friday", "saturday", "sunday"
+            "monday","tuesday","wednesday","thursday","friday","saturday","sunday"
         }) weekdayValues.add(day);
         parameters.putArray("required").add("action");
         parameters.put("additionalProperties", false);
@@ -167,6 +164,10 @@ public final class BilibiliTool implements FunctionTool {
                 case "restore_push_days" ->
                     commands.handleWeekdayPushPolicy(
                         userId, optionalType(arguments), weekdays(arguments), false);
+                case "today_updates_anime" ->
+                    commands.handleTodayUpdates(userId, ContentType.BANGUMI);
+                case "today_updates_series" ->
+                    commands.handleTodayUpdates(userId, ContentType.SERIES);
                 default -> throw new IllegalArgumentException(
                     "未知操作类型：" + action);
             };

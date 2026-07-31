@@ -14,15 +14,21 @@ import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliPreferenceS
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliRecommendationService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.RecommendationHistoryService;
 import com.clawbot.wechatbot.feature.bilibili.rag.BilibiliRagService;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliContentRepository;
 import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
 import com.clawbot.wechatbot.scheduler.controller.SchedulerControlService;
+import com.clawbot.wechatbot.scheduler.model.ScheduledSubscription;
+import com.clawbot.wechatbot.scheduler.model.TaskType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.time.DayOfWeek;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
@@ -46,6 +52,9 @@ public final class BilibiliCommandHandler {
     private final RecommendationHistoryService history;
     private final PendingSearchResultStore pendingSearchResults;
     private final BilibiliRagService ragService;
+    private final BilibiliContentRepository contentRepository;
+    private final SchedulerControlService schedulerService;
+    private final ObjectMapper objectMapper;
 
     public BilibiliCommandHandler(
         @Lazy BilibiliSubscriptionService subscriptions,
@@ -58,7 +67,8 @@ public final class BilibiliCommandHandler {
         BilibiliProperties properties,
         RecommendationHistoryService history,
         PendingSearchResultStore pendingSearchResults,
-        BilibiliRagService ragService
+        BilibiliRagService ragService,
+        BilibiliContentRepository contentRepository
     ) {
         this.subscriptions = subscriptions;
         this.recommendations = recommendations;
@@ -69,6 +79,9 @@ public final class BilibiliCommandHandler {
         this.history = history;
         this.pendingSearchResults = pendingSearchResults;
         this.ragService = ragService;
+        this.contentRepository = contentRepository;
+        this.schedulerService = ignoredScheduler;
+        this.objectMapper = ignoredMapper;
     }
 
     public String handle(String userId, String input) {
@@ -129,6 +142,10 @@ public final class BilibiliCommandHandler {
                 case CHECK_UPDATES_NOW ->
                     BilibiliMessageFormatter.formatCheckResult(
                         subscriptions.checkNow(userId));
+                case TODAY_UPDATES_ANIME ->
+                    handleTodayUpdates(userId, ContentType.BANGUMI);
+                case TODAY_UPDATES_SERIES ->
+                    handleTodayUpdates(userId, ContentType.SERIES);
                 case RAG_QA ->
                     ragService.answer(userId, command.title(), command.contentType());
                 case RAG_SIMILAR ->
@@ -498,5 +515,121 @@ public final class BilibiliCommandHandler {
             ? error.getClass().getSimpleName() : error.getMessage();
         System.err.println("[BILIBILI] " + action + "：" + reason);
         return "❌ " + action + "：" + reason;
+    }
+
+    /* ========== 8. 今日更新推荐 ========== */
+    public String handleTodayUpdates(String userId, ContentType contentType) {
+        sessions.markActive(userId);
+        if (contentType == null) contentType = ContentType.BANGUMI;
+        try {
+            List<BilibiliContent> updatedToday;
+            ZoneId bj = ZoneId.of("Asia/Shanghai");
+            Instant todayStart = LocalDate.now(bj).atStartOfDay(bj).toInstant();
+
+            updatedToday = contentRepository.findTodayUpdates(contentType, todayStart);
+            if (updatedToday != null && !updatedToday.isEmpty()) {
+                System.out.println("[BILIBILI] DB pubTime 查询命中 " + updatedToday.size() + " 条");
+            } else {
+                try {
+                    updatedToday = contentSource.findTodayAiring(contentType);
+                    System.out.println("[BILIBILI] PGC 索引返回 "
+                        + (updatedToday == null ? 0 : updatedToday.size()) + " 条");
+                } catch (Exception e) {
+                    System.err.println("[BILIBILI] PGC 索引失败: " + e.getMessage());
+                }
+            }
+
+            if (updatedToday == null || updatedToday.isEmpty()) {
+                return "📭 今天暂时没有" + typeNameOf(contentType) + "更新哦～\n可能B站还没上新，晚点再来看看吧！";
+            }
+
+            int totalCount = updatedToday.size();
+            int count = resolveDefaultCount(userId, contentType);
+            List<String> excluded = history.findExcludedContentIds(userId, contentType);
+            List<BilibiliContent> filtered = updatedToday.stream()
+                .filter(c -> !excluded.contains(c.getContentId()))
+                .limit(count)
+                .toList();
+            return BilibiliMessageFormatter.formatTodayUpdates(contentType, totalCount, filtered);
+        } catch (Exception e) {
+            return failure("获取今日更新失败", e);
+        }
+    }
+
+    private int resolveDefaultCount(String userId, ContentType contentType) {
+        try {
+            BilibiliPreference p = preferences.getOrCreate(userId, contentType);
+            return Math.max(1, p.getRecommendationCount());
+        } catch (Exception e) {
+            return 3;
+        }
+    }
+
+    /* ========== 工具方法 ========== */
+    public void syncRecommendationSchedule(String userId, ContentType contentType, LocalTime pushTime) {
+        if (userId == null || contentType == null || pushTime == null) return;
+        try {
+            // TODO: 等角色一在 TaskType 枚举里加上 BILIBILI_DAILY_ANIME / BILIBILI_DAILY_MOVIE 后放开
+            TaskType taskType = resolveBilibiliTaskType(contentType);
+            if (taskType == null) return;
+
+            try {
+                List<ScheduledSubscription> all = schedulerService.listByUser(userId);
+                if (all != null) {
+                    for (ScheduledSubscription s : all) {
+                        if (taskType.equals(s.getTaskType())) {
+                            try { schedulerService.cancelBySubscriptionId(s.getId(), userId); } catch (Exception ignored) {}
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            String cron = "0 " + pushTime.getMinute() + " " + pushTime.getHour() + " * * ?";
+            ScheduledSubscription sub = new ScheduledSubscription();
+            sub.setUserId(userId);
+            sub.setTaskType(taskType);
+            sub.setCronExpression(cron);
+            try {
+                java.util.Map<String, String> p = new java.util.HashMap<>();
+                p.put("bilibili_content_type", contentType.name());
+                sub.setParamsJson(objectMapper.writeValueAsString(p));
+            } catch (Exception ignored) {}
+            sub.setEnabled(true);
+            schedulerService.createOrUpdate(sub);
+            System.out.println("[BILIBILI-SYNC-SCHEDULE] user=" + userId + " type=" + contentType
+                + " cron=" + cron);
+        } catch (Exception e) {
+            System.err.println("[BILIBILI-SYNC-SCHEDULE] 失败: " + e.getMessage());
+        }
+    }
+
+    private TaskType resolveBilibiliTaskType(ContentType contentType) {
+        final String name;
+        if (contentType == ContentType.MOVIE) {
+            name = "BILIBILI_DAILY_MOVIE";
+        } else if (contentType == ContentType.SERIES) {
+            name = "BILIBILI_DAILY_SERIES";
+        } else {
+            name = "BILIBILI_DAILY_ANIME";
+        }
+        try {
+            return TaskType.valueOf(name);
+        } catch (IllegalArgumentException noSuchEnumYet) {
+            return null;
+        }
+    }
+
+    private static String typeNameOf(ContentType t) {
+        return switch (t) {
+            case BANGUMI -> "动漫";
+            case SERIES -> "剧集";
+            case MOVIE -> "电影";
+            case UPLOADER -> "UP主";
+        };
+    }
+
+    private String logAndReturn(String tag, Exception e) {
+        System.err.println("[BILIBILI-HANDLER] " + tag + ": " + e.getMessage());
+        return "❌ " + tag + "：" + (e.getMessage() == null ? "服务暂时不可用，请稍后再试" : e.getMessage());
     }
 }

@@ -11,11 +11,18 @@ import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionResult;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionView;
 
 import java.time.DayOfWeek;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /** 将领域对象转换为适合微信阅读的纯文本。 */
 public final class BilibiliMessageFormatter {
+    private static final ZoneId BJ = ZoneId.of("Asia/Shanghai");
+    private static final DateTimeFormatter DTF = DateTimeFormatter.ofPattern("MM-dd HH:mm");
+
     public BilibiliMessageFormatter() {
     }
 
@@ -154,11 +161,74 @@ public final class BilibiliMessageFormatter {
 
     public static String typeName(ContentType type) {
         return switch (type) {
-            case MOVIE -> "电影";
-            case SERIES -> "剧集";
             case BANGUMI -> "动漫";
+            case SERIES -> "剧集";
+            case MOVIE -> "电影";
             case UPLOADER -> "UP主内容";
         };
+    }
+
+    public static String formatTodayUpdates(ContentType contentType, int totalUpdated,
+                                             List<BilibiliContent> items) {
+        String typeNameStr = typeName(contentType);
+        String icon = switch (contentType) {
+            case BANGUMI -> "🎐";
+            case SERIES -> "📺";
+            case MOVIE -> "🎥";
+            case UPLOADER -> "🧑‍💻";
+        };
+        StringBuilder sb = new StringBuilder();
+        sb.append("📺 **今日B站").append(typeNameStr).append("更新** 📺\n\n");
+        sb.append("今天共有 ").append(totalUpdated).append(" 部").append(typeNameStr).append("更新");
+        if (items == null || items.isEmpty()) {
+            sb.append("，但没有符合你偏好的～试试降低最低评分？");
+            return sb.toString();
+        }
+        sb.append("，为你推荐以下 ").append(items.size()).append(" 部：\n\n");
+        int no = 1;
+        for (BilibiliContent c : items) {
+            sb.append(no).append(". ").append(icon).append(" **").append(c.getTitle()).append("**");
+            if (c.getRating() != null && c.getRating() > 0) {
+                sb.append("  ⭐").append(String.format("%.1f", c.getRating()));
+            }
+            sb.append("\n");
+            if (c.getGenres() != null && !c.getGenres().isEmpty()) {
+                sb.append("   🏷️ ").append(String.join(" · ", c.getGenres())).append("\n");
+            }
+            if (c.getLatestEpisodeNumber() != null) {
+                sb.append("   🔥 第 ").append(c.getLatestEpisodeNumber()).append(" 话");
+                if (c.getLatestEpisodeTitle() != null && !c.getLatestEpisodeTitle().isBlank()) {
+                    String epTitle = c.getLatestEpisodeTitle();
+                    // 去掉 "第X话" 前缀
+                    epTitle = epTitle.replaceAll("^第\\d+话\\s*", "");
+                    // 去掉 "更新至第X话" 这类描述性前缀
+                    epTitle = epTitle.replaceAll("^更新至第\\d+话\\s*", "");
+                    if (!epTitle.isBlank() && !epTitle.matches("^[\\d\\s]+$")) {
+                        sb.append("「").append(epTitle).append("」");
+                    }
+                }
+                sb.append("\n");
+            } else if (c.getLatestEpisodeTitle() != null && !c.getLatestEpisodeTitle().isBlank()) {
+                sb.append("   🔥 ").append(c.getLatestEpisodeTitle()).append("\n");
+            }
+            if (c.getLatestEpisodePubTime() != null) {
+                sb.append("   ⏰ ").append(
+                    DTF.format(c.getLatestEpisodePubTime().atZone(BJ))).append("\n");
+            } else {
+                sb.append("   📡 连载中\n");
+            }
+            if (c.getPageUrl() != null && !c.getPageUrl().isBlank()) {
+                sb.append("   🔗 ").append(c.getPageUrl()).append("\n");
+            }
+            if (contentType.isEpisodeTrackable()) {
+                sb.append("   ➡️ 回复 **订阅").append(no).append("** 追更\n\n");
+            } else {
+                sb.append("\n");
+            }
+            no++;
+        }
+        sb.append("💡 想看更多？回复「今日动漫推荐」获取高分推荐～");
+        return sb.toString();
     }
 
     private static String formatExcludedDays(BilibiliPreference preference) {

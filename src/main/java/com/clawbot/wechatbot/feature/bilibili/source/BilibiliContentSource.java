@@ -29,5 +29,15 @@ public interface BilibiliContentSource {
         return List.of();
     }
 
+    /**
+     * 获取当日放送的动漫/剧集列表（B站时间线接口）。
+     * @param contentType BANGUMI 或 SERIES
+     * @return 今日更新的作品列表，按更新时间倒序
+     */
+    default List<BilibiliContent> findTodayAiring(ContentType contentType)
+        throws Exception {
+        return List.of();
+    }
+
     BilibiliContent refresh(BilibiliContent content) throws Exception;
 }

@@ -12,6 +12,7 @@ import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliPreferenceS
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliRecommendationService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.RecommendationHistoryService;
 import com.clawbot.wechatbot.feature.bilibili.rag.BilibiliRagService;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliContentRepository;
 import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
 import com.clawbot.wechatbot.scheduler.controller.SchedulerControlService;
@@ -62,7 +63,8 @@ class BilibiliCommandHandlerTests {
             properties,
             historyService,
             pendingSearchResults,
-            ragService);
+            ragService,
+            mock(BilibiliContentRepository.class));
     }
 
     @Test
