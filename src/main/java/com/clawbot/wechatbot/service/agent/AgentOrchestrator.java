@@ -28,6 +28,7 @@ public final class AgentOrchestrator implements AutoCloseable {
     private final List<AgentTaskHandler> handlers;
     private final boolean enabled;
     private final int maxOuterRounds;
+    private final int maxTasksPerBatch;
     private final Duration executionTimeout;
     private final ExecutorService executor;
     private final AgentRequestContextHolder requestContextHolder;
@@ -46,6 +47,7 @@ public final class AgentOrchestrator implements AutoCloseable {
             handlers,
             enabled,
             maxOuterRounds,
+            5,
             maxParallelism,
             Duration.ofSeconds(90),
             new AgentRequestContextHolder());
@@ -66,6 +68,7 @@ public final class AgentOrchestrator implements AutoCloseable {
             handlers,
             enabled,
             maxOuterRounds,
+            5,
             maxParallelism,
             executionTimeout,
             new AgentRequestContextHolder());
@@ -81,6 +84,29 @@ public final class AgentOrchestrator implements AutoCloseable {
         Duration executionTimeout,
         AgentRequestContextHolder requestContextHolder
     ) {
+        this(
+            fallbackChatService,
+            planner,
+            handlers,
+            enabled,
+            maxOuterRounds,
+            5,
+            maxParallelism,
+            executionTimeout,
+            requestContextHolder);
+    }
+
+    public AgentOrchestrator(
+        ChatService fallbackChatService,
+        TaskPlanner planner,
+        List<AgentTaskHandler> handlers,
+        boolean enabled,
+        int maxOuterRounds,
+        int maxTasksPerBatch,
+        int maxParallelism,
+        Duration executionTimeout,
+        AgentRequestContextHolder requestContextHolder
+    ) {
         this.fallbackChatService = fallbackChatService;
         this.planner = planner;
         this.handlers = List.copyOf(handlers);
@@ -88,6 +114,7 @@ public final class AgentOrchestrator implements AutoCloseable {
             requestContextHolder, "requestContextHolder");
         this.enabled = enabled;
         this.maxOuterRounds = Math.max(1, maxOuterRounds);
+        this.maxTasksPerBatch = Math.max(1, maxTasksPerBatch);
         if (executionTimeout == null
             || executionTimeout.isZero()
             || executionTimeout.isNegative()) {
@@ -134,15 +161,19 @@ public final class AgentOrchestrator implements AutoCloseable {
         }
 
         PlanningInput input = splitSupportingContext(userText);
-        List<AgentTask> tasks;
+        TaskPlan plan;
         try {
-            tasks = planner.plan(input.userQuestion());
+            plan = planner.planDetailed(input.userQuestion());
         } catch (Exception planningFailure) {
             System.err.println("[WARN] Agent 任务规划失败，回退单任务流程: "
                 + safeMessage(planningFailure));
             return executeFallback(
                 userText, history, deadlineNanos, actualContext);
         }
+        if (plan.limitExceeded()) {
+            return AgentResponse.text(plan.userMessage());
+        }
+        List<AgentTask> tasks = plan.tasks();
         if (tasks.isEmpty()) {
             return executeFallback(
                 userText, history, deadlineNanos, actualContext);
@@ -247,6 +278,7 @@ public final class AgentOrchestrator implements AutoCloseable {
              round++) {
             List<AgentTask> ready = pending.values().stream()
                 .filter(task -> completed.keySet().containsAll(task.dependencies()))
+                .limit(maxTasksPerBatch)
                 .toList();
             if (ready.isEmpty()) break;
 

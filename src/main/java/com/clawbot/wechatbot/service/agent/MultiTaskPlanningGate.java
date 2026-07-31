@@ -24,6 +24,12 @@ public final class MultiTaskPlanningGate {
     }
 
     public Optional<List<AgentTask>> plan(WeixinMessage message) {
+        return planDetailed(message)
+            .filter(plan -> !plan.limitExceeded())
+            .map(TaskPlan::tasks);
+    }
+
+    public Optional<TaskPlan> planDetailed(WeixinMessage message) {
         if (!enabled || message == null || !planner.isConfigured()) {
             return Optional.empty();
         }
@@ -32,10 +38,11 @@ public final class MultiTaskPlanningGate {
         if (text.isBlank() && !hasAttachment) return Optional.empty();
         String planningInput = buildPlanningInput(message, text, hasAttachment);
         try {
-            List<AgentTask> tasks = planner.plan(planningInput);
-            return tasks == null || tasks.isEmpty()
+            TaskPlan plan = planner.planDetailed(planningInput);
+            return plan == null
+                || (!plan.limitExceeded() && plan.tasks().isEmpty())
                 ? Optional.empty()
-                : Optional.of(List.copyOf(tasks));
+                : Optional.of(plan);
         } catch (Exception error) {
             System.err.println("[WARN] 入口任务规划失败，继续原消息路由："
                 + safeMessage(error));

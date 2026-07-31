@@ -96,6 +96,31 @@ class MultiTaskPlanningGateTests {
         assertTrue(planningInput.get().contains("描述并分析我上传的图片"));
     }
 
+    @Test
+    void preservesTaskLimitExceededOutcomeForMessageEntry() {
+        TaskPlanner planner = new TaskPlanner() {
+            @Override
+            public List<AgentTask> plan(String userText) {
+                return List.of();
+            }
+
+            @Override
+            public TaskPlan planDetailed(String userText) {
+                return TaskPlan.limitExceeded(12, 10);
+            }
+        };
+
+        TaskPlan plan = new MultiTaskPlanningGate(planner)
+            .planDetailed(message("包含很多任务"))
+            .orElseThrow();
+
+        assertTrue(plan.limitExceeded());
+        assertTrue(plan.userMessage().contains("12 项任务"));
+        assertTrue(new MultiTaskPlanningGate(planner)
+            .plan(message("包含很多任务"))
+            .isEmpty());
+    }
+
     private WeixinMessage message(String text) {
         WeixinMessage message = new WeixinMessage();
         message.setFrom_user_id("user-1");

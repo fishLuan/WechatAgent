@@ -9,6 +9,7 @@ import com.clawbot.wechatbot.messaging.WeChatClientRegistry;
 import com.clawbot.wechatbot.notification.NotificationService;
 import com.clawbot.wechatbot.service.agent.AgentTask;
 import com.clawbot.wechatbot.service.agent.MultiTaskPlanningGate;
+import com.clawbot.wechatbot.service.agent.TaskPlan;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.config.ConfigLoader;
@@ -190,7 +191,22 @@ public class WeChatBot implements SmartLifecycle {
             return;
         }
         clientRegistry.bindUser(from, currentClient);
-        Optional<List<AgentTask>> plannedTasks = planningGate.plan(message);
+        Optional<TaskPlan> planningResult =
+            planningGate.planDetailed(message);
+        if (planningResult.filter(TaskPlan::limitExceeded).isPresent()) {
+            String reply = planningResult.orElseThrow().userMessage();
+            try {
+                currentClient.sendText(from, reply);
+                System.out.println("[SEND] " + reply);
+            } catch (Exception error) {
+                notifications.notifyError("发送任务超限提示", error);
+                System.err.println("[ERROR] 发送任务超限提示失败: "
+                    + safeMessage(error));
+            }
+            return;
+        }
+        Optional<List<AgentTask>> plannedTasks =
+            planningResult.map(TaskPlan::tasks);
         boolean requiresUnifiedRoute =
             planningGate.hasSupportedAttachment(message);
         if (plannedTasks.filter(tasks ->

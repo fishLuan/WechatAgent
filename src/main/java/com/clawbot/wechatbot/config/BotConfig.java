@@ -45,8 +45,11 @@ public class BotConfig {
     public boolean isAgentEnabled() {
         return getBoolean("agent.enabled");
     }
-    public int getAgentMaxTasks() {
-        return getInt("agent.max-tasks");
+    public int getAgentMaxPlannedTasks() {
+        return getInt("agent.max-planned-tasks");
+    }
+    public int getAgentMaxTasksPerBatch() {
+        return getInt("agent.max-tasks-per-batch");
     }
     public int getAgentMaxParallelism() {
         return getInt("agent.max-parallelism");

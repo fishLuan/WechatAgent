@@ -60,15 +60,27 @@ public final class LlmTaskPlanner implements TaskPlanner {
 
     @Override
     public List<AgentTask> plan(String userText) throws Exception {
-        if (userText == null || userText.isBlank()) return List.of();
+        return planDetailed(userText).tasks();
+    }
+
+    @Override
+    public TaskPlan planDetailed(String userText) throws Exception {
+        if (userText == null || userText.isBlank()) {
+            return TaskPlan.accepted(List.of(), maxTasks);
+        }
 
         ArrayNode messages = mapper.createArrayNode();
-        messages.add(message("system", PLANNER_PROMPT));
+        messages.add(message(
+            "system",
+            PLANNER_PROMPT
+                + "\n12. 系统单次安全上限为 " + maxTasks
+                + " 项任务。如果实际需求超过上限，仍须在 tasks 中完整列出所有任务，"
+                + "由系统统一拒绝；不得为了满足上限合并或遗漏任务。"));
         messages.add(message("user", userText.trim()));
         JsonNode response = client.chat(messages, mapper.createArrayNode(), 0.0);
         String content = response.path("choices").path(0).path("message")
             .path("content").asText("");
-        return parseTasks(userText.trim(), content);
+        return parsePlan(userText.trim(), content);
     }
 
     @Override
@@ -77,12 +89,17 @@ public final class LlmTaskPlanner implements TaskPlanner {
     }
 
     List<AgentTask> parseTasks(String originalText, String modelContent) throws Exception {
+        return parsePlan(originalText, modelContent).tasks();
+    }
+
+    TaskPlan parsePlan(String originalText, String modelContent) throws Exception {
         JsonNode tasksNode = mapper.readTree(extractJson(modelContent)).path("tasks");
         if (!tasksNode.isArray() || tasksNode.isEmpty()) {
-            return List.of(AgentTask.chat(originalText));
+            return TaskPlan.accepted(
+                List.of(AgentTask.chat(originalText)), maxTasks);
         }
         if (tasksNode.size() > maxTasks) {
-            return List.of(AgentTask.chat(originalText));
+            return TaskPlan.limitExceeded(tasksNode.size(), maxTasks);
         }
 
         List<RawTask> rawTasks = new ArrayList<>();
@@ -118,7 +135,11 @@ public final class LlmTaskPlanner implements TaskPlanner {
             rawTasks.add(new RawTask(rawId, type, instruction, dependencies));
         }
         if (rawTasks.isEmpty() || rawTasks.size() > maxTasks) {
-            return List.of(AgentTask.chat(originalText));
+            if (rawTasks.size() > maxTasks) {
+                return TaskPlan.limitExceeded(rawTasks.size(), maxTasks);
+            }
+            return TaskPlan.accepted(
+                List.of(AgentTask.chat(originalText)), maxTasks);
         }
 
         Map<String, String> canonicalIds = new LinkedHashMap<>();
@@ -139,7 +160,7 @@ public final class LlmTaskPlanner implements TaskPlanner {
             tasks.add(new AgentTask(
                 id, index, raw.type(), raw.instruction(), dependencies));
         }
-        return List.copyOf(tasks);
+        return TaskPlan.accepted(List.copyOf(tasks), maxTasks);
     }
 
     private AgentTaskType parseType(String value) {

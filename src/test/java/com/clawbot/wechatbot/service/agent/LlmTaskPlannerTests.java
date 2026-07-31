@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LlmTaskPlannerTests {
 
@@ -31,11 +32,11 @@ class LlmTaskPlannerTests {
     }
 
     @Test
-    void rejectsPlansAboveConfiguredTaskLimitWithoutDroppingOriginalRequest()
+    void reportsPlansAboveConfiguredTaskLimitWithoutSilentFallback()
         throws Exception {
         LlmTaskPlanner planner = planner(2);
 
-        List<AgentTask> tasks = planner.parseTasks(
+        TaskPlan plan = planner.parsePlan(
             "原始完整问题",
             """
                 {"tasks":[
@@ -45,7 +46,11 @@ class LlmTaskPlannerTests {
                 ]}
                 """);
 
-        assertEquals(List.of(AgentTask.chat("原始完整问题")), tasks);
+        assertTrue(plan.limitExceeded());
+        assertEquals(3, plan.detectedTaskCount());
+        assertEquals(2, plan.maxPlannedTasks());
+        assertTrue(plan.tasks().isEmpty());
+        assertTrue(plan.userMessage().contains("3 项任务"));
     }
 
     @Test
