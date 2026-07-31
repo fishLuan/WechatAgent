@@ -285,6 +285,24 @@ class BilibiliCommandParserTests {
         assertCmdType("刷新更新", BilibiliCommandParser.CmdType.CHECK_UPDATES_NOW);
     }
 
+    @Test
+    void parsesRagRecommendationCommands() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("智能推荐动漫");
+        assertEquals(BilibiliCommandParser.CmdType.RAG_QA, command.type());
+        assertEquals(ContentType.BANGUMI, command.contentType());
+        assertEquals("智能推荐动漫", command.title());
+
+        command = BilibiliCommandParser.parse("推荐类似葬送的芙莉莲的番");
+        assertEquals(BilibiliCommandParser.CmdType.RAG_SIMILAR, command.type());
+        assertEquals(ContentType.BANGUMI, command.contentType());
+        assertEquals("葬送的芙莉莲", command.title());
+
+        command = BilibiliCommandParser.parse("推荐葬送的芙莉莲类似的番");
+        assertEquals(BilibiliCommandParser.CmdType.RAG_SIMILAR, command.type());
+        assertEquals("葬送的芙莉莲", command.title());
+    }
+
     // ============================
     // 7. 边界条件：空白、非B站命令（UNKNOWN）
     // ============================
