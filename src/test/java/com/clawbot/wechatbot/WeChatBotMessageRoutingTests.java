@@ -10,6 +10,7 @@ import com.clawbot.wechatbot.notification.NotificationService;
 import com.clawbot.wechatbot.service.agent.AgentTask;
 import com.clawbot.wechatbot.service.agent.AgentTaskType;
 import com.clawbot.wechatbot.service.agent.MultiTaskPlanningGate;
+import com.clawbot.wechatbot.service.agent.TaskPlan;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.ImageItem;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
@@ -86,7 +87,8 @@ class WeChatBotMessageRoutingTests {
                 "task-2", 1, AgentTaskType.CHAT_TOOL,
                 "设置电影推送时间20:00", List.of()));
         when(memory.markMessageProcessed("user-1", 101L)).thenReturn(true);
-        when(gate.plan(message)).thenReturn(Optional.of(tasks));
+        when(gate.planDetailed(message))
+            .thenReturn(Optional.of(TaskPlan.accepted(tasks, 10)));
         when(bilibiliHandler.priority()).thenReturn(50);
         when(plannedHandler.priority()).thenReturn(100);
         WeChatBot bot = bot(
@@ -117,7 +119,8 @@ class WeChatBotMessageRoutingTests {
                 "task-1", 0, AgentTaskType.CHAT_TOOL,
                 "订阅牧神记", List.of()));
         when(memory.markMessageProcessed("user-1", 102L)).thenReturn(true);
-        when(gate.plan(message)).thenReturn(Optional.of(tasks));
+        when(gate.planDetailed(message))
+            .thenReturn(Optional.of(TaskPlan.accepted(tasks, 10)));
         when(bilibiliHandler.priority()).thenReturn(50);
         when(bilibiliHandler.canHandle(message)).thenReturn(true);
         when(plannedHandler.priority()).thenReturn(100);
@@ -154,7 +157,8 @@ class WeChatBotMessageRoutingTests {
             "描述图片",
             List.of()));
         when(memory.markMessageProcessed("user-1", 103L)).thenReturn(true);
-        when(gate.plan(message)).thenReturn(Optional.of(tasks));
+        when(gate.planDetailed(message))
+            .thenReturn(Optional.of(TaskPlan.accepted(tasks, 10)));
         when(gate.hasSupportedAttachment(message)).thenReturn(true);
         when(imageHandler.priority()).thenReturn(10);
         when(plannedHandler.priority()).thenReturn(100);
@@ -203,6 +207,30 @@ class WeChatBotMessageRoutingTests {
         verify(memory, never()).markMessageProcessed(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyLong());
+        verify(handler, never()).canHandle(message);
+    }
+
+    @Test
+    void taskLimitExceededSendsClearReplyWithoutCallingHandlers()
+        throws Exception {
+        MessageHandler handler = mock(MessageHandler.class);
+        ConversationMemoryService memory =
+            mock(ConversationMemoryService.class);
+        WeChatClientRegistry registry = mock(WeChatClientRegistry.class);
+        MultiTaskPlanningGate gate = mock(MultiTaskPlanningGate.class);
+        ILinkClient client = mock(ILinkClient.class);
+        WeixinMessage message = message(105L, "很多任务");
+        when(memory.markMessageProcessed("user-1", 105L)).thenReturn(true);
+        when(gate.planDetailed(message)).thenReturn(
+            Optional.of(TaskPlan.limitExceeded(12, 10)));
+        WeChatBot bot = bot(List.of(handler), registry, memory, gate);
+
+        bot.routeMessages(client, List.of(message));
+
+        verify(client).sendText(
+            "user-1",
+            "检测到你的消息包含 12 项任务，当前一次最多处理 10 项。"
+                + "请拆成多条消息发送，或指定优先处理哪些任务。");
         verify(handler, never()).canHandle(message);
     }
 

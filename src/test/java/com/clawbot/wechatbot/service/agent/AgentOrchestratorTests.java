@@ -12,6 +12,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -259,6 +260,87 @@ class AgentOrchestratorTests {
 
             assertTrue(response.text().contains("Agent 执行时间超过"));
             assertTrue(elapsedMillis < 800);
+        }
+    }
+
+    @Test
+    void executesEightIndependentTasksInBatchesOfFive() throws Exception {
+        AtomicInteger active = new AtomicInteger();
+        AtomicInteger peak = new AtomicInteger();
+        AtomicInteger executed = new AtomicInteger();
+        ChatService chat = chatService(input -> {
+            int current = active.incrementAndGet();
+            peak.accumulateAndGet(current, Math::max);
+            try {
+                Thread.sleep(80);
+                executed.incrementAndGet();
+                return "完成：" + input;
+            } finally {
+                active.decrementAndGet();
+            }
+        });
+        List<AgentTask> tasks = IntStream.rangeClosed(1, 8)
+            .mapToObj(index -> new AgentTask(
+                "task-" + index,
+                index - 1,
+                AgentTaskType.CHAT_TOOL,
+                "任务" + index,
+                List.of()))
+            .toList();
+
+        try (AgentOrchestrator orchestrator = new AgentOrchestrator(
+            chat,
+            ignored -> tasks,
+            List.of(new ChatAgentTaskHandler(chat)),
+            true,
+            10,
+            5,
+            8,
+            Duration.ofSeconds(5),
+            new AgentRequestContextHolder())) {
+            AgentResponse response = orchestrator.execute("执行八项任务", "");
+
+            assertEquals(8, executed.get());
+            assertEquals(5, peak.get());
+            assertTrue(response.text().contains("任务8"));
+        }
+    }
+
+    @Test
+    void returnsClearMessageWhenPlannedTaskTotalExceedsLimit()
+        throws Exception {
+        AtomicInteger chatCalls = new AtomicInteger();
+        ChatService chat = chatService(input -> {
+            chatCalls.incrementAndGet();
+            return "不应执行";
+        });
+        TaskPlanner planner = new TaskPlanner() {
+            @Override
+            public List<AgentTask> plan(String userText) {
+                return List.of();
+            }
+
+            @Override
+            public TaskPlan planDetailed(String userText) {
+                return TaskPlan.limitExceeded(11, 10);
+            }
+        };
+
+        try (AgentOrchestrator orchestrator = new AgentOrchestrator(
+            chat,
+            planner,
+            List.of(new ChatAgentTaskHandler(chat)),
+            true,
+            10,
+            5,
+            3,
+            Duration.ofSeconds(5),
+            new AgentRequestContextHolder())) {
+            AgentResponse response = orchestrator.execute("十一项任务", "");
+
+            assertTrue(response.text().contains("11 项任务"));
+            assertTrue(response.text().contains("最多处理 10 项"));
+            assertEquals(0, chatCalls.get());
         }
     }
 

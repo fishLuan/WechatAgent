@@ -6,6 +6,10 @@ import java.util.List;
 public interface TaskPlanner {
     List<AgentTask> plan(String userText) throws Exception;
 
+    default TaskPlan planDetailed(String userText) throws Exception {
+        return TaskPlan.accepted(plan(userText));
+    }
+
     default boolean isConfigured() {
         return true;
     }

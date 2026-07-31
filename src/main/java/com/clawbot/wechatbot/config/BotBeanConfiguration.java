@@ -272,7 +272,8 @@ public class BotBeanConfiguration {
 
     @Bean
     TaskPlanner taskPlanner(DeepSeekClient client, BotConfig config) {
-        return new LlmTaskPlanner(client, config.getAgentMaxTasks());
+        return new LlmTaskPlanner(
+            client, config.getAgentMaxPlannedTasks());
     }
 
     @Bean
@@ -331,6 +332,7 @@ public class BotBeanConfiguration {
             taskHandlers,
             config.isAgentEnabled(),
             config.getAgentMaxOuterRounds(),
+            config.getAgentMaxTasksPerBatch(),
             config.getAgentMaxParallelism(),
             Duration.ofSeconds(config.getAgentExecutionTimeoutSeconds()),
             requestContextHolder);
