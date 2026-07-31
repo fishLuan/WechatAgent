@@ -1,6 +1,8 @@
 package com.clawbot.wechatbot.service.agent;
 
 import com.clawbot.wechatbot.service.client.DeepSeekClient;
+import com.clawbot.wechatbot.skills.SkillCatalog;
+import com.clawbot.wechatbot.skills.SkillDefinition;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -14,48 +16,67 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/** 使用一次轻量模型调用生成外循环需要的结构化任务计划。 */
+/** Uses one lightweight LLM call to create the outer-loop task graph. */
 public final class LlmTaskPlanner implements TaskPlanner {
-    private static final String PLANNER_PROMPT = """
+    private static final String PROMPT = """
         你是 Agent 任务规划器，只输出严格 JSON，不回答用户问题。
-        输出格式：
-        {"tasks":[
-          {"id":"t1","type":"CHAT_TOOL","instruction":"完整任务描述","depends_on":[]},
-          {"id":"t2","type":"IMAGE_UNDERSTANDING","instruction":"分析用户上传的图片","depends_on":[]},
-          {"id":"t3","type":"IMAGE_GENERATION","instruction":"完整图片描述","depends_on":["t2"]}
-        ]}
+        格式：
+        {"tasks":[{"id":"t1","type":"CHAT_TOOL","skill_name":"","instruction":"完整任务","depends_on":[]}]}
 
-        任务类型：
-        - CHAT_TOOL：普通问答，以及需要天气、汇率、新闻、网页、时间等 function-calling 工具的任务。
-        - IMAGE_UNDERSTANDING：描述、识别、分析用户上传的图片，或回答与上传图片有关的问题。
-        - DOCUMENT_ANALYSIS：读取、总结、分析用户上传的 PDF、Word 或 TXT 文档。
-        - IMAGE_GENERATION：画图、生成图片、来一张图片等文生图任务。
+        固定任务类型：
+        - CHAT_TOOL：普通问答以及 function-calling 工具。
+        - SKILL：下方动态技能目录覆盖的领域任务；skill_name 必须填写目录中的 name。
+        - IMAGE_UNDERSTANDING：分析用户上传的图片。
+        - DOCUMENT_ANALYSIS：读取或分析用户上传的文档。
+        - IMAGE_GENERATION：生成图片。
 
         规则：
-        1. 找出所有明确需求，保持原始顺序，不得遗漏，也不得增加用户没提出的任务。
+        1. 找出所有明确需求并保持顺序，不遗漏、不增加。
         2. 每个任务必须自包含，保留地点、日期、金额、格式和风格等约束。
-        3. 同一查询的并列参数不要误拆，例如“人民币和日元汇率”是一个 CHAT_TOOL。
-        4. 相互独立的任务 depends_on 为空，可以并行。
-        5. 如果后一个任务必须使用前一个任务的结果，将前一个任务 id 写入 depends_on。
-        6. “根据杭州天气生成图片”应拆成天气 CHAT_TOOL 和依赖天气结果的 IMAGE_GENERATION。
-        7. 多个操作即使都属于 CHAT_TOOL 也必须拆开。例如“订阅牧神记，然后设置电影推送时间20:00”
-           必须拆成“订阅牧神记”和“设置电影推送时间20:00”两个独立 CHAT_TOOL。
-        8. B站的订阅、搜索、推荐、标记、推送设置都属于 CHAT_TOOL，由后续 function-calling 执行。
-        9. 单一需求也必须输出一个结构化任务。
-        10. 输入中“【附件】”只描述用户实际上传的附件，不是用户要求。涉及上传图片或文档时，
-            必须使用对应的 IMAGE_UNDERSTANDING 或 DOCUMENT_ANALYSIS，不能用 CHAT_TOOL 假装读取附件。
-        11. “分析上传图片并根据图片生成新图”应让 IMAGE_GENERATION 依赖 IMAGE_UNDERSTANDING。
-        12. “总结上传文档并根据总结执行其他操作”应让后续任务依赖 DOCUMENT_ANALYSIS。
+        3. 独立任务 depends_on 为空；后续任务需要前一结果时填写前一任务 id。
+        4. 同一技能中的多个独立操作也必须拆开。
+        5. 动态技能目录覆盖的操作必须使用 SKILL，不得用 CHAT_TOOL 或联网搜索替代。
+        6. 不得编造 skill_name；目录中没有合适技能时使用 CHAT_TOOL。
+        7. 附件必须使用对应的图片理解或文档分析任务。
+        8. 单一需求也必须输出一个结构化任务。
+        9. 用户要求先创作、查询或整理内容，再生成文档时，拆成内容任务和
+           document-generation SKILL，文档任务依赖内容任务。
+        10. 用户要求把回答、查询结果或创作内容转成语音时，拆成内容任务和
+            voice-reply SKILL，语音任务依赖内容任务。
+        11. 如果用户已经在冒号后提供了完整正文，可只创建对应的文档或语音
+            SKILL，并将完整正文保留在 instruction 中。
         """;
+
+    private static final SkillCatalog EMPTY_CATALOG = new SkillCatalog() {
+        @Override
+        public List<SkillDefinition> definitions() {
+            return List.of();
+        }
+
+        @Override
+        public boolean contains(String name) {
+            return false;
+        }
+    };
 
     private final DeepSeekClient client;
     private final ObjectMapper mapper;
     private final int maxTasks;
+    private final SkillCatalog skillCatalog;
 
     public LlmTaskPlanner(DeepSeekClient client, int maxTasks) {
+        this(client, maxTasks, EMPTY_CATALOG);
+    }
+
+    public LlmTaskPlanner(
+        DeepSeekClient client,
+        int maxTasks,
+        SkillCatalog skillCatalog
+    ) {
         this.client = client;
         this.mapper = client.mapper();
         this.maxTasks = Math.max(1, maxTasks);
+        this.skillCatalog = skillCatalog == null ? EMPTY_CATALOG : skillCatalog;
     }
 
     @Override
@@ -68,14 +89,11 @@ public final class LlmTaskPlanner implements TaskPlanner {
         if (userText == null || userText.isBlank()) {
             return TaskPlan.accepted(List.of(), maxTasks);
         }
-
         ArrayNode messages = mapper.createArrayNode();
-        messages.add(message(
-            "system",
-            PLANNER_PROMPT
-                + "\n12. 系统单次安全上限为 " + maxTasks
-                + " 项任务。如果实际需求超过上限，仍须在 tasks 中完整列出所有任务，"
-                + "由系统统一拒绝；不得为了满足上限合并或遗漏任务。"));
+        messages.add(message("system", PROMPT
+            + "\n动态技能目录：\n" + skillCatalog.plannerCatalog()
+            + "\n系统单次安全上限为 " + maxTasks
+            + " 项任务。若实际需求超过上限，仍须完整列出，由系统统一拒绝。"));
         messages.add(message("user", userText.trim()));
         JsonNode response = client.chat(messages, mapper.createArrayNode(), 0.0);
         String content = response.path("choices").path(0).path("message")
@@ -88,15 +106,15 @@ public final class LlmTaskPlanner implements TaskPlanner {
         return client.isConfigured();
     }
 
-    List<AgentTask> parseTasks(String originalText, String modelContent) throws Exception {
+    List<AgentTask> parseTasks(String originalText, String modelContent)
+        throws Exception {
         return parsePlan(originalText, modelContent).tasks();
     }
 
     TaskPlan parsePlan(String originalText, String modelContent) throws Exception {
         JsonNode tasksNode = mapper.readTree(extractJson(modelContent)).path("tasks");
         if (!tasksNode.isArray() || tasksNode.isEmpty()) {
-            return TaskPlan.accepted(
-                List.of(AgentTask.chat(originalText)), maxTasks);
+            return TaskPlan.accepted(List.of(AgentTask.chat(originalText)), maxTasks);
         }
         if (tasksNode.size() > maxTasks) {
             return TaskPlan.limitExceeded(tasksNode.size(), maxTasks);
@@ -108,6 +126,7 @@ public final class LlmTaskPlanner implements TaskPlanner {
         for (JsonNode node : tasksNode) {
             String instruction;
             String rawId;
+            String skillName = "";
             AgentTaskType type;
             List<String> dependencies = new ArrayList<>();
             if (node.isTextual()) {
@@ -118,6 +137,7 @@ public final class LlmTaskPlanner implements TaskPlanner {
                 instruction = node.path("instruction").asText("").trim();
                 rawId = node.path("id").asText("t" + (rawIndex + 1)).trim();
                 type = parseType(node.path("type").asText(""));
+                skillName = node.path("skill_name").asText("").trim();
                 JsonNode dependencyNode = node.path("depends_on");
                 if (dependencyNode.isArray()) {
                     dependencyNode.forEach(item -> {
@@ -132,21 +152,25 @@ public final class LlmTaskPlanner implements TaskPlanner {
                 || !instructions.add(instruction)) {
                 continue;
             }
-            rawTasks.add(new RawTask(rawId, type, instruction, dependencies));
+            if (type == AgentTaskType.SKILL
+                && (skillName.isBlank() || !skillCatalog.contains(skillName))) {
+                type = AgentTaskType.CHAT_TOOL;
+                skillName = "";
+            }
+            rawTasks.add(new RawTask(
+                rawId, type, skillName, instruction, dependencies));
         }
         if (rawTasks.isEmpty() || rawTasks.size() > maxTasks) {
-            if (rawTasks.size() > maxTasks) {
-                return TaskPlan.limitExceeded(rawTasks.size(), maxTasks);
-            }
-            return TaskPlan.accepted(
-                List.of(AgentTask.chat(originalText)), maxTasks);
+            return rawTasks.size() > maxTasks
+                ? TaskPlan.limitExceeded(rawTasks.size(), maxTasks)
+                : TaskPlan.accepted(List.of(AgentTask.chat(originalText)), maxTasks);
         }
 
         Map<String, String> canonicalIds = new LinkedHashMap<>();
         for (int index = 0; index < rawTasks.size(); index++) {
-            canonicalIds.putIfAbsent(rawTasks.get(index).rawId(), "task-" + (index + 1));
+            canonicalIds.putIfAbsent(
+                rawTasks.get(index).rawId(), "task-" + (index + 1));
         }
-
         List<AgentTask> tasks = new ArrayList<>();
         for (int index = 0; index < rawTasks.size(); index++) {
             RawTask raw = rawTasks.get(index);
@@ -155,42 +179,34 @@ public final class LlmTaskPlanner implements TaskPlanner {
                 .map(canonicalIds::get)
                 .filter(java.util.Objects::nonNull)
                 .filter(dependency -> !dependency.equals(id))
-                .distinct()
-                .toList();
+                .distinct().toList();
             tasks.add(new AgentTask(
-                id, index, raw.type(), raw.instruction(), dependencies));
+                id, index, raw.type(), raw.skillName(),
+                raw.instruction(), dependencies));
         }
         return TaskPlan.accepted(List.copyOf(tasks), maxTasks);
     }
 
     private AgentTaskType parseType(String value) {
         String normalized = value == null
-            ? ""
-            : value.trim().toUpperCase(Locale.ROOT);
-        if (normalized.equals("IMAGE")
-            || normalized.equals("IMAGE_GEN")
-            || normalized.equals("IMAGE_GENERATION")) {
-            return AgentTaskType.IMAGE_GENERATION;
-        }
-        if (normalized.equals("VISION")
-            || normalized.equals("IMAGE_ANALYSIS")
-            || normalized.equals("IMAGE_UNDERSTANDING")) {
-            return AgentTaskType.IMAGE_UNDERSTANDING;
-        }
-        if (normalized.equals("DOCUMENT")
-            || normalized.equals("DOCUMENT_SUMMARY")
-            || normalized.equals("DOCUMENT_ANALYSIS")) {
-            return AgentTaskType.DOCUMENT_ANALYSIS;
-        }
-        return AgentTaskType.CHAT_TOOL;
+            ? "" : value.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "IMAGE", "IMAGE_GEN", "IMAGE_GENERATION" ->
+                AgentTaskType.IMAGE_GENERATION;
+            case "VISION", "IMAGE_ANALYSIS", "IMAGE_UNDERSTANDING" ->
+                AgentTaskType.IMAGE_UNDERSTANDING;
+            case "DOCUMENT", "DOCUMENT_SUMMARY", "DOCUMENT_ANALYSIS" ->
+                AgentTaskType.DOCUMENT_ANALYSIS;
+            case "SKILL" -> AgentTaskType.SKILL;
+            default -> AgentTaskType.CHAT_TOOL;
+        };
     }
 
     private String extractJson(String content) {
         if (content == null) return "{}";
         int start = content.indexOf('{');
         int end = content.lastIndexOf('}');
-        if (start < 0 || end < start) return "{}";
-        return content.substring(start, end + 1);
+        return start < 0 || end < start ? "{}" : content.substring(start, end + 1);
     }
 
     private ObjectNode message(String role, String content) {
@@ -203,6 +219,7 @@ public final class LlmTaskPlanner implements TaskPlanner {
     private record RawTask(
         String rawId,
         AgentTaskType type,
+        String skillName,
         String instruction,
         List<String> dependencies
     ) {

@@ -13,6 +13,7 @@ import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
 import com.clawbot.wechatbot.service.agent.AgentTaskHandler;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
+import com.clawbot.wechatbot.skills.SkillManager;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,6 +56,9 @@ class ApplicationTests {
     private List<AgentTaskHandler> agentTaskHandlers;
 
     @Autowired
+    private SkillManager skillRegistry;
+
+    @Autowired
     private BilibiliProperties bilibiliProperties;
 
     @Autowired
@@ -76,7 +80,11 @@ class ApplicationTests {
     void contextLoads() {
         assertEquals(13, toolRegistry.size());
         assertEquals(5, handlers.size());
-        assertEquals(4, agentTaskHandlers.size());
+        assertEquals(5, agentTaskHandlers.size());
+        assertEquals(3, skillRegistry.size());
+        assertTrue(skillRegistry.contains("bilibili"));
+        assertTrue(skillRegistry.contains("document-generation"));
+        assertTrue(skillRegistry.contains("voice-reply"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name").contains("convert_currency"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name")
             .contains("calculate_bazi_fortune"));

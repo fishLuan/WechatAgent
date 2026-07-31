@@ -43,6 +43,9 @@ import com.clawbot.wechatbot.service.longform.LongFormGenerationPolicy;
 import com.clawbot.wechatbot.service.reply.LongReplyManager;
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
 import com.clawbot.wechatbot.service.VisionService;
+import com.clawbot.wechatbot.skills.SkillDefinitionLoader;
+import com.clawbot.wechatbot.skills.SkillExecutor;
+import com.clawbot.wechatbot.skills.SkillManager;
 import com.clawbot.wechatbot.tools.bazitool.BaziFortuneTool;
 import com.clawbot.wechatbot.tools.currenttimetool.CurrentTimeTool;
 import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
@@ -64,6 +67,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.Arrays;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -271,9 +275,29 @@ public class BotBeanConfiguration {
     }
 
     @Bean
-    TaskPlanner taskPlanner(DeepSeekClient client, BotConfig config) {
+    SkillManager skillManager(
+        BotConfig config,
+        List<SkillExecutor> executors
+    ) {
+        return new SkillManager(
+            new SkillDefinitionLoader(
+                config.getSkillClasspathPattern(),
+                Path.of(config.getSkillExternalDirectory()),
+                config.getSkillMaxCount(),
+                config.getSkillMaxDefinitionBytes()),
+            executors,
+            config.isSkillWatchEnabled(),
+            config.getSkillReloadDebounceMillis());
+    }
+
+    @Bean
+    TaskPlanner taskPlanner(
+        DeepSeekClient client,
+        BotConfig config,
+        SkillManager skillManager
+    ) {
         return new LlmTaskPlanner(
-            client, config.getAgentMaxPlannedTasks());
+            client, config.getAgentMaxPlannedTasks(), skillManager);
     }
 
     @Bean
@@ -432,7 +456,8 @@ public class BotBeanConfiguration {
                                       LongReplyManager longReplyManager,
                                       IntentRecognizer intentRecognizer,
                                       AgentInputAttachmentLoader inputAttachmentLoader) {
-        SpeechSynthesisService optionalSpeech = config.isDashscopeConfigured() ? speech : null;
+        SpeechSynthesisService optionalSpeech =
+            config.isDashscopeConfigured() ? speech : null;
         return new TextMessageHandler(
             chat,
             agentOrchestrator,
