@@ -13,6 +13,7 @@ import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionView;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliPreferenceService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliRecommendationService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.RecommendationHistoryService;
+import com.clawbot.wechatbot.feature.bilibili.rag.BilibiliRagService;
 import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
 import com.clawbot.wechatbot.scheduler.controller.SchedulerControlService;
@@ -44,6 +45,7 @@ public final class BilibiliCommandHandler {
     private final BilibiliProperties properties;
     private final RecommendationHistoryService history;
     private final PendingSearchResultStore pendingSearchResults;
+    private final BilibiliRagService ragService;
 
     public BilibiliCommandHandler(
         @Lazy BilibiliSubscriptionService subscriptions,
@@ -55,7 +57,8 @@ public final class BilibiliCommandHandler {
         BilibiliContentSource contentSource,
         BilibiliProperties properties,
         RecommendationHistoryService history,
-        PendingSearchResultStore pendingSearchResults
+        PendingSearchResultStore pendingSearchResults,
+        BilibiliRagService ragService
     ) {
         this.subscriptions = subscriptions;
         this.recommendations = recommendations;
@@ -65,6 +68,7 @@ public final class BilibiliCommandHandler {
         this.properties = properties;
         this.history = history;
         this.pendingSearchResults = pendingSearchResults;
+        this.ragService = ragService;
     }
 
     public String handle(String userId, String input) {
@@ -125,6 +129,10 @@ public final class BilibiliCommandHandler {
                 case CHECK_UPDATES_NOW ->
                     BilibiliMessageFormatter.formatCheckResult(
                         subscriptions.checkNow(userId));
+                case RAG_QA ->
+                    ragService.answer(userId, command.title(), command.contentType());
+                case RAG_SIMILAR ->
+                    ragService.answerSimilar(userId, command.title(), command.contentType());
                 case UNKNOWN -> "[UNHANDLED-BILIBILI-UNKNOWN]";
             };
         } catch (Exception error) {

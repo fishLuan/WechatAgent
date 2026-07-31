@@ -11,6 +11,7 @@ import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionStatus;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliPreferenceService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliRecommendationService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.RecommendationHistoryService;
+import com.clawbot.wechatbot.feature.bilibili.rag.BilibiliRagService;
 import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
 import com.clawbot.wechatbot.scheduler.controller.SchedulerControlService;
@@ -37,6 +38,7 @@ class BilibiliCommandHandlerTests {
     private RecommendationHistoryService historyService;
     private BilibiliPreferenceService preferenceService;
     private PendingSearchResultStore pendingSearchResults;
+    private BilibiliRagService ragService;
     private BilibiliCommandHandler handler;
 
     @BeforeEach
@@ -47,6 +49,7 @@ class BilibiliCommandHandlerTests {
         historyService = mock(RecommendationHistoryService.class);
         preferenceService = mock(BilibiliPreferenceService.class);
         pendingSearchResults = new PendingSearchResultStore();
+        ragService = mock(BilibiliRagService.class);
         BilibiliProperties properties = new BilibiliProperties();
         handler = new BilibiliCommandHandler(
             subscriptionService,
@@ -58,7 +61,8 @@ class BilibiliCommandHandlerTests {
             contentSource,
             properties,
             historyService,
-            pendingSearchResults);
+            pendingSearchResults,
+            ragService);
     }
 
     @Test
@@ -309,6 +313,28 @@ class BilibiliCommandHandlerTests {
             verify(preferenceService).setExcludedPushDays(
                 "user-1", type, Set.of(DayOfWeek.SATURDAY), true);
         }
+    }
+
+    @Test
+    void routesRagQuestionToRagService() {
+        when(ragService.answer("user-1", "智能推荐动漫", ContentType.BANGUMI))
+            .thenReturn("RAG 推荐结果");
+
+        String reply = handler.handle("user-1", "智能推荐动漫");
+
+        assertTrue(reply.contains("RAG 推荐结果"));
+        verify(ragService).answer("user-1", "智能推荐动漫", ContentType.BANGUMI);
+    }
+
+    @Test
+    void routesSimilarQuestionToRagService() {
+        when(ragService.answerSimilar("user-1", "葬送的芙莉莲", ContentType.BANGUMI))
+            .thenReturn("相似推荐结果");
+
+        String reply = handler.handle("user-1", "推荐葬送的芙莉莲类似的番");
+
+        assertTrue(reply.contains("相似推荐结果"));
+        verify(ragService).answerSimilar("user-1", "葬送的芙莉莲", ContentType.BANGUMI);
     }
 
     private RecommendedContent item(String contentId, String seasonId) {

@@ -41,6 +41,8 @@ public final class BilibiliCommandParser {
         TOGGLE_PUSH,
         SHOW_PREFERENCES,
         CHECK_UPDATES_NOW,
+        RAG_QA,
+        RAG_SIMILAR,
         UNKNOWN
     }
 
@@ -90,6 +92,12 @@ public final class BilibiliCommandParser {
         "^(?:(?:我想|我要|请|帮我)\\s*)?(?:订阅|追更)\\s*(?:一下|下)?\\s*(?:作品)?\\s*(.+?)\\s*$");
     private static final Pattern TITLE_STATE = Pattern.compile(
         "^(?:我)?(?:已经|刚刚|刚)?\\s*(看过|看完了|想看|不喜欢)\\s*(?:了)?\\s*(.+?)\\s*$");
+    private static final Pattern RAG_SIMILAR = Pattern.compile(
+        "^(?:推荐|找|来点|有没有)\\s*(?:几部|一些|类似|像)?\\s*(?:《(.+?)》|(.+?))\\s*(?:类似|相似|同类型|同题材)\\s*(?:的)?\\s*(动漫|番剧|电影|剧集|电视剧|番)?\\s*$");
+    private static final Pattern RAG_SIMILAR_PREFIX = Pattern.compile(
+        "^(?:推荐|找|来点|有没有)\\s*(?:几部|一些)?\\s*(?:类似|像)\\s*(?:《(.+?)》|(.+?))\\s*(?:的)?\\s*(动漫|番剧|电影|剧集|电视剧|番)?\\s*$");
+    private static final Pattern RAG_INTENT = Pattern.compile(
+        ".*(智能推荐|为什么推荐|为啥推荐|类似|相似|适合我|按我的偏好|我适合|有没有好看的|最近看什么|订阅.*更新).*");
     private static final Pattern WEEKDAY = Pattern.compile(
         "(?:周|星期)([一二三四五六日天])");
     private static final Pattern ARABIC_TIME = Pattern.compile(
@@ -184,6 +192,9 @@ public final class BilibiliCommandParser {
             return ParsedCommand.of(CmdType.CHECK_UPDATES_NOW);
         }
 
+        ParsedCommand rag = parseRag(text);
+        if (rag != null) return rag;
+
         matcher = TITLE_STATE.matcher(text);
         if (matcher.matches()) {
             return new ParsedCommand(
@@ -217,6 +228,29 @@ public final class BilibiliCommandParser {
                 null, null, null, null);
         }
         return ParsedCommand.unknown();
+    }
+
+    private static ParsedCommand parseRag(String text) {
+        Matcher similar = RAG_SIMILAR.matcher(text);
+        if (similar.matches()) {
+            String title = similar.group(1) != null ? similar.group(1) : similar.group(2);
+            return new ParsedCommand(
+                CmdType.RAG_SIMILAR, null, null, typeOfNullable(similar.group(3)),
+                null, null, null, null, cleanTitle(title), null, null, null);
+        }
+        similar = RAG_SIMILAR_PREFIX.matcher(text);
+        if (similar.matches()) {
+            String title = similar.group(1) != null ? similar.group(1) : similar.group(2);
+            return new ParsedCommand(
+                CmdType.RAG_SIMILAR, null, null, typeOfNullable(similar.group(3)),
+                null, null, null, null, cleanTitle(title), null, null, null);
+        }
+        if (RAG_INTENT.matcher(text).matches()) {
+            return new ParsedCommand(
+                CmdType.RAG_QA, null, null, inferType(text), null, null, null,
+                null, text, null, null, null);
+        }
+        return null;
     }
 
     private static ParsedCommand parseWeekdayPushPolicy(String text) {
@@ -347,6 +381,10 @@ public final class BilibiliCommandParser {
             case "剧集", "电视剧" -> ContentType.SERIES;
             default -> ContentType.BANGUMI;
         };
+    }
+
+    private static ContentType typeOfNullable(String value) {
+        return value == null || value.isBlank() ? null : typeOf(value);
     }
 
     private static String normalizeTime(String value) {
