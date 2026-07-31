@@ -12,7 +12,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import java.time.Instant;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -406,6 +407,28 @@ class BilibiliRecommendationIntegrationTests {
             List<BilibiliPreference> enabledPrefs = prefRepo.findByContentTypeAndPushEnabledTrue(ContentType.BANGUMI);
             assertFalse(enabledPrefs.stream().anyMatch(p -> p.getWechatUserId().equals(淇奥)));
         }
+
+        @Test
+        @DisplayName("可以增加和恢复不推送日期")
+        void updatesExcludedPushDays() {
+            preferenceService.setExcludedPushDays(
+                淇奥, ContentType.BANGUMI,
+                Set.of(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY), true);
+
+            BilibiliPreference excluded =
+                preferenceService.getOrCreate(淇奥, ContentType.BANGUMI);
+            assertEquals(
+                Set.of(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY),
+                excluded.getExcludedPushDays());
+
+            preferenceService.setExcludedPushDays(
+                淇奥, ContentType.BANGUMI,
+                Set.of(DayOfWeek.SATURDAY), false);
+            assertEquals(
+                Set.of(DayOfWeek.SUNDAY),
+                preferenceService.getOrCreate(
+                    淇奥, ContentType.BANGUMI).getExcludedPushDays());
+        }
     }
 
     // ================================================================
@@ -462,6 +485,31 @@ class BilibiliRecommendationIntegrationTests {
 
             scheduler.checkAndPush();
             assertEquals(firstCount, callCount.get(), "第二次不应再推送");
+        }
+
+        @Test
+        @DisplayName("排除当天后不发送每日推荐")
+        void excludedWeekdayPreventsDailyRecommendation() {
+            LocalTime now = LocalTime.now();
+            properties.setDefaultPushTime(LocalTime.of(now.getHour(), now.getMinute()));
+            preferenceService.setExcludedPushDays(
+                淇奥,
+                ContentType.BANGUMI,
+                Set.of(LocalDate.now().getDayOfWeek()),
+                true);
+
+            AtomicInteger callCount = new AtomicInteger(0);
+            scheduler.setNotificationPort(new BilibiliNotificationPort() {
+                @Override public void notifyEpisodeUpdate(String u, EpisodeUpdateNotification n) {}
+                @Override public void notifyDailyRecommendation(String u, RecommendationResult r) {
+                    callCount.incrementAndGet();
+                }
+            });
+
+            scheduler.resetPushedToday();
+            scheduler.checkAndPush();
+
+            assertEquals(0, callCount.get());
         }
 
         @Test

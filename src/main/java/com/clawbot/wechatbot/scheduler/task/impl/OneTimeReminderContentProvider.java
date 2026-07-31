@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class OneTimeReminderContentProvider implements ScheduledTaskContentProvider {
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final String DEFAULT_TEXT = "⏰ 这是你预约的单次提醒～";
+    private static final String DEFAULT_TEXT = "单次提醒已触发。";
 
     @Override
     public TaskType taskType() { return TaskType.ONE_TIME_REMINDER; }

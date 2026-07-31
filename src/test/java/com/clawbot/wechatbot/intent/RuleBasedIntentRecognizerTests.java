@@ -31,6 +31,9 @@ class RuleBasedIntentRecognizerTests {
         assertEquals(
             IntentType.BILIBILI_SUBSCRIBE_INDEX,
             recognizer.recognize("订阅2").type());
+        assertEquals(
+            IntentType.BILIBILI_SUBSCRIBE_INDEX,
+            recognizer.recognize("订阅第三个").type());
     }
 
     @Test

@@ -4,6 +4,7 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
 
+import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.util.LinkedHashSet;
@@ -26,6 +27,7 @@ public class BilibiliPreference {
     private int recommendationCount;
     private LocalTime pushTime;
     private boolean pushEnabled = true;
+    private Set<DayOfWeek> excludedPushDays = new LinkedHashSet<>();
     private Instant createdAt;
     private Instant updatedAt;
 
@@ -68,6 +70,14 @@ public class BilibiliPreference {
     public void setPushTime(LocalTime value) { this.pushTime = value; }
     public boolean isPushEnabled() { return pushEnabled; }
     public void setPushEnabled(boolean value) { this.pushEnabled = value; }
+    public Set<DayOfWeek> getExcludedPushDays() {
+        if (excludedPushDays == null) excludedPushDays = new LinkedHashSet<>();
+        return excludedPushDays;
+    }
+    public void setExcludedPushDays(Set<DayOfWeek> values) {
+        excludedPushDays =
+            values == null ? new LinkedHashSet<>() : new LinkedHashSet<>(values);
+    }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant value) { this.createdAt = value; }
     public Instant getUpdatedAt() { return updatedAt; }

@@ -4,21 +4,23 @@ import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.VoiceItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
-import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.base.PlannedMessageHandler;
 import com.clawbot.wechatbot.memory.ConversationMemory;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.memory.ConversationMessage;
 import com.clawbot.wechatbot.memory.MemoryProperties;
-import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliTool;
 import com.clawbot.wechatbot.intent.IntentRecognizer;
 import com.clawbot.wechatbot.intent.IntentResult;
-import com.clawbot.wechatbot.scheduler.tool.SchedulerTool;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
 import com.clawbot.wechatbot.service.agent.AgentAttachment;
+import com.clawbot.wechatbot.service.agent.AgentInputAttachment;
+import com.clawbot.wechatbot.service.agent.AgentInputAttachmentLoader;
 import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
+import com.clawbot.wechatbot.service.agent.AgentRequestContext;
 import com.clawbot.wechatbot.service.agent.AgentResponse;
+import com.clawbot.wechatbot.service.agent.AgentTask;
 import com.clawbot.wechatbot.service.reply.LongReplyManager;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.util.JsonUtils;
@@ -35,7 +37,7 @@ import java.util.List;
  * 注意：这是文本消息的统一入口。图片生成等复合需求由内部 Agent 外循环调度，
  * 不再由独立的图片生成消息 Handler 提前截断。
  */
-public class TextMessageHandler implements MessageHandler {
+public class TextMessageHandler implements PlannedMessageHandler {
 
     private final ChatService chatService;
     private final AgentOrchestrator agentOrchestrator;
@@ -46,6 +48,7 @@ public class TextMessageHandler implements MessageHandler {
     private final MemoryProperties memoryProperties;
     private final LongReplyManager longReplyManager;
     private final IntentRecognizer intentRecognizer;
+    private final AgentInputAttachmentLoader inputAttachmentLoader;
 
     public TextMessageHandler(
         ChatService chatService,
@@ -56,7 +59,8 @@ public class TextMessageHandler implements MessageHandler {
         ConversationMemoryService memoryService,
         MemoryProperties memoryProperties,
         LongReplyManager longReplyManager,
-        IntentRecognizer intentRecognizer
+        IntentRecognizer intentRecognizer,
+        AgentInputAttachmentLoader inputAttachmentLoader
     ) {
         this.chatService = chatService;
         this.agentOrchestrator = agentOrchestrator;
@@ -67,6 +71,7 @@ public class TextMessageHandler implements MessageHandler {
         this.memoryProperties = memoryProperties;
         this.longReplyManager = longReplyManager;
         this.intentRecognizer = intentRecognizer;
+        this.inputAttachmentLoader = inputAttachmentLoader;
         DocumentService.silencePdfLogs();  // 屏蔽 PDF 库的噪音日志
     }
 
@@ -81,6 +86,23 @@ public class TextMessageHandler implements MessageHandler {
 
     @Override
     public void handle(ILinkClient client, WeixinMessage msg) {
+        handleInternal(client, msg, null);
+    }
+
+    @Override
+    public void handlePlanned(
+        ILinkClient client,
+        WeixinMessage msg,
+        List<AgentTask> tasks
+    ) {
+        handleInternal(client, msg, tasks);
+    }
+
+    private void handleInternal(
+        ILinkClient client,
+        WeixinMessage msg,
+        List<AgentTask> preplannedTasks
+    ) {
         String from = msg.getFrom_user_id();
         String userText = extractText(msg);
         IntentResult intent = intentRecognizer.recognize(userText);
@@ -109,11 +131,7 @@ public class TextMessageHandler implements MessageHandler {
             // 1. 关键词预处理：
             //    - 语音指令：剥离"语音/读"等词，避免 DeepSeek 自作主张
             //    - 文档指令：先正常对话，把回复写入 PDF/Word
-            boolean wantVoice = shouldTriggerTts(userText);
-            boolean wantDoc = shouldTriggerDocGen(userText);
             String textForChat = userText;
-            if (wantVoice) textForChat = stripTtsKeywords(textForChat);
-            if (wantDoc)   textForChat = stripDocKeywords(textForChat);
 
             // 2. 新闻关键词检测：如果用户问新闻，直接调 TianNewsTool 获取实时数据
             String newsData = null;
@@ -139,27 +157,34 @@ public class TextMessageHandler implements MessageHandler {
             } else {
                 chatInput = textForChat;
             }
-            AgentResponse agentResponse;
-            SchedulerTool.CURRENT_USER_ID.set(from);
-            BilibiliTool.CURRENT_USER_ID.set(from);
-            try {
-                agentResponse = agentOrchestrator.execute(
-                    chatInput, context.isEmpty() ? "" : context);
-            } finally {
-                SchedulerTool.CURRENT_USER_ID.remove();
-                BilibiliTool.CURRENT_USER_ID.remove();
-            }
+            AgentRequestContext requestContext = new AgentRequestContext(
+                from, msg.getMessage_id());
+            List<AgentInputAttachment> inputAttachments =
+                preplannedTasks == null
+                    ? List.of()
+                    : inputAttachmentLoader.load(client, msg);
+            AgentResponse agentResponse = preplannedTasks == null
+                ? agentOrchestrator.execute(
+                    chatInput,
+                    context.isEmpty() ? "" : context,
+                    requestContext)
+                : agentOrchestrator.executePlanned(
+                    chatInput,
+                    context.isEmpty() ? "" : context,
+                    preplannedTasks,
+                    requestContext,
+                    inputAttachments);
 
             // 3. 发送文字回复（清理大模型可能自作主张加的"（用男声）"等标记）
             String textReply = cleanBotReply(agentResponse.text());
-            deliverTextReply(client, from, textReply, wantDoc);
+            deliverTextReply(client, from, textReply, false);
             sendAgentAttachments(client, from, agentResponse.attachments());
             appendHistory(from, userText, textReply);
             System.out.println("[RECV] <" + from + "> " + userText);
             System.out.println("[SEND] " + textReply.replace("\n", " | "));
 
             // ===== 4. 语音合成（关键词触发）：把回复文字 → WAV 文件发送 =====
-            if (tts != null && wantVoice) {
+            if (false) {
                 try {
                     String textForTts = textReply.length() > 200
                         ? textReply.substring(0, 200) : textReply;
@@ -175,7 +200,7 @@ public class TextMessageHandler implements MessageHandler {
             }
 
             // ===== 5. 文档生成（关键词触发）：把回复文字 → PDF/Word 文件发送 =====
-            if (documentService != null && wantDoc) {
+            if (false) {
                 try {
                     boolean isPdf = userText.toLowerCase().contains("pdf");
                     byte[] fileBytes = isPdf
@@ -202,13 +227,13 @@ public class TextMessageHandler implements MessageHandler {
                             safeSendText(client, from, "完整回复发送失败，请稍后重试。");
                         }
                     } else {
-                        safeSendText(client, from, "（文档生成失败，但上面的文字回复已经发了～）");
+                        safeSendText(client, from, "文档生成失败，文字回复已经发送。");
                     }
                 }
             }
         } catch (Exception e) {
             System.err.println("[ERROR] DeepSeek: " + e.getMessage());
-            safeSendText(client, from, "抱歉，大脑暂时短路了：" + e.getMessage());
+            safeSendText(client, from, "请求处理失败：" + e.getMessage());
         }
     }
 
@@ -395,9 +420,21 @@ public class TextMessageHandler implements MessageHandler {
     private boolean shouldTriggerDocGen(String userText) {
         if (userText == null) return false;
         String t = userText.trim().toLowerCase();
-        return t.contains("pdf")
-            || t.contains("word")
-            || t.contains("文档");
+        return containsAny(
+            t,
+            "生成pdf", "导出pdf", "制作pdf", "转成pdf", "保存为pdf",
+            "pdf格式", "以pdf", "用pdf",
+            "生成word", "导出word", "制作word", "转成word", "保存为word",
+            "word格式", "以word", "用word",
+            "生成文档", "导出文档", "制作文档", "转成文档",
+            "文档格式", "文档形式", "以文档");
+    }
+
+    private boolean containsAny(String text, String... candidates) {
+        for (String candidate : candidates) {
+            if (text.contains(candidate)) return true;
+        }
+        return false;
     }
 
     /**
@@ -489,7 +526,7 @@ public class TextMessageHandler implements MessageHandler {
 
         // 用户没指定内容 → 把最近对话拼接起来（如果对话为空，给一个默认提示）
         if (memory.getRecentMessages().isEmpty()) {
-            return "（暂无对话内容，试着和我聊几句，然后再生成文档吧～）";
+            return "暂无可用于生成文档的对话内容。";
         }
 
         StringBuilder sb = new StringBuilder();

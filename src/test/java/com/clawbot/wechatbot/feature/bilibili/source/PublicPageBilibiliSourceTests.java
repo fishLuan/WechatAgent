@@ -5,6 +5,7 @@ import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 import com.clawbot.wechatbot.feature.bilibili.source.client.BilibiliHttpClient;
 import com.clawbot.wechatbot.feature.bilibili.source.parser.BilibiliPageParser;
 import com.clawbot.wechatbot.feature.bilibili.source.parser.BilibiliUrlParser;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.net.http.HttpClient;
@@ -23,7 +24,7 @@ class PublicPageBilibiliSourceTests {
         PublicPageBilibiliSource source = new PublicPageBilibiliSource(
             new StubBilibiliHttpClient(null),
             new BilibiliUrlParser(),
-            new BilibiliPageParser());
+            new BilibiliPageParser(), new ObjectMapper());
 
         assertTrue(source.findCandidates(ContentType.MOVIE, 3).isEmpty());
     }
@@ -50,7 +51,7 @@ class PublicPageBilibiliSourceTests {
         PublicPageBilibiliSource source = new PublicPageBilibiliSource(
             new StubBilibiliHttpClient(json),
             new BilibiliUrlParser(),
-            new BilibiliPageParser());
+            new BilibiliPageParser(), new ObjectMapper());
 
         List<BilibiliContent> bangumi = source.findCandidates(ContentType.BANGUMI, 3);
 
@@ -74,7 +75,7 @@ class PublicPageBilibiliSourceTests {
         PublicPageBilibiliSource source = new PublicPageBilibiliSource(
             new StubBilibiliHttpClient(json),
             new BilibiliUrlParser(),
-            new BilibiliPageParser());
+            new BilibiliPageParser(), new ObjectMapper());
 
         List<BilibiliContent> movies = source.findCandidates(ContentType.MOVIE, 3);
 
@@ -103,7 +104,7 @@ class PublicPageBilibiliSourceTests {
             new PublicPageBilibiliSource(
                 http,
                 new BilibiliUrlParser(),
-                new BilibiliPageParser());
+                new BilibiliPageParser(), new ObjectMapper());
 
         BilibiliContent content = source.findBySeasonId(
             ContentType.SERIES, "38729").orElseThrow();
@@ -137,7 +138,7 @@ class PublicPageBilibiliSourceTests {
             new PublicPageBilibiliSource(
                 http,
                 new BilibiliUrlParser(),
-                new BilibiliPageParser());
+                new BilibiliPageParser(), new ObjectMapper());
 
         BilibiliContent content = source.findByContentId(
             ContentType.BANGUMI, "28368476").orElseThrow();
@@ -182,7 +183,7 @@ class PublicPageBilibiliSourceTests {
             new PublicPageBilibiliSource(
                 http,
                 new BilibiliUrlParser(),
-                new BilibiliPageParser());
+                new BilibiliPageParser(), new ObjectMapper());
 
         List<BilibiliContent> results =
             source.searchByTitle("老友记", 5);
@@ -199,7 +200,7 @@ class PublicPageBilibiliSourceTests {
         PublicPageBilibiliSource source = new PublicPageBilibiliSource(
             new StubBilibiliHttpClient("{\"code\":-404,\"message\":\"啥都木有\"}"),
             new BilibiliUrlParser(),
-            new BilibiliPageParser());
+            new BilibiliPageParser(), new ObjectMapper());
 
         IllegalArgumentException error = assertThrows(
             IllegalArgumentException.class,

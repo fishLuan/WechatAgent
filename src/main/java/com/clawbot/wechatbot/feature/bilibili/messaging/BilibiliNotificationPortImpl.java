@@ -5,43 +5,43 @@ import com.clawbot.wechatbot.feature.bilibili.model.RecommendationResult;
 import org.springframework.stereotype.Component;
 
 @Component
-public class BilibiliNotificationPortImpl implements BilibiliNotificationPort {
-    private final WeChatOutboundGateway outboundGateway;
-    private final WeChatSessionRegistry sessionRegistry;
+public final class BilibiliNotificationPortImpl implements BilibiliNotificationPort {
+    private final WeChatOutboundGateway gateway;
+    private final WeChatSessionRegistry sessions;
 
-    public BilibiliNotificationPortImpl(WeChatOutboundGateway outboundGateway,
-                                        WeChatSessionRegistry sessionRegistry) {
-        this.outboundGateway = outboundGateway;
-        this.sessionRegistry = sessionRegistry;
+    public BilibiliNotificationPortImpl(
+        WeChatOutboundGateway gateway,
+        WeChatSessionRegistry sessions
+    ) {
+        this.gateway = gateway;
+        this.sessions = sessions;
     }
 
     @Override
-    public void notifyEpisodeUpdate(String wechatUserId, EpisodeUpdateNotification notification) {
-        requireValidTarget(wechatUserId, notification);
-        String msg = BilibiliMessageFormatter.formatEpisodeUpdate(notification);
-        outboundGateway.sendText(wechatUserId.trim(), msg);
+    public void notifyEpisodeUpdate(
+        String wechatUserId, EpisodeUpdateNotification notification
+    ) {
+        requireDeliverable(wechatUserId, notification);
+        gateway.sendText(
+            wechatUserId, BilibiliMessageFormatter.formatEpisodeUpdate(notification));
     }
 
     @Override
-    public void notifyDailyRecommendation(String wechatUserId, RecommendationResult recommendation) {
-        requireValidTarget(wechatUserId, recommendation);
-        String msg = BilibiliMessageFormatter.formatRecommendation(recommendation);
-        outboundGateway.sendText(wechatUserId.trim(), msg);
+    public void notifyDailyRecommendation(
+        String wechatUserId, RecommendationResult recommendation
+    ) {
+        requireDeliverable(wechatUserId, recommendation);
+        gateway.sendText(
+            wechatUserId, BilibiliMessageFormatter.formatRecommendation(recommendation));
     }
 
-    private void requireValidTarget(String userId, Object payload) {
-        if (payload == null) {
-            throw new IllegalArgumentException("通知内容不能为空");
-        }
+    private void requireDeliverable(String userId, Object payload) {
+        if (payload == null) throw new IllegalArgumentException("推送内容不能为空");
         if (userId == null || userId.isBlank()) {
-            throw new IllegalArgumentException("wechatUserId 不能为空");
+            throw new IllegalArgumentException("微信用户 ID 不能为空");
         }
-        String target = userId.trim();
-        if (!sessionRegistry.isActive(target)) {
-            throw new IllegalStateException("微信会话未激活");
-        }
-        if (!outboundGateway.isAvailable(target)) {
-            throw new IllegalStateException("微信发送通道不可用");
+        if (!gateway.isAvailable(userId)) {
+            throw new IllegalStateException("微信发送通道当前不可用");
         }
     }
 }

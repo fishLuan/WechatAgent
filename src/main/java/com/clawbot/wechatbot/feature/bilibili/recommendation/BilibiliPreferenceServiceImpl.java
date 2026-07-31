@@ -7,9 +7,11 @@ import com.clawbot.wechatbot.feature.bilibili.model.PreferenceUpdate;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliPreferenceRepository;
 import org.springframework.stereotype.Service;
 
+import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.util.LinkedHashSet;
+import java.util.Set;
 
 /**
  * B 站推荐偏好管理实现。
@@ -54,6 +56,25 @@ public class BilibiliPreferenceServiceImpl implements BilibiliPreferenceService 
             String wechatUserId, ContentType contentType, boolean enabled) {
         BilibiliPreference pref = getOrCreate(wechatUserId, contentType);
         pref.setPushEnabled(enabled);
+        pref.setUpdatedAt(Instant.now());
+        return repository.save(pref);
+    }
+
+    @Override
+    public BilibiliPreference setExcludedPushDays(
+        String wechatUserId,
+        ContentType contentType,
+        Set<DayOfWeek> days,
+        boolean excluded
+    ) {
+        BilibiliPreference pref = getOrCreate(wechatUserId, contentType);
+        Set<DayOfWeek> updated = new LinkedHashSet<>(pref.getExcludedPushDays());
+        if (excluded) {
+            updated.addAll(days == null ? Set.of() : days);
+        } else {
+            updated.removeAll(days == null ? Set.of() : days);
+        }
+        pref.setExcludedPushDays(updated);
         pref.setUpdatedAt(Instant.now());
         return repository.save(pref);
     }

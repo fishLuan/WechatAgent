@@ -28,8 +28,10 @@ public final class AgentOrchestrator implements AutoCloseable {
     private final List<AgentTaskHandler> handlers;
     private final boolean enabled;
     private final int maxOuterRounds;
+    private final int maxTasksPerBatch;
     private final Duration executionTimeout;
     private final ExecutorService executor;
+    private final AgentRequestContextHolder requestContextHolder;
 
     public AgentOrchestrator(
         ChatService fallbackChatService,
@@ -45,8 +47,10 @@ public final class AgentOrchestrator implements AutoCloseable {
             handlers,
             enabled,
             maxOuterRounds,
+            5,
             maxParallelism,
-            Duration.ofSeconds(90));
+            Duration.ofSeconds(90),
+            new AgentRequestContextHolder());
     }
 
     public AgentOrchestrator(
@@ -58,11 +62,59 @@ public final class AgentOrchestrator implements AutoCloseable {
         int maxParallelism,
         Duration executionTimeout
     ) {
+        this(
+            fallbackChatService,
+            planner,
+            handlers,
+            enabled,
+            maxOuterRounds,
+            5,
+            maxParallelism,
+            executionTimeout,
+            new AgentRequestContextHolder());
+    }
+
+    public AgentOrchestrator(
+        ChatService fallbackChatService,
+        TaskPlanner planner,
+        List<AgentTaskHandler> handlers,
+        boolean enabled,
+        int maxOuterRounds,
+        int maxParallelism,
+        Duration executionTimeout,
+        AgentRequestContextHolder requestContextHolder
+    ) {
+        this(
+            fallbackChatService,
+            planner,
+            handlers,
+            enabled,
+            maxOuterRounds,
+            5,
+            maxParallelism,
+            executionTimeout,
+            requestContextHolder);
+    }
+
+    public AgentOrchestrator(
+        ChatService fallbackChatService,
+        TaskPlanner planner,
+        List<AgentTaskHandler> handlers,
+        boolean enabled,
+        int maxOuterRounds,
+        int maxTasksPerBatch,
+        int maxParallelism,
+        Duration executionTimeout,
+        AgentRequestContextHolder requestContextHolder
+    ) {
         this.fallbackChatService = fallbackChatService;
         this.planner = planner;
         this.handlers = List.copyOf(handlers);
+        this.requestContextHolder = java.util.Objects.requireNonNull(
+            requestContextHolder, "requestContextHolder");
         this.enabled = enabled;
         this.maxOuterRounds = Math.max(1, maxOuterRounds);
+        this.maxTasksPerBatch = Math.max(1, maxTasksPerBatch);
         if (executionTimeout == null
             || executionTimeout.isZero()
             || executionTimeout.isNegative()) {
@@ -79,29 +131,138 @@ public final class AgentOrchestrator implements AutoCloseable {
     }
 
     public AgentResponse execute(String userText, String history) throws Exception {
+        return execute(userText, history, AgentRequestContext.anonymous());
+    }
+
+    public AgentResponse execute(
+        String userText,
+        String history,
+        AgentRequestContext requestContext
+    ) throws Exception {
+        return execute(userText, history, requestContext, List.of());
+    }
+
+    public AgentResponse execute(
+        String userText,
+        String history,
+        AgentRequestContext requestContext,
+        List<AgentInputAttachment> inputAttachments
+    ) throws Exception {
+        AgentRequestContext actualContext = requestContext == null
+            ? AgentRequestContext.anonymous()
+            : requestContext;
+        List<AgentInputAttachment> actualAttachments = inputAttachments == null
+            ? List.of()
+            : List.copyOf(inputAttachments);
         long deadlineNanos = System.nanoTime() + executionTimeout.toNanos();
         if (!enabled || userText == null || userText.isBlank()) {
-            return executeFallback(userText, history, deadlineNanos);
+            return executeFallback(
+                userText, history, deadlineNanos, actualContext);
         }
 
         PlanningInput input = splitSupportingContext(userText);
-        List<AgentTask> tasks;
+        TaskPlan plan;
         try {
-            tasks = planner.plan(input.userQuestion());
+            plan = planner.planDetailed(input.userQuestion());
         } catch (Exception planningFailure) {
             System.err.println("[WARN] Agent 任务规划失败，回退单任务流程: "
                 + safeMessage(planningFailure));
-            return executeFallback(userText, history, deadlineNanos);
+            return executeFallback(
+                userText, history, deadlineNanos, actualContext);
         }
+        if (plan.limitExceeded()) {
+            return AgentResponse.text(plan.userMessage());
+        }
+        List<AgentTask> tasks = plan.tasks();
         if (tasks.isEmpty()) {
-            return executeFallback(userText, history, deadlineNanos);
+            return executeFallback(
+                userText, history, deadlineNanos, actualContext);
         }
+        return executeTasks(
+            userText,
+            history,
+            input,
+            tasks,
+            deadlineNanos,
+            actualContext,
+            actualAttachments);
+    }
+
+    /**
+     * 执行消息入口已经生成的任务计划，避免普通文本处理器再次调用规划模型。
+     */
+    public AgentResponse executePlanned(
+        String userText,
+        String history,
+        List<AgentTask> preplannedTasks
+    ) throws Exception {
+        return executePlanned(
+            userText,
+            history,
+            preplannedTasks,
+            AgentRequestContext.anonymous());
+    }
+
+    public AgentResponse executePlanned(
+        String userText,
+        String history,
+        List<AgentTask> preplannedTasks,
+        AgentRequestContext requestContext
+    ) throws Exception {
+        return executePlanned(
+            userText,
+            history,
+            preplannedTasks,
+            requestContext,
+            List.of());
+    }
+
+    public AgentResponse executePlanned(
+        String userText,
+        String history,
+        List<AgentTask> preplannedTasks,
+        AgentRequestContext requestContext,
+        List<AgentInputAttachment> inputAttachments
+    ) throws Exception {
+        AgentRequestContext actualContext = requestContext == null
+            ? AgentRequestContext.anonymous()
+            : requestContext;
+        List<AgentInputAttachment> actualAttachments = inputAttachments == null
+            ? List.of()
+            : List.copyOf(inputAttachments);
+        long deadlineNanos = System.nanoTime() + executionTimeout.toNanos();
+        if (!enabled || userText == null || userText.isBlank()
+            || preplannedTasks == null || preplannedTasks.isEmpty()) {
+            return executeFallback(
+                userText, history, deadlineNanos, actualContext);
+        }
+        return executeTasks(
+            userText,
+            history,
+            splitSupportingContext(userText),
+            List.copyOf(preplannedTasks),
+            deadlineNanos,
+            actualContext,
+            actualAttachments);
+    }
+
+    private AgentResponse executeTasks(
+        String userText,
+        String history,
+        PlanningInput input,
+        List<AgentTask> tasks,
+        long deadlineNanos,
+        AgentRequestContext requestContext,
+        List<AgentInputAttachment> inputAttachments
+    ) throws Exception {
 
         // 单一文本任务走原始输入，避免规划器改写造成语义或附加上下文丢失。
         if (tasks.size() == 1
             && tasks.get(0).type() == AgentTaskType.CHAT_TOOL
-            && tasks.get(0).dependencies().isEmpty()) {
-            return executeFallback(userText, history, deadlineNanos);
+            && tasks.get(0).dependencies().isEmpty()
+            && inputAttachments.isEmpty()) {
+            return executeFallback(
+                userText, history, deadlineNanos, requestContext);
         }
 
         Map<String, AgentTask> pending = new LinkedHashMap<>();
@@ -117,6 +278,7 @@ public final class AgentOrchestrator implements AutoCloseable {
              round++) {
             List<AgentTask> ready = pending.values().stream()
                 .filter(task -> completed.keySet().containsAll(task.dependencies()))
+                .limit(maxTasksPerBatch)
                 .toList();
             if (ready.isEmpty()) break;
 
@@ -125,7 +287,9 @@ public final class AgentOrchestrator implements AutoCloseable {
                 completed,
                 input.supportingContext(),
                 history,
-                deadlineNanos);
+                deadlineNanos,
+                requestContext,
+                inputAttachments);
             for (AgentTaskResult result : roundResults) {
                 pending.remove(result.task().id());
                 completed.put(result.task().id(), result);
@@ -146,7 +310,10 @@ public final class AgentOrchestrator implements AutoCloseable {
     }
 
     private AgentResponse executeFallback(
-        String userText, String history, long deadlineNanos
+        String userText,
+        String history,
+        long deadlineNanos,
+        AgentRequestContext requestContext
     ) throws Exception {
         long remainingNanos = deadlineNanos - System.nanoTime();
         if (remainingNanos <= 0) {
@@ -154,7 +321,9 @@ public final class AgentOrchestrator implements AutoCloseable {
                 "Agent 执行时间超过 " + executionTimeout.toSeconds() + " 秒");
         }
         Future<String> future = executor.submit(
-            () -> fallbackChatService.chat(userText, history));
+            () -> requestContextHolder.callWith(
+                requestContext,
+                () -> fallbackChatService.chat(userText, history)));
         try {
             return AgentResponse.text(
                 future.get(remainingNanos, TimeUnit.NANOSECONDS));
@@ -178,12 +347,21 @@ public final class AgentOrchestrator implements AutoCloseable {
         Map<String, AgentTaskResult> completed,
         String supportingContext,
         String history,
-        long deadlineNanos
+        long deadlineNanos,
+        AgentRequestContext requestContext,
+        List<AgentInputAttachment> inputAttachments
     ) {
         List<Future<AgentTaskResult>> futures = new ArrayList<>();
         for (AgentTask task : ready) {
             futures.add(executor.submit(
-                () -> executeTask(task, completed, supportingContext, history)));
+                () -> requestContextHolder.callWith(
+                    requestContext,
+                    () -> executeTask(
+                        task,
+                        completed,
+                        supportingContext,
+                        history,
+                        inputAttachments))));
         }
 
         List<AgentTaskResult> results = new ArrayList<>();
@@ -240,7 +418,8 @@ public final class AgentOrchestrator implements AutoCloseable {
         AgentTask task,
         Map<String, AgentTaskResult> completed,
         String supportingContext,
-        String history
+        String history,
+        List<AgentInputAttachment> inputAttachments
     ) {
         for (String dependencyId : task.dependencies()) {
             AgentTaskResult dependency = completed.get(dependencyId);
@@ -266,7 +445,11 @@ public final class AgentOrchestrator implements AutoCloseable {
         try {
             return handler.execute(
                 task,
-                new AgentTaskContext(history, supportingContext, dependencies));
+                new AgentTaskContext(
+                    history,
+                    supportingContext,
+                    dependencies,
+                    inputAttachments));
         } catch (Exception error) {
             return AgentTaskResult.failure(task, "处理失败：" + safeMessage(error));
         }

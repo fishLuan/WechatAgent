@@ -118,7 +118,7 @@ public class TaskSchedulerCore implements SmartLifecycle {
                         if (provider == null) provider = providerMap.get(com.clawbot.wechatbot.scheduler.model.TaskType.SIMPLE_TEXT);
                         String text = (provider != null)
                             ? provider.provideContent(subscription.getUserId(), subscription.getParamsJson())
-                            : (finalMessageContent.isBlank() ? "⏰ 你的单次提醒到啦！" : finalMessageContent);
+                            : (finalMessageContent.isBlank() ? "单次提醒。" : finalMessageContent);
                         if (text != null && !text.isBlank()) {
                             messageSender.sendText(subscription.getUserId(), text);
                             System.out.println("[SCHEDULER-CORE] ✅【单次提醒】已发送 subId=" + subscription.getId());

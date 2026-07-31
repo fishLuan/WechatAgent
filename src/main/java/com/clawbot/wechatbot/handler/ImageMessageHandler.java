@@ -41,25 +41,25 @@ public class ImageMessageHandler implements MessageHandler {
         // 下载图片字节（取第一张图片）
         byte[] imageBytes = downloadFirstImage(client, msg);
         if (imageBytes == null || imageBytes.length == 0) {
-            safeSendText(client, from, "图片下载失败了，请换一张试试～");
+            safeSendText(client, from, "图片下载失败，请更换图片后重试。");
             return;
         }
 
         // 从消息中提取文本作为问题（用户可能在发图的同时写了文字）
         String question = extractUserTextQuestion(msg);
 
-        // 调用百炼看图 —— 默认 prompt 让模型用生动口语化的语气描述，带点表情
+        // 调用百炼图片理解模型
         try {
             System.out.println("[INFO] 正在调用百炼图片理解模型...");
             String description = visionService.understandImage(imageBytes,
                 question.isEmpty()
-                    ? "用生动口语化的语气描述这张图片，2-3 句话就行，不要分点、不要写详细分析，最后可以带一个合适的 emoji 表情"
+                    ? "用生动口语化的语气描述这张图片，2-3 句话就行，不要分点、不要写详细分析"
                     : question);
             safeSendText(client, from, description);
             System.out.println("[SEND] " + description.replace("\n", " | "));
         } catch (Exception e) {
             System.err.println("[ERROR] 图片理解失败: " + e.getMessage());
-            safeSendText(client, from, "抱歉，图片识别出问题了："
+            safeSendText(client, from, "图片识别失败："
                 + (e.getMessage() == null ? "未知错误" : e.getMessage()));
         }
     }

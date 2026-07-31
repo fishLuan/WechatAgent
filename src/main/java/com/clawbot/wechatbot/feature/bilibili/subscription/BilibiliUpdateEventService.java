@@ -9,6 +9,7 @@ import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliUpdateEventRepo
 import org.springframework.dao.DuplicateKeyException;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
@@ -65,6 +66,7 @@ public final class BilibiliUpdateEventService {
         BilibiliUpdateEvent event = requiredEvent(eventId);
         event.setStatus(UpdateEventStatus.NOTIFIED);
         event.setFailureReason(null);
+        event.setNextAttemptAt(null);
         event.setNotifiedAt(clock.instant());
         event.setUpdatedAt(clock.instant());
         BilibiliUpdateEvent saved = repository.save(event);
@@ -82,6 +84,33 @@ public final class BilibiliUpdateEventService {
         event.setStatus(UpdateEventStatus.FAILED);
         event.setFailureReason(
             reason == null || reason.isBlank() ? "未知投递错误" : reason.trim());
+        event.setUpdatedAt(clock.instant());
+        return repository.save(event);
+    }
+
+    /**
+     * 记录一次投递失败。达到最大次数前仍保持 PENDING，供角色五稍后重试。
+     */
+    public BilibiliUpdateEvent recordDeliveryFailure(
+        String eventId,
+        String reason,
+        int maxAttempts,
+        Duration retryDelay
+    ) {
+        BilibiliUpdateEvent event = requiredEvent(eventId);
+        int attempts = event.getDeliveryAttempts() + 1;
+        event.setDeliveryAttempts(attempts);
+        event.setFailureReason(
+            reason == null || reason.isBlank() ? "未知投递错误" : reason.trim());
+        if (attempts >= Math.max(1, maxAttempts)) {
+            event.setStatus(UpdateEventStatus.FAILED);
+            event.setNextAttemptAt(null);
+        } else {
+            event.setStatus(UpdateEventStatus.PENDING);
+            Duration delay = retryDelay == null || retryDelay.isNegative()
+                ? Duration.ofMinutes(1) : retryDelay;
+            event.setNextAttemptAt(clock.instant().plus(delay));
+        }
         event.setUpdatedAt(clock.instant());
         return repository.save(event);
     }

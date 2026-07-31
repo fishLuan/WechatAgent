@@ -1,10 +1,15 @@
 package com.clawbot.wechatbot;
 
 import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.base.PlannedMessageHandler;
 import com.clawbot.wechatbot.config.BotConfig;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
+import com.clawbot.wechatbot.messaging.MessageDispatchCoordinator;
 import com.clawbot.wechatbot.messaging.WeChatClientRegistry;
 import com.clawbot.wechatbot.notification.NotificationService;
+import com.clawbot.wechatbot.service.agent.AgentTask;
+import com.clawbot.wechatbot.service.agent.MultiTaskPlanningGate;
+import com.clawbot.wechatbot.service.agent.TaskPlan;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.config.ConfigLoader;
@@ -19,6 +24,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -35,6 +41,8 @@ public class WeChatBot implements SmartLifecycle {
     private final NotificationService notifications;
     private final WeChatClientRegistry clientRegistry;
     private final ConversationMemoryService memoryService;
+    private final MultiTaskPlanningGate planningGate;
+    private final MessageDispatchCoordinator messageDispatcher;
     private final List<BotSession> sessions = new CopyOnWriteArrayList<>();
     private final String routeNamespace = "clawbot-" + UUID.randomUUID();
 
@@ -45,13 +53,17 @@ public class WeChatBot implements SmartLifecycle {
     public WeChatBot(BotConfig config, List<MessageHandler> handlers,
                      NotificationService notifications,
                      WeChatClientRegistry clientRegistry,
-                     ConversationMemoryService memoryService) {
+                     ConversationMemoryService memoryService,
+                     MultiTaskPlanningGate planningGate,
+                     MessageDispatchCoordinator messageDispatcher) {
         this.config = config;
         this.handlers = new ArrayList<>(handlers);
         this.handlers.sort(Comparator.comparingInt(MessageHandler::priority));
         this.notifications = notifications;
         this.clientRegistry = clientRegistry;
         this.memoryService = memoryService;
+        this.planningGate = planningGate;
+        this.messageDispatcher = messageDispatcher;
     }
 
     @Override
@@ -152,25 +164,120 @@ public class WeChatBot implements SmartLifecycle {
         for (WeixinMessage message : messages) {
             if (message == null) continue;
             String from = message.getFrom_user_id();
-            if (isDuplicateMessage(from, message.getMessage_id())) {
-                System.out.println("[WECHAT-RECV] 忽略重复消息 messageId="
+            boolean accepted = messageDispatcher.dispatch(
+                from,
+                () -> processMessage(currentClient, message),
+                error -> {
+                    notifications.notifyError("微信消息异步处理", error);
+                    System.err.println("[ERROR] 微信消息异步处理失败: "
+                        + safeMessage(error));
+                });
+            if (!accepted) {
+                System.err.println("[WECHAT-RECV] 消息队列已满，拒绝 messageId="
                     + message.getMessage_id() + " userId=" + from);
-                continue;
+                sendBusyMessage(currentClient, from);
             }
-            clientRegistry.bindUser(from, currentClient);
-            for (MessageHandler handler : handlers) {
-                try {
-                    if (handler.canHandle(message)) {
+        }
+    }
+
+    private void processMessage(
+        ILinkClient currentClient,
+        WeixinMessage message
+    ) {
+        String from = message.getFrom_user_id();
+        if (isDuplicateMessage(from, message.getMessage_id())) {
+            System.out.println("[WECHAT-RECV] 忽略重复消息 messageId="
+                + message.getMessage_id() + " userId=" + from);
+            return;
+        }
+        clientRegistry.bindUser(from, currentClient);
+        Optional<TaskPlan> planningResult =
+            planningGate.planDetailed(message);
+        if (planningResult.filter(TaskPlan::limitExceeded).isPresent()) {
+            String reply = planningResult.orElseThrow().userMessage();
+            try {
+                currentClient.sendText(from, reply);
+                System.out.println("[SEND] " + reply);
+            } catch (Exception error) {
+                notifications.notifyError("发送任务超限提示", error);
+                System.err.println("[ERROR] 发送任务超限提示失败: "
+                    + safeMessage(error));
+            }
+            return;
+        }
+        Optional<List<AgentTask>> plannedTasks =
+            planningResult.map(TaskPlan::tasks);
+        boolean requiresUnifiedRoute =
+            planningGate.hasSupportedAttachment(message);
+        if (plannedTasks.filter(tasks ->
+                tasks.size() > 1 || requiresUnifiedRoute).isPresent()
+            && routePlannedMessage(
+                currentClient, message, plannedTasks.orElseThrow())) {
+            return;
+        }
+        for (MessageHandler handler : handlers) {
+            try {
+                if (handler.canHandle(message)) {
+                    if (handler instanceof PlannedMessageHandler planned
+                        && plannedTasks.isPresent()) {
+                        planned.handlePlanned(
+                            currentClient, message, plannedTasks.orElseThrow());
+                    } else {
                         handler.handle(currentClient, message);
-                        break;
                     }
-                } catch (Exception e) {
-                    notifications.notifyError(
-                        "消息处理器/" + handler.getClass().getSimpleName(), e);
-                    System.err.println("[ERROR] 消息处理失败: " + e.getMessage());
                     break;
                 }
+            } catch (Exception e) {
+                notifications.notifyError(
+                    "消息处理器/" + handler.getClass().getSimpleName(), e);
+                System.err.println("[ERROR] 消息处理失败: " + e.getMessage());
+                break;
             }
+        }
+    }
+
+    private void sendBusyMessage(ILinkClient client, String userId) {
+        if (userId == null || userId.isBlank()) return;
+        try {
+            client.sendText(
+                userId,
+                "当前消息较多，请稍后重新发送这条请求。");
+        } catch (Exception error) {
+            System.err.println("[WARN] 发送消息繁忙提示失败: "
+                + safeMessage(error));
+        }
+    }
+
+    private String safeMessage(Throwable error) {
+        String message = error == null ? null : error.getMessage();
+        return message == null || message.isBlank()
+            ? (error == null ? "未知错误" : error.getClass().getSimpleName())
+            : message;
+    }
+
+    private boolean routePlannedMessage(
+        ILinkClient currentClient,
+        WeixinMessage message,
+        List<AgentTask> tasks
+    ) {
+        PlannedMessageHandler plannedHandler = handlers.stream()
+            .filter(PlannedMessageHandler.class::isInstance)
+            .map(PlannedMessageHandler.class::cast)
+            .findFirst()
+            .orElse(null);
+        if (plannedHandler == null) {
+            System.err.println(
+                "[WARN] 已识别多任务，但没有注册 PlannedMessageHandler，继续普通路由");
+            return false;
+        }
+        try {
+            plannedHandler.handlePlanned(currentClient, message, tasks);
+            return true;
+        } catch (Exception error) {
+            notifications.notifyError(
+                "消息处理器/" + plannedHandler.getClass().getSimpleName(), error);
+            System.err.println("[ERROR] 多任务消息处理失败: " + error.getMessage());
+            return true;
         }
     }
 
@@ -191,6 +298,7 @@ public class WeChatBot implements SmartLifecycle {
     @Override
     public synchronized void stop() {
         running = false;
+        messageDispatcher.close();
         for (BotSession session : sessions) {
             session.stop();
         }
