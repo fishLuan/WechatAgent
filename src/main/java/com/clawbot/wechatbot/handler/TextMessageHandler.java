@@ -131,11 +131,7 @@ public class TextMessageHandler implements PlannedMessageHandler {
             // 1. 关键词预处理：
             //    - 语音指令：剥离"语音/读"等词，避免 DeepSeek 自作主张
             //    - 文档指令：先正常对话，把回复写入 PDF/Word
-            boolean wantVoice = shouldTriggerTts(userText);
-            boolean wantDoc = shouldTriggerDocGen(userText);
             String textForChat = userText;
-            if (wantVoice) textForChat = stripTtsKeywords(textForChat);
-            if (wantDoc)   textForChat = stripDocKeywords(textForChat);
 
             // 2. 新闻关键词检测：如果用户问新闻，直接调 TianNewsTool 获取实时数据
             String newsData = null;
@@ -181,14 +177,14 @@ public class TextMessageHandler implements PlannedMessageHandler {
 
             // 3. 发送文字回复（清理大模型可能自作主张加的"（用男声）"等标记）
             String textReply = cleanBotReply(agentResponse.text());
-            deliverTextReply(client, from, textReply, wantDoc);
+            deliverTextReply(client, from, textReply, false);
             sendAgentAttachments(client, from, agentResponse.attachments());
             appendHistory(from, userText, textReply);
             System.out.println("[RECV] <" + from + "> " + userText);
             System.out.println("[SEND] " + textReply.replace("\n", " | "));
 
             // ===== 4. 语音合成（关键词触发）：把回复文字 → WAV 文件发送 =====
-            if (tts != null && wantVoice) {
+            if (false) {
                 try {
                     String textForTts = textReply.length() > 200
                         ? textReply.substring(0, 200) : textReply;
@@ -204,7 +200,7 @@ public class TextMessageHandler implements PlannedMessageHandler {
             }
 
             // ===== 5. 文档生成（关键词触发）：把回复文字 → PDF/Word 文件发送 =====
-            if (documentService != null && wantDoc) {
+            if (false) {
                 try {
                     boolean isPdf = userText.toLowerCase().contains("pdf");
                     byte[] fileBytes = isPdf

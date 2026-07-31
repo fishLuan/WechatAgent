@@ -90,6 +90,24 @@ public class BotConfig {
     public int getAgentMaxDocumentChars() {
         return getInt("agent.input.max-document-chars");
     }
+    public String getSkillClasspathPattern() {
+        return get("agent.skills.classpath-pattern");
+    }
+    public String getSkillExternalDirectory() {
+        return get("agent.skills.external-directory");
+    }
+    public boolean isSkillWatchEnabled() {
+        return getBoolean("agent.skills.watch-enabled");
+    }
+    public int getSkillReloadDebounceMillis() {
+        return getInt("agent.skills.reload-debounce-millis");
+    }
+    public int getSkillMaxCount() {
+        return getInt("agent.skills.max-count");
+    }
+    public int getSkillMaxDefinitionBytes() {
+        return getInt("agent.skills.max-definition-bytes");
+    }
     public int getDeepSeekConnectTimeoutSeconds() { return getInt("deepseek.connect-timeout-seconds"); }
     public int getDeepSeekRequestTimeoutSeconds() { return getInt("deepseek.request-timeout-seconds"); }
 
