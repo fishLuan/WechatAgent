@@ -98,7 +98,7 @@ public final class BilibiliCommandHandler {
                 case TODAY_RECOMMEND_SERIES ->
                     handleTodayRecommend(userId, ContentType.SERIES);
                 case CONFIGURE_DAILY_RECOMMENDATION ->
-                    handleDailyConfiguration(userId, command);
+                    handleDailyConfiguration(userId, command, input);
                 case SUBSCRIBE_BY_INDEX ->
                     handleSubscribeByIndex(userId, command.index(), command.contentType());
                 case SUBSCRIBE_BY_URL ->
@@ -373,26 +373,67 @@ public final class BilibiliCommandHandler {
     }
 
     private String handleDailyConfiguration(
-        String userId, BilibiliCommandParser.ParsedCommand command
+        String userId,
+        BilibiliCommandParser.ParsedCommand command,
+        String originalInput
     ) {
-        ContentType type = command.contentType();
-        BilibiliPreference current = preferences.getOrCreate(userId, type);
         LocalTime time = LocalTime.parse(command.fieldValue(), HH_MM);
-        double rating = command.minimumRating() == null
-            ? current.getMinimumRating() : command.minimumRating();
-        int count = command.recommendationCount() == null
-            ? current.getRecommendationCount() : command.recommendationCount();
-        if (rating < 0 || rating > 10 || count < 1 || count > 10) {
-            return "❌ 推送条件不合法：评分需为0～10，数量需为1～10。";
+        List<ContentType> types = configuredContentTypes(
+            originalInput, command.contentType());
+        List<BilibiliPreference> savedPreferences = new java.util.ArrayList<>();
+        for (ContentType type : types) {
+            BilibiliPreference current = preferences.getOrCreate(userId, type);
+            double rating = command.minimumRating() == null
+                ? current.getMinimumRating() : command.minimumRating();
+            int count = command.recommendationCount() == null
+                ? current.getRecommendationCount() : command.recommendationCount();
+            if (rating < 0 || rating > 10 || count < 1 || count > 10) {
+                return "❌ 推送条件不合法：评分需为0～10，数量需为1～10。";
+            }
+            savedPreferences.add(preferences.update(
+                userId, type,
+                new PreferenceUpdate(
+                    rating, count, time, safeGenres(current), true)));
         }
-        BilibiliPreference saved = preferences.update(
-            userId, type,
-            new PreferenceUpdate(
-                rating, count, time, safeGenres(current), true));
-        return "✅ 已设置每天 " + saved.getPushTime().format(HH_MM)
-            + " 推送 " + saved.getRecommendationCount() + " 部高分"
-            + BilibiliMessageFormatter.typeName(type)
-            + "（最低 " + saved.getMinimumRating() + " 分）。";
+        if (savedPreferences.size() == 1) {
+            BilibiliPreference saved = savedPreferences.get(0);
+            ContentType type = saved.getContentType();
+            return "✅ 已设置每天 " + saved.getPushTime().format(HH_MM)
+                + " 推送 " + saved.getRecommendationCount() + " 部高分"
+                + BilibiliMessageFormatter.typeName(type)
+                + "（最低 " + saved.getMinimumRating() + " 分）。";
+        }
+        StringBuilder reply = new StringBuilder("✅ 已设置每天 ")
+            .append(time.format(HH_MM)).append(" 推送：");
+        for (BilibiliPreference saved : savedPreferences) {
+            reply.append("\n- ")
+                .append(saved.getRecommendationCount()).append(" 部高分")
+                .append(BilibiliMessageFormatter.typeName(saved.getContentType()))
+                .append("（最低 ").append(saved.getMinimumRating()).append(" 分）");
+        }
+        return reply.toString();
+    }
+
+    private List<ContentType> configuredContentTypes(
+        String input, ContentType fallback
+    ) {
+        String text = input == null ? "" : input;
+        LinkedHashSet<ContentType> types = new LinkedHashSet<>();
+        if (text.contains("动漫") || text.contains("番剧")) {
+            types.add(ContentType.BANGUMI);
+        }
+        if (text.contains("电视剧") || text.contains("剧集")
+            || text.contains("美剧") || text.contains("日剧")
+            || text.contains("韩剧") || text.contains("国产剧")) {
+            types.add(ContentType.SERIES);
+        }
+        if (text.contains("电影")) {
+            types.add(ContentType.MOVIE);
+        }
+        if (types.isEmpty() && fallback != null) {
+            types.add(fallback);
+        }
+        return List.copyOf(types);
     }
 
     private String handleShowPreferences(String userId) {
