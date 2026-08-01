@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Set;
 import java.time.DayOfWeek;
 import java.time.LocalTime;
+import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -42,6 +43,7 @@ class BilibiliCommandHandlerTests {
     private PendingSearchResultStore pendingSearchResults;
     private BilibiliRagService ragService;
     private SchedulerControlService schedulerService;
+    private BilibiliContentRepository contentRepository;
     private BilibiliCommandHandler handler;
 
     @BeforeEach
@@ -54,6 +56,7 @@ class BilibiliCommandHandlerTests {
         pendingSearchResults = new PendingSearchResultStore();
         ragService = mock(BilibiliRagService.class);
         schedulerService = mock(SchedulerControlService.class);
+        contentRepository = mock(BilibiliContentRepository.class);
         BilibiliProperties properties = new BilibiliProperties();
         handler = new BilibiliCommandHandler(
             subscriptionService,
@@ -67,7 +70,7 @@ class BilibiliCommandHandlerTests {
             historyService,
             pendingSearchResults,
             ragService,
-            mock(BilibiliContentRepository.class));
+            contentRepository);
     }
 
     @Test
@@ -429,6 +432,43 @@ class BilibiliCommandHandlerTests {
 
         assertTrue(reply.contains("相似推荐结果"));
         verify(ragService).answerSimilar("user-1", "葬送的芙莉莲", ContentType.BANGUMI);
+    }
+
+    @Test
+    void queriesRecentUpdatesByBoundedTimeRange() {
+        BilibiliContent update = content("media-new", "ss-new", "最近更新作品", false);
+        update.setLatestEpisodePubTime(Instant.now().minusSeconds(3600));
+        when(contentRepository.findUpdatesBetween(
+            org.mockito.ArgumentMatchers.eq(ContentType.BANGUMI), any(), any()))
+            .thenReturn(List.of(update));
+        when(historyService.findExcludedContentIds("user-1", ContentType.BANGUMI))
+            .thenReturn(List.of());
+
+        String reply = handler.handle("user-1", "查找最近更新的动漫");
+
+        assertTrue(reply.contains("最近3天"));
+        assertTrue(reply.contains("最近更新作品"));
+        verify(contentRepository).findUpdatesBetween(
+            org.mockito.ArgumentMatchers.eq(ContentType.BANGUMI), any(), any());
+    }
+
+    @Test
+    void fallsBackToVerifiedRealtimeUpdatesWhenDatabaseIsEmpty() throws Exception {
+        BilibiliContent update = content("media-today", "ss-today", "今日更新作品", false);
+        update.setLatestEpisodePubTime(Instant.now().minusSeconds(60));
+        when(contentRepository.findUpdatesBetween(
+            org.mockito.ArgumentMatchers.eq(ContentType.BANGUMI), any(), any()))
+            .thenReturn(List.of());
+        when(contentSource.findUpdates(
+            org.mockito.ArgumentMatchers.eq(ContentType.BANGUMI), any(), any()))
+            .thenReturn(List.of(update));
+        when(historyService.findExcludedContentIds("user-1", ContentType.BANGUMI))
+            .thenReturn(List.of());
+
+        String reply = handler.handle("user-1", "查找今天更新的动漫");
+
+        assertTrue(reply.contains("今日更新作品"));
+        verify(contentRepository).saveAll(List.of(update));
     }
 
     private RecommendedContent item(String contentId, String seasonId) {
