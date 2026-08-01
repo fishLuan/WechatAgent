@@ -223,6 +223,59 @@ class BilibiliCommandParserTests {
     }
 
     @Test
+    void parsesArabicNumberPointTimesAsConfiguration() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("10点给我推送电影");
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals("10:00", command.fieldValue());
+
+        command = BilibiliCommandParser.parse("晚上10点半推送电影");
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals("22:30", command.fieldValue());
+
+        command = BilibiliCommandParser.parse("上午10点20分推送动漫");
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals("10:20", command.fieldValue());
+    }
+
+    @Test
+    void invalidTimedPushNeverFallsBackToImmediateRecommendation() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("25点给我推送电影");
+
+        assertEquals(BilibiliCommandParser.CmdType.UNKNOWN, command.type());
+    }
+
+    @Test
+    void parsesPeriodQuarterRelativeAndWeeklySchedules() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("下午3:30推送电影");
+        assertEquals("15:30", command.fieldValue());
+        assertEquals("DAILY", command.state());
+
+        command = BilibiliCommandParser.parse("十点一刻推送动漫");
+        assertEquals("10:15", command.fieldValue());
+
+        command = BilibiliCommandParser.parse("两小时后推送电影");
+        assertEquals("ONCE", command.state());
+        assertTrue(Long.parseLong(command.fieldValue()) > System.currentTimeMillis());
+
+        command = BilibiliCommandParser.parse("明天十点推送电影");
+        assertEquals("ONCE", command.state());
+
+        command = BilibiliCommandParser.parse("每周一十点推送动漫");
+        assertEquals("WEEKLY", command.state());
+        assertEquals("MONDAY", command.fieldName());
+        assertEquals("10:00", command.fieldValue());
+    }
+
+    @Test
     void parsesCompoundAnimeAndMoviePushAsConfiguration() {
         BilibiliCommandParser.ParsedCommand command =
             BilibiliCommandParser.parse("每天早上九点二十推送动漫和电影");

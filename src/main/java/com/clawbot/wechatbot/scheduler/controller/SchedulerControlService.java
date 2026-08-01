@@ -140,7 +140,7 @@ public class SchedulerControlService implements SmartLifecycle {
         int skippedOneTime = 0;
         for (ScheduledSubscription sub : enabledSubs) {
             // 单次提醒：过滤掉「已经发过」或「触发时间已过期」的，自动置 disabled
-            if (sub.getTaskType() == TaskType.ONE_TIME_REMINDER) {
+            if (isOneTime(sub)) {
                 boolean skip = false;
                 try {
                     if (sub.getParamsJson() != null && !sub.getParamsJson().isBlank()) {
@@ -241,6 +241,18 @@ public class SchedulerControlService implements SmartLifecycle {
         } catch (Exception e) {
             // 解析失败不打红日志，正常容错（用户可能打错了格式），直接回退默认9点
             return "0 0 9 * * ?";
+        }
+    }
+
+    private boolean isOneTime(ScheduledSubscription subscription) {
+        if (subscription.getTaskType() == TaskType.ONE_TIME_REMINDER) return true;
+        try {
+            com.fasterxml.jackson.databind.JsonNode params =
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readTree(subscription.getParamsJson());
+            return params.path("fire_timestamp").asLong(0L) > 0L;
+        } catch (Exception ignored) {
+            return false;
         }
     }
 

@@ -377,9 +377,12 @@ public final class BilibiliCommandHandler {
         BilibiliCommandParser.ParsedCommand command,
         String originalInput
     ) {
-        LocalTime time = LocalTime.parse(command.fieldValue(), HH_MM);
         List<ContentType> types = configuredContentTypes(
             originalInput, command.contentType());
+        if ("ONCE".equals(command.state())) {
+            return createOneTimeRecommendation(userId, command, types);
+        }
+        LocalTime time = LocalTime.parse(command.fieldValue(), HH_MM);
         List<BilibiliPreference> savedPreferences = new java.util.ArrayList<>();
         for (ContentType type : types) {
             BilibiliPreference current = preferences.getOrCreate(userId, type);
@@ -394,16 +397,30 @@ public final class BilibiliCommandHandler {
                 userId, type,
                 new PreferenceUpdate(
                     rating, count, time, safeGenres(current), true)));
+            if ("WEEKLY".equals(command.state())) {
+                Set<DayOfWeek> included = parseDays(command.fieldName());
+                Set<DayOfWeek> excluded = new LinkedHashSet<>(
+                    Set.of(DayOfWeek.values()));
+                excluded.removeAll(included);
+                preferences.setExcludedPushDays(userId, type,
+                    Set.of(DayOfWeek.values()), false);
+                preferences.setExcludedPushDays(userId, type, excluded, true);
+            }
         }
         if (savedPreferences.size() == 1) {
             BilibiliPreference saved = savedPreferences.get(0);
             ContentType type = saved.getContentType();
-            return "✅ 已设置每天 " + saved.getPushTime().format(HH_MM)
+            String frequency = "WEEKLY".equals(command.state())
+                ? "每" + formatDays(parseDays(command.fieldName())) + " " : "每天 ";
+            return "✅ 已设置" + frequency + saved.getPushTime().format(HH_MM)
                 + " 推送 " + saved.getRecommendationCount() + " 部高分"
                 + BilibiliMessageFormatter.typeName(type)
                 + "（最低 " + saved.getMinimumRating() + " 分）。";
         }
-        StringBuilder reply = new StringBuilder("✅ 已设置每天 ")
+        String prefix = "WEEKLY".equals(command.state())
+            ? "✅ 已设置每" + formatDays(parseDays(command.fieldName())) + " "
+            : "✅ 已设置每天 ";
+        StringBuilder reply = new StringBuilder(prefix)
             .append(time.format(HH_MM)).append(" 推送：");
         for (BilibiliPreference saved : savedPreferences) {
             reply.append("\n- ")
@@ -412,6 +429,44 @@ public final class BilibiliCommandHandler {
                 .append("（最低 ").append(saved.getMinimumRating()).append(" 分）");
         }
         return reply.toString();
+    }
+
+    private String createOneTimeRecommendation(
+        String userId,
+        BilibiliCommandParser.ParsedCommand command,
+        List<ContentType> types
+    ) {
+        long fireAt = Long.parseLong(command.fieldValue());
+        if (fireAt <= System.currentTimeMillis()) {
+            return "❌ 推送时间必须晚于当前时间。";
+        }
+        for (ContentType type : types) {
+            BilibiliPreference preference = preferences.getOrCreate(userId, type);
+            int count = command.recommendationCount() == null
+                ? Math.max(1, preference.getRecommendationCount())
+                : command.recommendationCount();
+            ScheduledSubscription task = new ScheduledSubscription();
+            task.setUserId(userId);
+            task.setTaskType(TaskType.BILIBILI_RECOMMENDATION);
+            task.setCronExpression("");
+            com.fasterxml.jackson.databind.node.ObjectNode params =
+                objectMapper.createObjectNode();
+            params.put("fire_timestamp", fireAt);
+            params.put("already_fired", false);
+            params.put("bilibili_content_type", type.name());
+            params.put("recommendation_count", count);
+            task.setParamsJson(params.toString());
+            task.setEnabled(true);
+            schedulerService.createOrUpdate(task);
+        }
+        String time = java.time.LocalDateTime.ofInstant(
+                Instant.ofEpochMilli(fireAt), ZoneId.of("Asia/Shanghai"))
+            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+        String names = types.stream()
+            .map(BilibiliMessageFormatter::typeName)
+            .reduce((left, right) -> left + "和" + right)
+            .orElse("内容");
+        return "✅ 已设置一次性任务：" + time + " 推送" + names + "。";
     }
 
     private List<ContentType> configuredContentTypes(
