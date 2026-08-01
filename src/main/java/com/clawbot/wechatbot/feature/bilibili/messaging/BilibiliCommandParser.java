@@ -3,6 +3,9 @@ package com.clawbot.wechatbot.feature.bilibili.messaging;
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 
 import java.time.LocalTime;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -98,8 +101,14 @@ public final class BilibiliCommandParser {
     private static final Pattern CHECK_NOW = Pattern.compile(
         "^(立即|马上|现在)?\\s*(检查更新|刷新更新|扫一下更新)\\s*$");
 
-    private static final Pattern TODAY_UPDATES = Pattern.compile(
-        "^(?:今天|今日|现在).*?(?:更新|上新|出了|上线|新番|新动漫).*?(动漫|番剧|番(?!茄|号)|剧集|电视剧|剧)(?:呢|吗|啊|呀)?\\s*$");
+    private static final Pattern UPDATE_QUERY = Pattern.compile(
+        "^(?:(?:请|帮我|给我)?\\s*(?:查找|搜索|搜一下|找一下|找|看看|看一下|查询)?\\s*)?"
+            + "(今天|今日|最近(?:24|二十四)小时|近(?:24|二十四)小时|最近(?:7|七)天|近(?:7|七)天|最近一周|近一周|最近(?:3|三)天|近(?:3|三)天|本周|这周|最近)"
+            + ".*?(?:更新|上新|上线|出了|新番|新动漫).*?"
+            + "(动漫|番剧|番(?!茄|号)|剧集|电视剧|剧)(?:呢|吗|啊|呀|有哪些|有什么)?\\s*$");
+    private static final Pattern NEW_CONTENT_QUERY = Pattern.compile(
+        "^(今天|今日|最近|本周|这周).*?(?:有什么|有啥|出了哪些|上线了哪些)\\s*"
+            + "(新番|新动漫|新剧|新电视剧)(?:呢|吗|啊|呀)?\\s*$");
 
     private static final Pattern SEARCH_BY_TITLE = Pattern.compile(
         "^(?:搜索|查找|搜一下|找一下|帮我找(?:一下)?)\\s*(?:B站)?\\s*(.+?)\\s*$");
@@ -121,8 +130,16 @@ public final class BilibiliCommandParser {
         "(10(?:\\.0)?|\\d(?:\\.\\d)?)\\s*分(?:以上|起)?");
     private static final Pattern COUNT = Pattern.compile("(\\d{1,2})\\s*(?:部|个)");
     private static final Pattern CHINESE_TIME = Pattern.compile(
-        "(凌晨|早上|上午|中午|下午|晚上)?\\s*([零〇一二两三四五六七八九十]{1,3})点"
-            + "(?:(半)|([零〇一二两三四五六七八九十]{1,3})分?)?");
+        "(凌晨|早上|上午|中午|下午|晚上)?\\s*"
+            + "([0-9]{1,2}|[零〇一二两三四五六七八九十]{1,3})[点时]"
+            + "(?:(半)|([0-9]{1,2}|[零〇一二两三四五六七八九十]{1,3})分?)?");
+    private static final Pattern PERIOD_COLON_TIME = Pattern.compile(
+        "(凌晨|早上|上午|中午|下午|晚上)\\s*([0-9]{1,2})[:：]([0-5][0-9])");
+    private static final Pattern QUARTER_TIME = Pattern.compile(
+        "(凌晨|早上|上午|中午|下午|晚上)?\\s*"
+            + "([0-9]{1,2}|[零〇一二两三四五六七八九十]{1,3})[点时](一刻|三刻|整)");
+    private static final Pattern RELATIVE_TIME = Pattern.compile(
+        "([0-9]{1,4}|[零〇一二两三四五六七八九十百]{1,5})(小时|分钟)后");
 
     public static ParsedCommand parse(String input) {
         if (input == null || input.isBlank()) return ParsedCommand.unknown();
@@ -207,20 +224,32 @@ public final class BilibiliCommandParser {
             return ParsedCommand.of(CmdType.CHECK_UPDATES_NOW);
         }
 
+        // 更新查询必须先于标题搜索和 RAG，避免把“最近更新的动漫”当成作品名。
+        matcher = UPDATE_QUERY.matcher(text);
+        if (matcher.matches()) {
+            ContentType ct = typeOf(matcher.group(2));
+            CmdType ty = ct == ContentType.SERIES ? CmdType.TODAY_UPDATES_SERIES : CmdType.TODAY_UPDATES_ANIME;
+            return new ParsedCommand(ty, null, null, ct, null, "update_range",
+                updateRangeValue(matcher.group(1)), null, null, null, null, null);
+        }
+        matcher = NEW_CONTENT_QUERY.matcher(text);
+        if (matcher.matches()) {
+            ContentType ct = matcher.group(2).contains("剧")
+                && !matcher.group(2).contains("番剧") ? ContentType.SERIES : ContentType.BANGUMI;
+            CmdType ty = ct == ContentType.SERIES
+                ? CmdType.TODAY_UPDATES_SERIES : CmdType.TODAY_UPDATES_ANIME;
+            return new ParsedCommand(ty, null, null, ct, null, "update_range",
+                updateRangeValue(matcher.group(1)), null, null, null, null, null);
+        }
+
         ParsedCommand rag = parseRag(text);
         if (rag != null) return rag;
-        // 11. 今日更新（"今天更新了哪些动漫"/"今日更新的番"/"今天有什么新番"）
-        matcher = TODAY_UPDATES.matcher(text);
-        if (matcher.find()) {
-            ContentType ct = typeOf(matcher.group(1));
-            CmdType ty = ct == ContentType.SERIES ? CmdType.TODAY_UPDATES_SERIES : CmdType.TODAY_UPDATES_ANIME;
-            return new ParsedCommand(ty, null, null, ct, null, null, null, null, null, null, null, null);
-        }
 
         matcher = SEARCH_BY_TITLE.matcher(text);
         if (matcher.find() && !matcher.group(1).isBlank()) {
             return new ParsedCommand(CmdType.SEARCH_BY_TITLE,
-                null, null, null, null, "title", matcher.group(1).trim(), null, null, null, null, null);
+                null, null, null, null, null, null, null,
+                matcher.group(1).trim(), null, null, null);
         }
 
         matcher = TITLE_STATE.matcher(text);
@@ -241,6 +270,12 @@ public final class BilibiliCommandParser {
             return new ParsedCommand(
                 CmdType.SUBSCRIBE_BY_TITLE, null, null, null, null, null, null,
                 null, cleanTitle(matcher.group(1)), null, null, null);
+        }
+
+        // 含明确时间形态的推送指令只能作为配置处理。即使时间不合法，
+        // 也不能继续降级为“立即推荐”，否则“25点推送电影”会马上发送。
+        if (looksLikeTimedPush(text)) {
+            return ParsedCommand.unknown();
         }
 
         ContentType contentType = inferType(text);
@@ -367,12 +402,12 @@ public final class BilibiliCommandParser {
     }
 
     private static ParsedCommand parseDailyRecommendation(String text) {
-        if (!(text.contains("每天") || text.contains("每日"))) return null;
+        if (text.contains("推送时间")) return null;
         if (!(text.contains("推送") || text.contains("推荐"))) return null;
         ContentType type = inferType(text);
         if (type == null) return null;
-        LocalTime time = extractTime(text);
-        if (time == null) return null;
+        ScheduleValue schedule = parseSchedule(text);
+        if (schedule == null) return null;
 
         Double rating = null;
         Matcher ratingMatcher = RATING.matcher(text);
@@ -387,11 +422,64 @@ public final class BilibiliCommandParser {
 
         return new ParsedCommand(
             CmdType.CONFIGURE_DAILY_RECOMMENDATION,
-            null, null, type, null, "daily_recommendation",
-            time.toString(), true, null, null, rating, count);
+            null, null, type, null, schedule.weekdays(),
+            schedule.value(), true, null, schedule.kind(), rating, count);
+    }
+
+    private static ScheduleValue parseSchedule(String text) {
+        Matcher relative = RELATIVE_TIME.matcher(text);
+        if (relative.find()) {
+            int amount = chineseNumber(relative.group(1));
+            if (amount < 1) return null;
+            LocalDateTime fireAt = LocalDateTime.now(ZoneId.of("Asia/Shanghai"));
+            fireAt = "小时".equals(relative.group(2))
+                ? fireAt.plusHours(amount) : fireAt.plusMinutes(amount);
+            return new ScheduleValue(
+                "ONCE", String.valueOf(fireAt.atZone(
+                    ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli()), null);
+        }
+
+        LocalTime time = extractTime(text);
+        if (time == null) return null;
+        if (text.contains("明天") || text.contains("后天")) {
+            int days = text.contains("后天") ? 2 : 1;
+            LocalDateTime fireAt = LocalDate.now(ZoneId.of("Asia/Shanghai"))
+                .plusDays(days).atTime(time);
+            return new ScheduleValue(
+                "ONCE", String.valueOf(fireAt.atZone(
+                    ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli()), null);
+        }
+
+        if (text.contains("每周") || text.contains("每星期")
+            || text.contains("每个星期")) {
+            Set<String> days = new LinkedHashSet<>();
+            Matcher weekday = WEEKDAY.matcher(text);
+            while (weekday.find()) days.add(dayName(weekday.group(1)));
+            if (days.isEmpty()) return null;
+            return new ScheduleValue(
+                "WEEKLY", time.toString(), String.join(",", days));
+        }
+        return new ScheduleValue("DAILY", time.toString(), null);
     }
 
     private static LocalTime extractTime(String text) {
+        Matcher periodColon = PERIOD_COLON_TIME.matcher(text);
+        if (periodColon.find()) {
+            int hour = Integer.parseInt(periodColon.group(2));
+            int minute = Integer.parseInt(periodColon.group(3));
+            hour = adjustHour(periodColon.group(1), hour);
+            return hour > 23 ? null : LocalTime.of(hour, minute);
+        }
+        Matcher quarter = QUARTER_TIME.matcher(text);
+        if (quarter.find()) {
+            int hour = adjustHour(quarter.group(1), chineseNumber(quarter.group(2)));
+            int minute = switch (quarter.group(3)) {
+                case "一刻" -> 15;
+                case "三刻" -> 45;
+                default -> 0;
+            };
+            return hour > 23 ? null : LocalTime.of(hour, minute);
+        }
         Matcher arabic = ARABIC_TIME.matcher(text);
         if (arabic.find()) return LocalTime.parse(normalizeTime(arabic.group(1)));
         Matcher chinese = CHINESE_TIME.matcher(text);
@@ -401,15 +489,24 @@ public final class BilibiliCommandParser {
             ? 30
             : chinese.group(4) == null ? 0 : chineseNumber(chinese.group(4));
         String period = chinese.group(1);
-        if (("下午".equals(period) || "晚上".equals(period)) && hour < 12) hour += 12;
-        if ("中午".equals(period) && hour < 11) hour += 12;
-        if ("凌晨".equals(period) && hour == 12) hour = 0;
+        hour = adjustHour(period, hour);
         if (hour > 23 || minute > 59) return null;
         return LocalTime.of(hour, minute);
     }
 
+    private static int adjustHour(String period, int hour) {
+        if (("下午".equals(period) || "晚上".equals(period)) && hour < 12) hour += 12;
+        if ("中午".equals(period) && hour < 11) hour += 12;
+        if ("凌晨".equals(period) && hour == 12) hour = 0;
+        return hour;
+    }
+
+    private record ScheduleValue(String kind, String value, String weekdays) {
+    }
+
     private static int chineseNumber(String value) {
         if (value == null || value.isBlank()) return 0;
+        if (value.matches("\\d+")) return Integer.parseInt(value);
         String normalized = value.replace('两', '二').replace('〇', '零');
         if (normalized.equals("十")) return 10;
         int ten = normalized.indexOf('十');
@@ -423,6 +520,16 @@ public final class BilibiliCommandParser {
             result = result * 10 + digit(normalized.charAt(i));
         }
         return result;
+    }
+
+    private static boolean looksLikeTimedPush(String text) {
+        if (!(text.contains("推送") || text.contains("推荐"))) return false;
+        if (inferType(text) == null) return false;
+        return text.matches(".*(?:[0-9]{1,2}\\s*[点时]|[0-9]{1,2}[:：][0-9]{1,2}).*")
+            || CHINESE_TIME.matcher(text).find()
+            || RELATIVE_TIME.matcher(text).find()
+            || text.contains("明天") || text.contains("后天")
+            || text.contains("每周") || text.contains("每星期");
     }
 
     private static int parseIndex(String value) {
@@ -489,6 +596,23 @@ public final class BilibiliCommandParser {
             case "不喜欢" -> "disliked";
             default -> "watched";
         };
+    }
+
+    private static String updateRangeValue(String value) {
+        if (value == null) return BilibiliUpdateRange.TODAY.name();
+        if (value.contains("24") || value.contains("二十四")) {
+            return BilibiliUpdateRange.LAST_24_HOURS.name();
+        }
+        if (value.contains("本周") || value.contains("这周")) {
+            return BilibiliUpdateRange.THIS_WEEK.name();
+        }
+        if (value.contains("一周") || value.contains("7天") || value.contains("七天")) {
+            return BilibiliUpdateRange.LAST_7_DAYS.name();
+        }
+        if (value.contains("最近") || value.startsWith("近")) {
+            return BilibiliUpdateRange.LAST_3_DAYS.name();
+        }
+        return BilibiliUpdateRange.TODAY.name();
     }
 
     private static String dayName(String value) {

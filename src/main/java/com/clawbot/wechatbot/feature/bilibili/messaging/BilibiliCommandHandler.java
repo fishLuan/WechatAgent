@@ -26,7 +26,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.DayOfWeek;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -98,7 +97,7 @@ public final class BilibiliCommandHandler {
                 case TODAY_RECOMMEND_SERIES ->
                     handleTodayRecommend(userId, ContentType.SERIES);
                 case CONFIGURE_DAILY_RECOMMENDATION ->
-                    handleDailyConfiguration(userId, command);
+                    handleDailyConfiguration(userId, command, input);
                 case SUBSCRIBE_BY_INDEX ->
                     handleSubscribeByIndex(userId, command.index(), command.contentType());
                 case SUBSCRIBE_BY_URL ->
@@ -143,9 +142,11 @@ public final class BilibiliCommandHandler {
                     BilibiliMessageFormatter.formatCheckResult(
                         subscriptions.checkNow(userId));
                 case TODAY_UPDATES_ANIME ->
-                    handleTodayUpdates(userId, ContentType.BANGUMI);
+                    handleUpdates(userId, ContentType.BANGUMI,
+                        BilibiliUpdateRange.fromCommandValue(command.fieldValue()));
                 case TODAY_UPDATES_SERIES ->
-                    handleTodayUpdates(userId, ContentType.SERIES);
+                    handleUpdates(userId, ContentType.SERIES,
+                        BilibiliUpdateRange.fromCommandValue(command.fieldValue()));
                 case RAG_QA ->
                     ragService.answer(userId, command.title(), command.contentType());
                 case RAG_SIMILAR ->
@@ -373,26 +374,122 @@ public final class BilibiliCommandHandler {
     }
 
     private String handleDailyConfiguration(
-        String userId, BilibiliCommandParser.ParsedCommand command
+        String userId,
+        BilibiliCommandParser.ParsedCommand command,
+        String originalInput
     ) {
-        ContentType type = command.contentType();
-        BilibiliPreference current = preferences.getOrCreate(userId, type);
-        LocalTime time = LocalTime.parse(command.fieldValue(), HH_MM);
-        double rating = command.minimumRating() == null
-            ? current.getMinimumRating() : command.minimumRating();
-        int count = command.recommendationCount() == null
-            ? current.getRecommendationCount() : command.recommendationCount();
-        if (rating < 0 || rating > 10 || count < 1 || count > 10) {
-            return "❌ 推送条件不合法：评分需为0～10，数量需为1～10。";
+        List<ContentType> types = configuredContentTypes(
+            originalInput, command.contentType());
+        if ("ONCE".equals(command.state())) {
+            return createOneTimeRecommendation(userId, command, types);
         }
-        BilibiliPreference saved = preferences.update(
-            userId, type,
-            new PreferenceUpdate(
-                rating, count, time, safeGenres(current), true));
-        return "✅ 已设置每天 " + saved.getPushTime().format(HH_MM)
-            + " 推送 " + saved.getRecommendationCount() + " 部高分"
-            + BilibiliMessageFormatter.typeName(type)
-            + "（最低 " + saved.getMinimumRating() + " 分）。";
+        LocalTime time = LocalTime.parse(command.fieldValue(), HH_MM);
+        List<BilibiliPreference> savedPreferences = new java.util.ArrayList<>();
+        for (ContentType type : types) {
+            BilibiliPreference current = preferences.getOrCreate(userId, type);
+            double rating = command.minimumRating() == null
+                ? current.getMinimumRating() : command.minimumRating();
+            int count = command.recommendationCount() == null
+                ? current.getRecommendationCount() : command.recommendationCount();
+            if (rating < 0 || rating > 10 || count < 1 || count > 10) {
+                return "❌ 推送条件不合法：评分需为0～10，数量需为1～10。";
+            }
+            savedPreferences.add(preferences.update(
+                userId, type,
+                new PreferenceUpdate(
+                    rating, count, time, safeGenres(current), true)));
+            if ("WEEKLY".equals(command.state())) {
+                Set<DayOfWeek> included = parseDays(command.fieldName());
+                Set<DayOfWeek> excluded = new LinkedHashSet<>(
+                    Set.of(DayOfWeek.values()));
+                excluded.removeAll(included);
+                preferences.setExcludedPushDays(userId, type,
+                    Set.of(DayOfWeek.values()), false);
+                preferences.setExcludedPushDays(userId, type, excluded, true);
+            }
+        }
+        if (savedPreferences.size() == 1) {
+            BilibiliPreference saved = savedPreferences.get(0);
+            ContentType type = saved.getContentType();
+            String frequency = "WEEKLY".equals(command.state())
+                ? "每" + formatDays(parseDays(command.fieldName())) + " " : "每天 ";
+            return "✅ 已设置" + frequency + saved.getPushTime().format(HH_MM)
+                + " 推送 " + saved.getRecommendationCount() + " 部高分"
+                + BilibiliMessageFormatter.typeName(type)
+                + "（最低 " + saved.getMinimumRating() + " 分）。";
+        }
+        String prefix = "WEEKLY".equals(command.state())
+            ? "✅ 已设置每" + formatDays(parseDays(command.fieldName())) + " "
+            : "✅ 已设置每天 ";
+        StringBuilder reply = new StringBuilder(prefix)
+            .append(time.format(HH_MM)).append(" 推送：");
+        for (BilibiliPreference saved : savedPreferences) {
+            reply.append("\n- ")
+                .append(saved.getRecommendationCount()).append(" 部高分")
+                .append(BilibiliMessageFormatter.typeName(saved.getContentType()))
+                .append("（最低 ").append(saved.getMinimumRating()).append(" 分）");
+        }
+        return reply.toString();
+    }
+
+    private String createOneTimeRecommendation(
+        String userId,
+        BilibiliCommandParser.ParsedCommand command,
+        List<ContentType> types
+    ) {
+        long fireAt = Long.parseLong(command.fieldValue());
+        if (fireAt <= System.currentTimeMillis()) {
+            return "❌ 推送时间必须晚于当前时间。";
+        }
+        for (ContentType type : types) {
+            BilibiliPreference preference = preferences.getOrCreate(userId, type);
+            int count = command.recommendationCount() == null
+                ? Math.max(1, preference.getRecommendationCount())
+                : command.recommendationCount();
+            ScheduledSubscription task = new ScheduledSubscription();
+            task.setUserId(userId);
+            task.setTaskType(TaskType.BILIBILI_RECOMMENDATION);
+            task.setCronExpression("");
+            com.fasterxml.jackson.databind.node.ObjectNode params =
+                objectMapper.createObjectNode();
+            params.put("fire_timestamp", fireAt);
+            params.put("already_fired", false);
+            params.put("bilibili_content_type", type.name());
+            params.put("recommendation_count", count);
+            task.setParamsJson(params.toString());
+            task.setEnabled(true);
+            schedulerService.createOrUpdate(task);
+        }
+        String time = java.time.LocalDateTime.ofInstant(
+                Instant.ofEpochMilli(fireAt), ZoneId.of("Asia/Shanghai"))
+            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+        String names = types.stream()
+            .map(BilibiliMessageFormatter::typeName)
+            .reduce((left, right) -> left + "和" + right)
+            .orElse("内容");
+        return "✅ 已设置一次性任务：" + time + " 推送" + names + "。";
+    }
+
+    private List<ContentType> configuredContentTypes(
+        String input, ContentType fallback
+    ) {
+        String text = input == null ? "" : input;
+        LinkedHashSet<ContentType> types = new LinkedHashSet<>();
+        if (text.contains("动漫") || text.contains("番剧")) {
+            types.add(ContentType.BANGUMI);
+        }
+        if (text.contains("电视剧") || text.contains("剧集")
+            || text.contains("美剧") || text.contains("日剧")
+            || text.contains("韩剧") || text.contains("国产剧")) {
+            types.add(ContentType.SERIES);
+        }
+        if (text.contains("电影")) {
+            types.add(ContentType.MOVIE);
+        }
+        if (types.isEmpty() && fallback != null) {
+            types.add(fallback);
+        }
+        return List.copyOf(types);
     }
 
     private String handleShowPreferences(String userId) {
@@ -519,40 +616,54 @@ public final class BilibiliCommandHandler {
 
     /* ========== 8. 今日更新推荐 ========== */
     public String handleTodayUpdates(String userId, ContentType contentType) {
+        return handleUpdates(userId, contentType, BilibiliUpdateRange.TODAY);
+    }
+
+    public String handleUpdates(
+        String userId, ContentType contentType, BilibiliUpdateRange range
+    ) {
         sessions.markActive(userId);
         if (contentType == null) contentType = ContentType.BANGUMI;
+        if (range == null) range = BilibiliUpdateRange.TODAY;
         try {
-            List<BilibiliContent> updatedToday;
-            ZoneId bj = ZoneId.of("Asia/Shanghai");
-            Instant todayStart = LocalDate.now(bj).atStartOfDay(bj).toInstant();
+            Instant end = Instant.now();
+            Instant start = range.from(end);
+            List<BilibiliContent> updates = contentRepository.findUpdatesBetween(
+                contentType, start, end);
 
-            updatedToday = contentRepository.findTodayUpdates(contentType, todayStart);
-            if (updatedToday != null && !updatedToday.isEmpty()) {
-                System.out.println("[BILIBILI] DB pubTime 查询命中 " + updatedToday.size() + " 条");
+            if (updates != null && !updates.isEmpty()) {
+                System.out.println("[BILIBILI] " + range.displayName()
+                    + " DB 更新时间查询命中 " + updates.size() + " 条");
             } else {
                 try {
-                    updatedToday = contentSource.findTodayAiring(contentType);
-                    System.out.println("[BILIBILI] PGC 索引返回 "
-                        + (updatedToday == null ? 0 : updatedToday.size()) + " 条");
+                    updates = contentSource.findUpdates(contentType, start, end);
+                    if (updates != null && !updates.isEmpty()) {
+                        contentRepository.saveAll(updates);
+                    }
+                    System.out.println("[BILIBILI] " + range.displayName() + " 实时数据返回 "
+                        + (updates == null ? 0 : updates.size()) + " 条");
                 } catch (Exception e) {
-                    System.err.println("[BILIBILI] PGC 索引失败: " + e.getMessage());
+                    System.err.println("[BILIBILI] 更新时间实时查询失败: " + e.getMessage());
+                    return "暂时无法获取B站实时更新数据，请稍后重试。";
                 }
             }
 
-            if (updatedToday == null || updatedToday.isEmpty()) {
-                return "📭 今天暂时没有" + typeNameOf(contentType) + "更新哦～\n可能B站还没上新，晚点再来看看吧！";
+            if (updates == null || updates.isEmpty()) {
+                return range.displayName() + "暂时没有查到" + typeNameOf(contentType)
+                    + "更新。若本地作品库尚未刷新，也可以稍后再试。";
             }
 
-            int totalCount = updatedToday.size();
+            int totalCount = updates.size();
             int count = resolveDefaultCount(userId, contentType);
             List<String> excluded = history.findExcludedContentIds(userId, contentType);
-            List<BilibiliContent> filtered = updatedToday.stream()
+            List<BilibiliContent> filtered = updates.stream()
                 .filter(c -> !excluded.contains(c.getContentId()))
                 .limit(count)
                 .toList();
-            return BilibiliMessageFormatter.formatTodayUpdates(contentType, totalCount, filtered);
+            return BilibiliMessageFormatter.formatUpdates(
+                contentType, range.displayName(), totalCount, filtered);
         } catch (Exception e) {
-            return failure("获取今日更新失败", e);
+            return failure("获取" + range.displayName() + "更新失败", e);
         }
     }
 

@@ -211,6 +211,82 @@ class BilibiliCommandParserTests {
     }
 
     @Test
+    void parsesExplicitTimePushWithoutDailyKeywordAsConfiguration() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("早上九点半给我推送剧集");
+
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals(ContentType.SERIES, command.contentType());
+        assertEquals("09:30", command.fieldValue());
+    }
+
+    @Test
+    void parsesArabicNumberPointTimesAsConfiguration() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("10点给我推送电影");
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals("10:00", command.fieldValue());
+
+        command = BilibiliCommandParser.parse("晚上10点半推送电影");
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals("22:30", command.fieldValue());
+
+        command = BilibiliCommandParser.parse("上午10点20分推送动漫");
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals("10:20", command.fieldValue());
+    }
+
+    @Test
+    void invalidTimedPushNeverFallsBackToImmediateRecommendation() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("25点给我推送电影");
+
+        assertEquals(BilibiliCommandParser.CmdType.UNKNOWN, command.type());
+    }
+
+    @Test
+    void parsesPeriodQuarterRelativeAndWeeklySchedules() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("下午3:30推送电影");
+        assertEquals("15:30", command.fieldValue());
+        assertEquals("DAILY", command.state());
+
+        command = BilibiliCommandParser.parse("十点一刻推送动漫");
+        assertEquals("10:15", command.fieldValue());
+
+        command = BilibiliCommandParser.parse("两小时后推送电影");
+        assertEquals("ONCE", command.state());
+        assertTrue(Long.parseLong(command.fieldValue()) > System.currentTimeMillis());
+
+        command = BilibiliCommandParser.parse("明天十点推送电影");
+        assertEquals("ONCE", command.state());
+
+        command = BilibiliCommandParser.parse("每周一十点推送动漫");
+        assertEquals("WEEKLY", command.state());
+        assertEquals("MONDAY", command.fieldName());
+        assertEquals("10:00", command.fieldValue());
+    }
+
+    @Test
+    void parsesCompoundAnimeAndMoviePushAsConfiguration() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("每天早上九点二十推送动漫和电影");
+
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals("09:20", command.fieldValue());
+    }
+
+    @Test
     void parsesSetMinRatingCommands() {
         BilibiliCommandParser.ParsedCommand c = BilibiliCommandParser.parse("设置电影最低评分 9.5");
         assertEquals(BilibiliCommandParser.CmdType.SET_MIN_RATING, c.type());
@@ -286,6 +362,17 @@ class BilibiliCommandParserTests {
     }
 
     @Test
+    void parsesUpdateQueriesBeforeTitleSearch() {
+        assertUpdateQuery("查找今天更新的动漫", ContentType.BANGUMI, "TODAY");
+        assertUpdateQuery("看看最近更新的动漫", ContentType.BANGUMI, "LAST_3_DAYS");
+        assertUpdateQuery("找最近一周更新的电视剧", ContentType.SERIES, "LAST_7_DAYS");
+        assertUpdateQuery("查询近7天更新的番剧", ContentType.BANGUMI, "LAST_7_DAYS");
+        assertUpdateQuery("查询最近24小时更新的电视剧", ContentType.SERIES, "LAST_24_HOURS");
+        assertUpdateQuery("本周上线的剧集有哪些", ContentType.SERIES, "THIS_WEEK");
+        assertUpdateQuery("今天有什么新番", ContentType.BANGUMI, "TODAY");
+    }
+
+    @Test
     void parsesRagRecommendationCommands() {
         BilibiliCommandParser.ParsedCommand command =
             BilibiliCommandParser.parse("智能推荐动漫");
@@ -346,5 +433,14 @@ class BilibiliCommandParserTests {
         BilibiliCommandParser.ParsedCommand c = BilibiliCommandParser.parse(input);
         assertEquals(expectedType, c.contentType(),
             "contentType 不匹配: input=「" + input + "」");
+    }
+
+    private void assertUpdateQuery(String input, ContentType expectedType, String range) {
+        BilibiliCommandParser.ParsedCommand command = BilibiliCommandParser.parse(input);
+        assertTrue(command.type() == BilibiliCommandParser.CmdType.TODAY_UPDATES_ANIME
+            || command.type() == BilibiliCommandParser.CmdType.TODAY_UPDATES_SERIES,
+            "未识别成更新查询: " + input + "，实际=" + command.type());
+        assertEquals(expectedType, command.contentType());
+        assertEquals(range, command.fieldValue());
     }
 }

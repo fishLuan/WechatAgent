@@ -5,6 +5,7 @@ import com.clawbot.wechatbot.feature.bilibili.source.dto.BilibiliContentDto;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -12,6 +13,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BilibiliPageParserTests {
     private final BilibiliPageParser parser = new BilibiliPageParser();
+
+    @Test
+    void parsesNumericEpisodePublicationTimestamp() {
+        String json = """
+            {
+              "code": 0,
+              "result": {
+                "season_type": 5,
+                "type_name": "电视剧",
+                "media_id": 1001,
+                "season_id": 2002,
+                "title": "测试剧集",
+                "episodes": [
+                  {"id": 3003, "title": "1", "long_title": "第一集",
+                   "pub_time": 1785549600}
+                ],
+                "is_finish": 0
+              }
+            }
+            """;
+
+        BilibiliContentDto dto = parser.parsePgcJson(json, "https://page").orElseThrow();
+
+        assertEquals(ContentType.SERIES, dto.getContentType());
+        assertEquals(Instant.ofEpochSecond(1785549600), dto.getLatestEpisodePubTime());
+    }
 
     @Test
     void parsesPgcMovieWithoutEpisodeTrackingType() {

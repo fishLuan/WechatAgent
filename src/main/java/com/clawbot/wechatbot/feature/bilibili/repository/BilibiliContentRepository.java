@@ -18,9 +18,10 @@ public interface BilibiliContentRepository
     List<BilibiliContent> findByContentTypeAndRatingGreaterThanEqualOrderByRatingDesc(
         ContentType contentType, double minimumRating);
 
-    @Query(value = "{ 'contentType': ?0, 'latestEpisodePubTime': { $gt: ?1 } }",
+    @Query(value = "{ 'contentType': ?0, 'latestEpisodePubTime': { $gte: ?1, $lt: ?2 } }",
            sort = "{ 'latestEpisodePubTime': -1 }")
-    List<BilibiliContent> findTodayUpdates(ContentType contentType, Instant since);
+    List<BilibiliContent> findUpdatesBetween(
+        ContentType contentType, Instant fromInclusive, Instant toExclusive);
 
     List<BilibiliContent> findByContentTypeAndFinishedFalseAndLatestEpisodeNumberGreaterThanOrderByRatingDesc(
         ContentType contentType, int minEpisodeNumber);

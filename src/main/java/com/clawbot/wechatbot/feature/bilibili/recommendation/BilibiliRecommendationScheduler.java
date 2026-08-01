@@ -75,7 +75,6 @@ public class BilibiliRecommendationScheduler {
         // 对每个内容类型独立检查
         for (ContentType type : List.of(ContentType.BANGUMI, ContentType.SERIES, ContentType.MOVIE)) {
             LocalTime targetTime = properties.pushTime(type);
-            if (!isWithinMinute(LocalTime.now(), targetTime)) continue;
 
             // 查找所有开启推送的用户
             List<BilibiliPreference> users = preferenceService.findAllWithPushEnabled(type);
