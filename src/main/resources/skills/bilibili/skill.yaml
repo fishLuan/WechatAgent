@@ -2,14 +2,13 @@ name: bilibili
 version: 1.0.0
 enabled: true
 display-name: B站内容管理
-description: 搜索、推荐、订阅和标记B站动漫、电影、剧集，并配置推送时间、评分、数量和星期策略
+description: 搜索、推荐、订阅和标记B站动漫、电影、剧集（立即操作）。注意：用户要求定时推送（如“几点推送几个电影”）时不要用本技能，改用 scheduler_manage 工具创建定时任务
 executor: bilibili
 capabilities:
   - 搜索B站作品
-  - 推荐动漫、电影和剧集
+  - 立即推荐动漫、电影和剧集
   - 订阅作品并检查更新
   - 标记已看作品
-  - 配置推送偏好
 triggers:
   - B站
   - bilibili
