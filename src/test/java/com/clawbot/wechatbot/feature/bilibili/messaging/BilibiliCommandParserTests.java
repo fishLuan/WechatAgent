@@ -211,6 +211,29 @@ class BilibiliCommandParserTests {
     }
 
     @Test
+    void parsesExplicitTimePushWithoutDailyKeywordAsConfiguration() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("早上九点半给我推送剧集");
+
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals(ContentType.SERIES, command.contentType());
+        assertEquals("09:30", command.fieldValue());
+    }
+
+    @Test
+    void parsesCompoundAnimeAndMoviePushAsConfiguration() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("每天早上九点二十推送动漫和电影");
+
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals("09:20", command.fieldValue());
+    }
+
+    @Test
     void parsesSetMinRatingCommands() {
         BilibiliCommandParser.ParsedCommand c = BilibiliCommandParser.parse("设置电影最低评分 9.5");
         assertEquals(BilibiliCommandParser.CmdType.SET_MIN_RATING, c.type());

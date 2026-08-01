@@ -220,7 +220,8 @@ public final class BilibiliCommandParser {
         matcher = SEARCH_BY_TITLE.matcher(text);
         if (matcher.find() && !matcher.group(1).isBlank()) {
             return new ParsedCommand(CmdType.SEARCH_BY_TITLE,
-                null, null, null, null, "title", matcher.group(1).trim(), null, null, null, null, null);
+                null, null, null, null, null, null, null,
+                matcher.group(1).trim(), null, null, null);
         }
 
         matcher = TITLE_STATE.matcher(text);
@@ -367,7 +368,7 @@ public final class BilibiliCommandParser {
     }
 
     private static ParsedCommand parseDailyRecommendation(String text) {
-        if (!(text.contains("每天") || text.contains("每日"))) return null;
+        if (text.contains("推送时间")) return null;
         if (!(text.contains("推送") || text.contains("推荐"))) return null;
         ContentType type = inferType(text);
         if (type == null) return null;
