@@ -31,11 +31,20 @@ public final class BilibiliCommandMessageHandler implements MessageHandler {
     public boolean canHandle(WeixinMessage message) {
         String text = BilibiliLinkMessageHandler.extractText(message).trim();
         if (text.isEmpty()) return false;
+        // 定时/预约推送请求（含时间词+推送）交给通用 Agent（走 scheduler_manage 创建定时任务），本处理器不拦
+        if (looksLikeScheduledPush(text)) return false;
         if (BilibiliCommandParser.parse(text).type()
             != BilibiliCommandParser.CmdType.UNKNOWN) {
             return true;
         }
         return intents.recognize(text).isBilibiliIntent();
+    }
+
+    /** 定时推送请求检测：时间词 + 推送/推荐/提醒 语义 */
+    private boolean looksLikeScheduledPush(String text) {
+        boolean hasTime = text.matches(".*(每天|每日|明天|后天|定时|预约|几点|固定时间|\\d+\\s*点|\\d{1,2}[:：]\\d{2}).*");
+        boolean hasPush = text.matches(".*(推送|推荐|提醒|发给我|发一下).*");
+        return hasTime && hasPush;
     }
 
     @Override
