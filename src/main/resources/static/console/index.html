@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClawBot 控制台</title>
+<style>
+  :root {
+    --bg: #f5f7fb; --card: #fff; --line: #e5e9f2;
+    --text: #1f2733; --sub: #6b7688; --primary: #3b82f6;
+    --primary-soft: #eff6ff; --green: #10b981; --green-soft: #ecfdf5;
+    --amber: #f59e0b; --amber-soft: #fffbeb; --red: #ef4444; --red-soft: #fef2f2;
+    --radius: 12px; --shadow: 0 1px 3px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); }
+  .app { display: flex; min-height: 100vh; }
+
+  /* 侧边栏 */
+  .sidebar { width: 210px; background: #101828; color: #cbd5e1; padding: 20px 12px; display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; position: sticky; top: 0; height: 100vh; }
+  .logo { display: flex; align-items: center; gap: 10px; padding: 6px 10px 20px; font-size: 16px; font-weight: 700; color: #fff; }
+  .logo .badge { font-size: 10px; background: var(--green); color: #fff; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: 13.5px; transition: background .15s; }
+  .nav-item:hover { background: rgba(255,255,255,.06); }
+  .nav-item.active { background: var(--primary); color: #fff; }
+  .nav-item .tag { margin-left: auto; font-size: 10px; padding: 2px 6px; border-radius: 99px; background: rgba(255,255,255,.14); }
+  .nav-item .tag.auto { background: var(--green); color: #fff; }
+  .nav-item .tag.hand { background: var(--amber); color: #fff; }
+  .sidebar .sec { font-size: 11px; color: #64748b; padding: 14px 12px 6px; letter-spacing: 1px; }
+
+  .main { flex: 1; padding: 24px 30px; min-width: 0; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
+  .topbar h1 { font-size: 20px; }
+  .status-pill { display: inline-flex; align-items: center; gap: 6px; background: var(--green-soft); color: #047857; border: 1px solid #a7f3d0; padding: 6px 14px; border-radius: 99px; font-size: 12.5px; font-weight: 600; }
+  .status-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+  .status-pill.off { background: var(--red-soft); color: #b91c1c; border-color: #fecaca; }
+  .status-pill.off .dot { background: var(--red); }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .banner { display: flex; gap: 12px; align-items: flex-start; background: var(--primary-soft); border: 1px solid #bfdbfe; border-radius: var(--radius); padding: 14px 18px; margin-bottom: 20px; font-size: 13px; line-height: 1.7; color: #1e3a8a; }
+  .banner.warn { background: var(--amber-soft); border-color: #fde68a; color: #92400e; }
+  .page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 12px; flex-wrap: wrap; }
+  .page-head .desc { color: var(--sub); font-size: 13px; }
+  .btn { border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; transition: filter .15s; }
+  .btn:hover { filter: brightness(1.06); }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-ghost { background: #fff; color: var(--text); border: 1px solid var(--line); }
+  .btn-danger { background: var(--red-soft); color: #b91c1c; border: 1px solid #fecaca; }
+  .btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 6px; }
+
+  /* 仪表盘 */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; }
+  .stat .num { font-size: 26px; font-weight: 800; margin-top: 4px; }
+  .stat .lbl { font-size: 12.5px; color: var(--sub); }
+  .stat .num small { font-size: 13px; font-weight: 600; color: var(--sub); }
+
+  /* 能力卡片 */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
+  .tool-card { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; cursor: pointer; transition: transform .12s, box-shadow .12s, border-color .12s; }
+  .tool-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(16,24,40,.1); border-color: var(--primary); }
+  .tool-card .icon { width: 42px; height: 42px; border-radius: 10px; background: var(--primary-soft); display: flex; align-items: center; justify-content: center; font-size: 22px; margin-bottom: 10px; }
+  .tool-card.skill .icon { background: var(--amber-soft); }
+  .tool-card h3 { font-size: 14.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .tool-card .cat { font-size: 10px; padding: 2px 8px; border-radius: 99px; background: #f1f5f9; color: var(--sub); font-weight: 600; }
+  .tool-card p { font-size: 12.5px; color: var(--sub); line-height: 1.5; }
+  .tool-card .auto-mark { position: absolute; top: 12px; right: 12px; font-size: 10px; color: #059669; background: var(--green-soft); border: 1px solid #a7f3d0; padding: 2px 7px; border-radius: 99px; font-weight: 700; }
+  .tool-card .meta { margin-top: 10px; font-size: 11px; color: #94a3b8; font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 表格 / 任务 */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 10px 14px; color: var(--sub); font-weight: 600; border-bottom: 1px solid var(--line); background: #fafbfe; font-size: 12px; }
+  td { padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tr:hover td { background: #fafbfe; }
+  .chip { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
+  .chip.on { background: var(--green-soft); color: #047857; }
+  .chip.off { background: #f1f5f9; color: var(--sub); }
+  .chip.type { background: var(--primary-soft); color: #1d4ed8; }
+  .mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+  .empty { padding: 40px; text-align: center; color: var(--sub); font-size: 13px; }
+
+  /* 开关 */
+  .switch { width: 36px; height: 20px; border-radius: 99px; background: #cbd5e1; position: relative; cursor: pointer; transition: background .15s; display: inline-block; vertical-align: middle; }
+  .switch.on { background: var(--green); }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .switch.on::after { left: 18px; }
+
+  /* 弹窗 */
+  .modal-mask { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: none; align-items: center; justify-content: center; z-index: 60; }
+  .modal-mask.open { display: flex; }
+  .modal { background: #fff; border-radius: 14px; width: 520px; max-width: 92vw; max-height: 88vh; overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,.25); }
+  .modal .m-head { padding: 18px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; }
+  .modal .m-head h2 { font-size: 16px; }
+  .modal .m-close { border: none; background: #f1f5f9; width: 30px; height: 30px; border-radius: 8px; cursor: pointer; font-size: 15px; color: var(--sub); }
+  .modal .m-body { padding: 20px 22px; }
+  .form-field { margin-bottom: 15px; }
+  .form-field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .form-field label .req { color: var(--red); }
+  .form-field input, .form-field select, .form-field textarea { width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 13.5px; outline: none; background: #fbfcfe; font-family: inherit; }
+  .form-field input:focus, .form-field select:focus, .form-field textarea:focus { border-color: var(--primary); background: #fff; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .hint { font-size: 11.5px; color: #94a3b8; margin-top: 5px; line-height: 1.5; }
+  .preview-line { font-size: 12.5px; background: var(--green-soft); border: 1px solid #a7f3d0; color: #047857; border-radius: 8px; padding: 8px 12px; margin-top: 4px; display: none; }
+
+  /* 对话记录 */
+  .conv-list { display: flex; flex-direction: column; gap: 12px; }
+  .conv { border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow); overflow: hidden; }
+  .conv .c-head { padding: 12px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; background: #fafbfe; font-size: 13px; }
+  .conv .c-head b { font-size: 13.5px; }
+  .conv .c-head .sub { color: var(--sub); font-size: 11.5px; }
+  .conv .c-body { padding: 10px 16px; max-height: 220px; overflow-y: auto; }
+  .msg { display: flex; gap: 10px; padding: 7px 0; font-size: 13px; }
+  .msg .who { flex-shrink: 0; font-weight: 700; font-size: 12px; width: 52px; }
+  .msg.user .who { color: var(--primary); }
+  .msg.assistant .who { color: var(--green); }
+  .msg .txt { color: var(--text); line-height: 1.55; word-break: break-word; }
+
+  .toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(20px); background: #101828; color: #fff; padding: 12px 22px; border-radius: 10px; font-size: 13.5px; opacity: 0; pointer-events: none; transition: all .25s; z-index: 100; box-shadow: 0 8px 24px rgba(0,0,0,.25); max-width: 80vw; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .loading { text-align: center; padding: 40px; color: var(--sub); font-size: 13.5px; }
+  .spinner { display: inline-block; width: 18px; height: 18px; border: 2.5px solid #dbeafe; border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -4px; margin-right: 8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .legend-tip { font-size: 12px; color: var(--sub); display: flex; gap: 16px; margin-bottom: 14px; }
+  .legend-tip span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend-tip .dot-a { width: 8px; height: 8px; border-radius: 2px; background: var(--green); }
+  .legend-tip .dot-h { width: 8px; height: 8px; border-radius: 2px; background: var(--amber); }
+  .page { display: none; }
+  .page.active { display: block; animation: fade .2s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+  @media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } .sidebar { width: 58px; } .nav-item span.txt, .logo span, .sidebar .sec { display: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="logo">🦐 ClawBot <span class="badge">控制台</span></div>
+    <div class="sec">总览</div>
+    <div class="nav-item active" data-page="dash"><span>📊</span><span class="txt">仪表盘</span></div>
+    <div class="sec">功能</div>
+    <div class="nav-item" data-page="tools"><span>🧩</span><span class="txt">能力中心</span><span class="tag auto">自动</span></div>
+    <div class="nav-item" data-page="tasks"><span>⏰</span><span class="txt">定时任务</span><span class="tag hand">手写</span></div>
+    <div class="sec">数据</div>
+    <div class="nav-item" data-page="history"><span>💬</span><span class="txt">对话记录</span><span class="tag hand">手写</span></div>
+    <div class="nav-item" data-page="settings"><span>⚙️</span><span class="txt">设置</span><span class="tag hand">手写</span></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <h1 id="pageTitle">仪表盘</h1>
+      <span class="status-pill" id="statusPill"><span class="dot"></span><span id="statusText">连接中…</span></span>
+    </div>
+
+    <!-- 仪表盘 -->
+    <div class="page active" id="page-dash">
+      <div class="stats" id="statGrid"></div>
+      <div class="card" style="padding: 20px;">
+        <div style="font-weight:700; font-size:14px; margin-bottom: 14px;">运行状态</div>
+        <div id="statusDetail" class="mono" style="font-size:12.5px; color:var(--sub); line-height:2;"></div>
+      </div>
+    </div>
+
+    <!-- 能力中心 -->
+    <div class="page" id="page-tools">
+      <div class="banner">✨ <b>自动渲染区</b>：数据来自 <span class="mono">GET /api/capabilities</span>（由 <span class="mono">FunctionToolRegistry</span> + <span class="mono">SkillCatalog</span> 动态生成）。团队新增工具/技能后，刷新页面自动出现新卡片，前端零改动。</div>
+      <div class="page-head"><div class="desc" id="capDesc">加载中…</div></div>
+      <div class="legend-tip"><span><i class="dot-a"></i> 工具（function-calling）</span><span><i class="dot-h"></i> 技能（skill.yaml）</span></div>
+      <div class="grid" id="capGrid"></div>
+    </div>
+
+    <!-- 定时任务 -->
+    <div class="page" id="page-tasks">
+      <div class="banner warn">⏰ 定时任务管理：创建/编辑/启停/删除都直接生效（与微信里说「每天 8 点提醒我」走同一套调度核心 <span class="mono">TaskSchedulerCore</span>）。</div>
+      <div class="page-head">
+        <div class="desc" id="taskDesc">加载中…</div>
+        <button class="btn btn-primary" onclick="openTaskModal()">＋ 新建任务</button>
+      </div>
+      <div class="card" style="overflow:hidden;" id="taskTableWrap"></div>
+    </div>
+
+    <!-- 对话记录 -->
+    <div class="page" id="page-history">
+      <div class="banner warn">💬 对话记录：来自 MongoDB <span class="mono">conversation_memory</span> 集合，展示每个用户的近期消息与长期摘要。</div>
+      <div class="page-head"><div class="desc" id="histDesc">加载中…</div></div>
+      <div class="conv-list" id="convList"></div>
+    </div>
+
+    <!-- 设置 -->
+    <div class="page" id="page-settings">
+      <div class="card" style="padding: 24px; max-width: 620px;">
+        <div style="font-weight:700; margin-bottom: 6px;">机器人设置</div>
+        <div class="hint" style="margin-bottom: 18px;">当前为只读展示，保存功能后续接入 BotConfig。</div>
+        <div class="form-field"><label>DeepSeek 模型</label><input id="setModel" readonly></div>
+        <div class="form-field"><label>控制台端口</label><input id="setPort" readonly></div>
+        <div class="form-field"><label>能力统计</label><input id="setCounts" readonly></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- 任务弹窗 -->
+<div class="modal-mask" id="taskModal">
+  <div class="modal">
+    <div class="m-head"><h2 id="modalTitle">新建任务</h2><button class="m-close" onclick="closeTaskModal()">✕</button></div>
+    <div class="m-body">
+      <input type="hidden" id="fId">
+      <div class="form-field">
+        <label>任务类型</label>
+        <select id="fType" onchange="onTypeChange()">
+          <option value="SIMPLE_TEXT">周期任务（每天固定时间）</option>
+          <option value="ONE_TIME_REMINDER">单次提醒（到点发一次）</option>
+        </select>
+      </div>
+      <div id="groupCron">
+        <div class="form-row">
+          <div class="form-field">
+            <label>每天时间 <span class="req">*</span></label>
+            <input type="time" id="fDaily" value="09:00" onchange="previewTask()">
+            <div class="hint">快捷方式，自动转 Cron</div>
+          </div>
+          <div class="form-field">
+            <label>或 Cron 表达式</label>
+            <input type="text" id="fCron" placeholder="如 0 0 9 * * ?" oninput="previewTask()">
+            <div class="hint">填了 Cron 则优先使用</div>
+          </div>
+        </div>
+      </div>
+      <div class="form-field" id="groupOnce" style="display:none;">
+        <label>提醒时间 <span class="req">*</span></label>
+        <input type="datetime-local" id="fOnce">
+        <div class="hint">北京时间，到点触发一次后自动失效</div>
+      </div>
+      <div class="form-field">
+        <label>提醒内容 <span class="req">*</span></label>
+        <textarea id="fContent" rows="3" placeholder="如：记得喝水 💧"></textarea>
+      </div>
+      <div class="form-field">
+        <label>发送目标（userId / 群 ID）</label>
+        <input type="text" id="fUserId" placeholder="留空默认 console-admin">
+        <div class="hint">微信消息发送目标，一般填创建任务时绑定的用户</div>
+      </div>
+      <div class="preview-line" id="previewLine"></div>
+      <div style="display:flex; gap:10px; margin-top: 6px;">
+        <button class="btn btn-primary" style="flex:1; padding:10px;" onclick="saveTask()">💾 保存</button>
+        <button class="btn btn-ghost" onclick="closeTaskModal()">取消</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let tasks = [];
+
+/* ---------- 页面切换 ---------- */
+const titles = { dash:"仪表盘", tools:"能力中心", tasks:"定时任务", history:"对话记录", settings:"设置" };
+document.querySelectorAll(".nav-item").forEach(item => {
+  item.onclick = () => {
+    document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+    item.classList.add("active");
+    document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+    $("page-" + item.dataset.page).classList.add("active");
+    $("pageTitle").textContent = titles[item.dataset.page];
+    loaders[item.dataset.page] && loaders[item.dataset.page]();
+  };
+});
+
+/* ---------- API ---------- */
+async function api(path, opts) {
+  const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opts));
+  if (!res.ok) {
+    let msg = res.status + " " + res.statusText;
+    try { const j = await res.json(); msg = j.error || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+/* ---------- 加载器 ---------- */
+const loaders = { dash: loadDash, tools: loadCaps, tasks: loadTasks, history: loadHistory, settings: loadSettings };
+loadDash();
+
+async function loadDash() {
+  try {
+    const [status, stats] = await Promise.all([api("/api/status"), api("/api/stats")]);
+    const pill = $("statusPill");
+    pill.classList.remove("off");
+    $("statusText").textContent = "运行中 · " + status.model;
+    const grid = $("statGrid");
+    const items = [
+      ["🧰 工具数量", status.toolCount, "function-calling"],
+      ["🎯 技能数量", status.skillCount, "skill.yaml"],
+      ["👥 对话用户", stats.users, "conversation_memory"],
+      ["⏰ 定时任务", stats.tasks, "scheduled_subscription"]
+    ];
+    grid.innerHTML = items.map(([l, n, s]) =>
+      `<div class="stat"><div class="lbl">${l}</div><div class="num">${n} <small>${s}</small></div></div>`).join("");
+    $("statusDetail").textContent =
+      `app        : ${status.app}\n` +
+      `uptime     : ${Math.floor(status.uptimeSeconds / 60)} 分钟\n` +
+      `model      : ${status.model}\n` +
+      `serverTime : ${status.serverTime}`;
+  } catch (e) {
+    setPillOff(e.message);
+    $("statGrid").innerHTML = `<div class="card empty" style="grid-column:1/-1">⚠️ 无法连接后端 API：${e.message}<br><span style="font-size:12px">确认机器人已启动，且 application.properties 里 spring.main.web-application-type=servlet</span></div>`;
+  }
+}
+
+async function loadCaps() {
+  const grid = $("capGrid");
+  grid.innerHTML = `<div class="loading"><span class="spinner"></span>加载能力清单…</div>`;
+  try {
+    const data = await api("/api/capabilities");
+    $("capDesc").textContent = `共 ${data.total} 个能力 · 点击卡片查看详情`;
+    const icons = ["🔧","🌐","📊","🛠️","🧮","📰","💱","🛡️","📄","🕐","🗺️","🎨","🔍","🧪"];
+    grid.innerHTML = "";
+    data.tools.forEach((t, i) => {
+      const card = mkCard({ icon: icons[i % icons.length], cls: "", mark: "AUTO", name: t.name, desc: t.description || "（无描述）", cat: "tool", meta: "params: " + JSON.stringify(t.parameters && t.parameters.properties ? Object.keys(t.parameters.properties) : []) });
+      card.onclick = () => showCapDetail(t, icons[i % icons.length]);
+      grid.appendChild(card);
+    });
+    data.skills.forEach(s => {
+      const card = mkCard({ icon: "🎯", cls: "skill", mark: s.enabled ? "SKILL" : "OFF", name: s.displayName || s.name, desc: s.description || "（无描述）", cat: "skill v" + (s.version || "?"), meta: "capabilities: " + (s.capabilities || []).join(", ") });
+      card.onclick = () => showCapDetail(s, "🎯");
+      grid.appendChild(card);
+    });
+    if (!data.tools.length && !data.skills.length) grid.innerHTML = `<div class="card empty">暂无能力注册</div>`;
+  } catch (e) {
+    setPillOff(e.message);
+    grid.innerHTML = `<div class="card empty">⚠️ ${e.message}</div>`;
+  }
+}
+function mkCard({ icon, cls, mark, name, desc, cat, meta }) {
+  const div = document.createElement("div");
+  div.className = "tool-card " + cls;
+  div.innerHTML = `<div class="auto-mark">${mark}</div><div class="icon">${icon}</div>
+    <h3>${name} <span class="cat">${cat}</span></h3><p>${desc}</p><div class="meta">${meta}</div>`;
+  return div;
+}
+
+/* ---------- 定时任务 ---------- */
+async function loadTasks() {
+  const wrap = $("taskTableWrap");
+  wrap.innerHTML = `<div class="loading"><span class="spinner"></span>加载任务…</div>`;
+  try {
+    tasks = await api("/api/tasks");
+    $("taskDesc").textContent = `共 ${tasks.length} 个任务 · 启用 ${tasks.filter(t => t.enabled).length} 个`;
+    if (!tasks.length) { wrap.innerHTML = `<div class="empty">暂无定时任务，点右上角「新建任务」创建一个</div>`; return; }
+    const rows = tasks.map(t => `
+      <tr>
+        <td><span class="chip ${t.enabled ? "on" : "off"}">${t.enabled ? "● 启用" : "○ 停用"}</span></td>
+        <td><span class="chip type">${t.taskType === "ONE_TIME_REMINDER" ? "单次" : "周期"}</span></td>
+        <td class="mono">${esc(t.cronExpression || "-")}</td>
+        <td style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(contentOf(t))}</td>
+        <td class="mono" style="color:var(--sub)">${esc(t.userId || "-")}</td>
+        <td class="mono" style="color:var(--sub)">${fmtTime(t.createdAt)}</td>
+        <td style="white-space:nowrap; text-align:right;">
+          <button class="btn btn-ghost btn-sm" onclick="toggleTask('${t.id}')">${t.enabled ? "停用" : "启用"}</button>
+          <button class="btn btn-ghost btn-sm" onclick="editTask('${t.id}')">编辑</button>
+          <button class="btn btn-danger btn-sm" onclick="delTask('${t.id}')">删除</button>
+        </td>
+      </tr>`).join("");
+    wrap.innerHTML = `<table><thead><tr><th>状态</th><th>类型</th><th>Cron</th><th>内容</th><th>目标</th><th>创建时间</th><th style="text-align:right">操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) {
+    setPillOff(e.message);
+    wrap.innerHTML = `<div class="card empty">⚠️ ${e.message}</div>`;
+  }
+}
+function contentOf(t) {
+  try { return JSON.parse(t.paramsJson || "{}").message_content || ""; } catch (e) { return ""; }
+}
+
+function openTaskModal() {
+  $("modalTitle").textContent = "新建任务";
+  $("fId").value = "";
+  $("fType").value = "SIMPLE_TEXT";
+  $("fDaily").value = "09:00";
+  $("fCron").value = "";
+  $("fOnce").value = "";
+  $("fContent").value = "";
+  $("fUserId").value = "";
+  $("previewLine").style.display = "none";
+  onTypeChange();
+  $("taskModal").classList.add("open");
+}
+function editTask(id) {
+  const t = tasks.find(x => x.id === id);
+  if (!t) return;
+  openTaskModal();
+  $("modalTitle").textContent = "编辑任务";
+  $("fId").value = id;
+  $("fType").value = t.taskType || "SIMPLE_TEXT";
+  const content = contentOf(t);
+  $("fContent").value = content;
+  $("fUserId").value = t.userId || "";
+  const m = (t.cronExpression || "").match(/^0\s+(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+\?$/);
+  if (m) { $("fDaily").value = `${String(m[2]).padStart(2,"0")}:${String(m[1]).padStart(2,"0")}`; $("fCron").value = ""; }
+  else { $("fCron").value = t.cronExpression || ""; }
+  try {
+    const p = JSON.parse(t.paramsJson || "{}");
+    if (p.fire_timestamp) {
+      const d = new Date(p.fire_timestamp);
+      // 转本地时区（datetime-local 无时区，直接用本地时间避免 UTC 偏移 8 小时）
+      $("fOnce").value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    }
+  } catch (e) {}
+  onTypeChange();
+}
+function closeTaskModal() { $("taskModal").classList.remove("open"); }
+function onTypeChange() {
+  const once = $("fType").value === "ONE_TIME_REMINDER";
+  $("groupCron").style.display = once ? "none" : "";
+  $("groupOnce").style.display = once ? "" : "none";
+  previewTask();
+}
+
+async function previewTask() {
+  const line = $("previewLine");
+  const cron = $("fCron").value.trim() || null;
+  const daily = $("fDaily").value;
+  try {
+    const r = await api("/api/tasks/preview", { method: "POST", body: JSON.stringify(cron ? { cronExpression: cron } : { timeDailyHhmm: daily }) });
+    line.style.display = "block";
+    line.textContent = `⏱ 下次触发：${r.nextFire}（${r.desc}）`;
+  } catch (e) { line.style.display = "none"; }
+}
+
+async function saveTask() {
+  const id = $("fId").value;
+  const isOnce = $("fType").value === "ONE_TIME_REMINDER";
+  const content = $("fContent").value.trim();
+  if (!content) return toast("⚠️ 请填写提醒内容");
+  const body = { taskType: $("fType").value, messageContent: content, userId: $("fUserId").value.trim() || undefined };
+  if (isOnce) {
+    const v = $("fOnce").value;
+    if (!v) return toast("⚠️ 请选择提醒时间");
+    body.fireTimestamp = new Date(v).getTime();
+    if (body.fireTimestamp <= Date.now()) return toast("⚠️ 提醒时间必须晚于当前时间");
+  } else {
+    const cron = $("fCron").value.trim();
+    if (cron) body.cronExpression = cron;
+    else body.timeDailyHhmm = $("fDaily").value;
+  }
+  try {
+    if (id) await api("/api/tasks/" + id, { method: "PUT", body: JSON.stringify(body) });
+    else await api("/api/tasks", { method: "POST", body: JSON.stringify(body) });
+    toast("✅ 任务已保存");
+    closeTaskModal();
+    loadTasks();
+  } catch (e) { toast("❌ " + e.message); }
+}
+async function toggleTask(id) {
+  try { await api(`/api/tasks/${id}/toggle`, { method: "POST" }); loadTasks(); } catch (e) { toast("❌ " + e.message); }
+}
+async function delTask(id) {
+  if (!confirm("确定删除这个定时任务？")) return;
+  try { await api("/api/tasks/" + id, { method: "DELETE" }); toast("🗑 已删除"); loadTasks(); } catch (e) { toast("❌ " + e.message); }
+}
+
+/* ---------- 对话记录 ---------- */
+async function loadHistory() {
+  const list = $("convList");
+  list.innerHTML = `<div class="loading"><span class="spinner"></span>加载对话记录…</div>`;
+  try {
+    const all = await api("/api/history");
+    $("histDesc").textContent = `共 ${all.length} 个用户`;
+    if (!all.length) { list.innerHTML = `<div class="card empty">暂无对话记录</div>`; return; }
+    list.innerHTML = "";
+    all.forEach(c => {
+      const conv = document.createElement("div");
+      conv.className = "conv";
+      const msgs = (c.messages || []).map(m =>
+        `<div class="msg ${m.role === "user" ? "user" : "assistant"}"><span class="who">${m.role === "user" ? "👤 用户" : "🤖 小虾"}</span><span class="txt">${esc(m.content || "")}</span></div>`).join("") || `<div class="msg"><span class="who"></span><span class="txt" style="color:var(--sub)">（暂无近期消息）</span></div>`;
+      conv.innerHTML = `<div class="c-head"><b>${esc(c.userKey || "?")}</b><span class="sub">${c.turnCounter || 0} 轮 · 更新于 ${fmtTime(c.updatedAt)}</span></div>
+        <div class="c-body">${msgs}</div>`;
+      list.appendChild(conv);
+    });
+  } catch (e) {
+    setPillOff(e.message);
+    list.innerHTML = `<div class="card empty">⚠️ ${e.message}</div>`;
+  }
+}
+
+/* ---------- 设置 ---------- */
+async function loadSettings() {
+  try {
+    const s = await api("/api/status");
+    const st = await api("/api/stats");
+    $("setModel").value = s.model;
+    $("setPort").value = location.port || "8080";
+    $("setCounts").value = `${st.tools} 工具 · ${st.skills} 技能 · ${st.users} 用户 · ${st.tasks} 任务`;
+  } catch (e) { setPillOff(e.message); }
+}
+
+/* ---------- 能力详情弹窗 ---------- */
+function showCapDetail(item, icon) {
+  const isTool = item.type === "tool";
+  const detail = isTool
+    ? `<div class="form-field"><label>名称</label><input value="${esc(item.name)}" readonly></div>
+       <div class="form-field"><label>描述</label><textarea rows="3" readonly>${esc(item.description || "")}</textarea></div>
+       <div class="form-field"><label>参数 Schema（JSON Schema，前端可自动生成表单）</label><textarea rows="8" class="mono" readonly>${esc(JSON.stringify(item.parameters || {}, null, 2))}</textarea></div>`
+    : `<div class="form-field"><label>技能名</label><input value="${esc(item.name)}" readonly></div>
+       <div class="form-field"><label>展示名</label><input value="${esc(item.displayName || item.name)}" readonly></div>
+       <div class="form-field"><label>描述</label><textarea rows="3" readonly>${esc(item.description || "")}</textarea></div>
+       <div class="form-field"><label>capabilities</label><input value="${esc((item.capabilities || []).join(", "))}" readonly></div>
+       <div class="form-field"><label>triggers</label><input value="${esc((item.triggers || []).join(", "))}" readonly></div>`;
+  $("capModalBody").innerHTML = `<div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;"><div style="font-size:30px">${icon}</div><div><div style="font-weight:700; font-size:16px;">${esc(item.displayName || item.name)}</div><div class="hint">${isTool ? "function-calling 工具" : "skill.yaml 技能"}</div></div></div>` + detail;
+  $("capModal").classList.add("open");
+}
+
+/* ---------- 工具 ---------- */
+function esc(s) { return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function fmtTime(ts) { if (!ts) return "-"; const d = new Date(typeof ts === "number" ? ts : ts.length === 13 ? +ts : ts); return isNaN(d) ? "-" : d.toLocaleString("zh-CN", { hour12: false }); }
+function setPillOff(msg) {
+  const pill = $("statusPill");
+  pill.classList.add("off");
+  $("statusText").textContent = "API 不可用";
+}
+let toastTimer;
+function toast(msg) {
+  const t = $("toast");
+  t.innerHTML = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+}
+$("taskModal").addEventListener("click", e => { if (e.target === $("taskModal")) closeTaskModal(); });
+</script>
+
+<!-- 能力详情弹窗 -->
+<div class="modal-mask" id="capModal">
+  <div class="modal" style="width:460px;">
+    <div class="m-head"><h2>能力详情</h2><button class="m-close" onclick="$('capModal').classList.remove('open')">✕</button></div>
+    <div class="m-body" id="capModalBody"></div>
+  </div>
+</div>
+</body>
+</html>

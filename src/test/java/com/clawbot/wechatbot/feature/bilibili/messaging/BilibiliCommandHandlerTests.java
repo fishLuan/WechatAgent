@@ -16,6 +16,7 @@ import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliContentReposito
 import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
 import com.clawbot.wechatbot.scheduler.controller.SchedulerControlService;
+import com.clawbot.wechatbot.scheduler.model.TaskType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,6 +41,7 @@ class BilibiliCommandHandlerTests {
     private BilibiliPreferenceService preferenceService;
     private PendingSearchResultStore pendingSearchResults;
     private BilibiliRagService ragService;
+    private SchedulerControlService schedulerService;
     private BilibiliCommandHandler handler;
 
     @BeforeEach
@@ -51,12 +53,13 @@ class BilibiliCommandHandlerTests {
         preferenceService = mock(BilibiliPreferenceService.class);
         pendingSearchResults = new PendingSearchResultStore();
         ragService = mock(BilibiliRagService.class);
+        schedulerService = mock(SchedulerControlService.class);
         BilibiliProperties properties = new BilibiliProperties();
         handler = new BilibiliCommandHandler(
             subscriptionService,
             recommendationService,
             preferenceService,
-            mock(SchedulerControlService.class),
+            schedulerService,
             new WeChatSessionRegistry(),
             new ObjectMapper(),
             contentSource,
@@ -305,6 +308,95 @@ class BilibiliCommandHandlerTests {
     }
 
     @Test
+    void compoundAnimeAndMoviePushUpdatesBothPreferences() {
+        BilibiliPreference anime = preference(
+            "user-1", ContentType.BANGUMI, LocalTime.of(20, 0), 9.0, 3);
+        BilibiliPreference movie = preference(
+            "user-1", ContentType.MOVIE, LocalTime.of(19, 30), 8.0, 3);
+        when(preferenceService.getOrCreate("user-1", ContentType.BANGUMI))
+            .thenReturn(anime);
+        when(preferenceService.getOrCreate("user-1", ContentType.MOVIE))
+            .thenReturn(movie);
+        when(preferenceService.update(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(ContentType.BANGUMI),
+            any(PreferenceUpdate.class)))
+            .thenReturn(preference(
+                "user-1", ContentType.BANGUMI, LocalTime.of(9, 20), 9.0, 3));
+        when(preferenceService.update(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(ContentType.MOVIE),
+            any(PreferenceUpdate.class)))
+            .thenReturn(preference(
+                "user-1", ContentType.MOVIE, LocalTime.of(9, 20), 8.0, 3));
+
+        String reply = handler.handle(
+            "user-1", "每天早上九点二十给我推送动漫和电影");
+
+        assertTrue(reply.contains("09:20"));
+        assertTrue(reply.contains("动漫"));
+        assertTrue(reply.contains("电影"));
+        verify(preferenceService).update(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(ContentType.BANGUMI),
+            any(PreferenceUpdate.class));
+        verify(preferenceService).update(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(ContentType.MOVIE),
+            any(PreferenceUpdate.class));
+        verify(recommendationService, never()).recommend(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    void tenOclockPushConfiguresPreferenceWithoutImmediateRecommendation() {
+        BilibiliPreference current = preference(
+            "user-1", ContentType.MOVIE, LocalTime.of(19, 30), 8.0, 3);
+        when(preferenceService.getOrCreate("user-1", ContentType.MOVIE))
+            .thenReturn(current);
+        when(preferenceService.update(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(ContentType.MOVIE),
+            any(PreferenceUpdate.class)))
+            .thenReturn(preference(
+                "user-1", ContentType.MOVIE, LocalTime.of(10, 0), 8.0, 3));
+
+        String reply = handler.handle("user-1", "10点给我推送电影");
+
+        assertTrue(reply.contains("10:00"));
+        verify(preferenceService).update(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(ContentType.MOVIE),
+            any(PreferenceUpdate.class));
+        verify(recommendationService, never()).recommend(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    void relativeTimeCreatesOneTimeBilibiliRecommendationTask() {
+        when(preferenceService.getOrCreate("user-1", ContentType.MOVIE))
+            .thenReturn(preference(
+                "user-1", ContentType.MOVIE, LocalTime.of(19, 30), 8.0, 3));
+
+        String reply = handler.handle("user-1", "两小时后推送电影");
+
+        assertTrue(reply.contains("一次性任务"));
+        verify(schedulerService).createOrUpdate(
+            org.mockito.ArgumentMatchers.argThat(task ->
+                task.getTaskType() == TaskType.BILIBILI_RECOMMENDATION
+                    && task.getParamsJson().contains("fire_timestamp")
+                    && task.getParamsJson().contains("MOVIE")));
+        verify(recommendationService, never()).recommend(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
     void weekdayExclusionWithoutTypeAppliesToAllRecommendationTypes() {
         String reply = handler.handle("user-1", "周六不推送");
 
@@ -368,6 +460,21 @@ class BilibiliCommandHandlerTests {
             SubscriptionStatus.ACTIVE,
             7,
             "订阅成功");
+    }
+
+    private BilibiliPreference preference(
+        String userId,
+        ContentType type,
+        LocalTime pushTime,
+        double minimumRating,
+        int recommendationCount
+    ) {
+        BilibiliPreference preference = new BilibiliPreference(userId, type);
+        preference.setPushTime(pushTime);
+        preference.setMinimumRating(minimumRating);
+        preference.setRecommendationCount(recommendationCount);
+        preference.setPushEnabled(true);
+        return preference;
     }
 
     private BilibiliContent content(
