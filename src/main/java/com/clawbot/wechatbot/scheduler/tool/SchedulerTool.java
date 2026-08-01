@@ -45,8 +45,10 @@ public class SchedulerTool implements FunctionTool {
         ObjectNode func = root.putObject("function");
         func.put("name", TOOL_NAME);
         func.put("description",
-                "管理当前对话用户的微信消息定时订阅任务。当用户说想每天几点收到提醒/消息、不想收到定时了、看看订阅了哪些定时时就调用。不用传 user_id，系统自动识别当前对话用户。" +
-                "取消订阅支持三种方式：① 用户说『取消所有』『全部取消』→ cancel_all=true；② 用户指定『取消订阅编号xxx』→ 填 subscription_id；③ 用户说指定任务类型→ 填 task_type。");
+                "管理当前对话用户的微信消息定时订阅任务。不用传 user_id，系统自动识别当前对话用户。" +
+                "【重要】只要用户提到具体时间（如『11点』『9点29分』『每天』『明天早上』『几点几分』）并要求推送/提醒/订阅内容，就是在创建定时任务，必须调用本工具创建，绝不能立即执行或立即推送内容。" +
+                "取消订阅支持三种方式：① 用户说『取消所有』『全部取消』→ cancel_all=true；② 用户指定『取消订阅编号xxx』→ 填 subscription_id；③ 用户说指定任务类型→ 填 task_type。" +
+                "创建 B 站推荐推送任务：当用户说『几点推送几个电影/动漫/剧集』时，task_type=BILIBILI_PUSH，params_json 里写 {\"content_type\":\"MOVIE或BANGUMI或SERIES\",\"count\":数量}，时间用 time_daily_hhmm（每天重复）或 is_one_time+one_time_datetime（单次）。");
 
         ObjectNode params = func.putObject("parameters");
         params.put("type", "object");

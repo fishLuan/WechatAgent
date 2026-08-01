@@ -229,17 +229,33 @@ public class TaskController {
         }
         String content = str(body, "messageContent");
         if (content != null && !content.isBlank()) params.put("message_content", content);
-        if (sub.getTaskType() == TaskType.ONE_TIME_REMINDER) {
+        if (isOneTimeRequest(sub, body)) {
             Object fireTs = body.get("fireTimestamp");
             if (fireTs instanceof Number n) {
                 params.put("fire_timestamp", n.longValue());
                 params.put("already_fired", false);
             }
         }
+        if (sub.getTaskType() == TaskType.BILIBILI_PUSH) {
+            String contentType = str(body, "contentType");
+            if (contentType != null && !contentType.isBlank()) {
+                params.put("content_type", contentType.trim().toUpperCase());
+            }
+            Object count = body.get("count");
+            if (count instanceof Number n && n.intValue() > 0) {
+                params.put("count", n.intValue());
+            }
+        }
         sub.setParamsJson(mapper.writeValueAsString(params));
 
         if (sub.getCreatedAt() == null) sub.setCreatedAt(System.currentTimeMillis());
         return sub;
+    }
+
+    /** 单次任务：taskType 是一次性提醒，或 body 里带了 fireTimestamp */
+    private boolean isOneTimeRequest(ScheduledSubscription sub, Map<String, Object> body) {
+        if (sub.getTaskType() == TaskType.ONE_TIME_REMINDER) return true;
+        return body.get("fireTimestamp") instanceof Number;
     }
 
     private String resolveCron(Map<String, Object> body) {
