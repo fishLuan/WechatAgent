@@ -2,6 +2,7 @@ package com.clawbot.wechatbot.feature.bilibili.source.dto;
 
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 
+import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
@@ -18,6 +19,7 @@ public class BilibiliContentDto {
     private String coverUrl;
     private String pageUrl;
     private BilibiliEpisodeDto latestEpisode;
+    private Instant latestEpisodePubTime;
     private boolean finished;
 
     public ContentType getContentType() { return contentType; }
@@ -45,6 +47,10 @@ public class BilibiliContentDto {
     public BilibiliEpisodeDto getLatestEpisode() { return latestEpisode; }
     public void setLatestEpisode(BilibiliEpisodeDto latestEpisode) {
         this.latestEpisode = latestEpisode;
+    }
+    public Instant getLatestEpisodePubTime() { return latestEpisodePubTime; }
+    public void setLatestEpisodePubTime(Instant latestEpisodePubTime) {
+        this.latestEpisodePubTime = latestEpisodePubTime;
     }
     public boolean isFinished() { return finished; }
     public void setFinished(boolean finished) { this.finished = finished; }

@@ -2,6 +2,7 @@ package com.clawbot.spring;
 
 import com.clawbot.wechatbot.WeChatBotApplication;
 import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.config.BotConfig;
 import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliContentRepository;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliPreferenceRepository;
@@ -12,6 +13,7 @@ import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
 import com.clawbot.wechatbot.service.agent.AgentTaskHandler;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
+import com.clawbot.wechatbot.skills.SkillManager;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,7 +50,13 @@ class ApplicationTests {
     private AgentOrchestrator agentOrchestrator;
 
     @Autowired
+    private BotConfig botConfig;
+
+    @Autowired
     private List<AgentTaskHandler> agentTaskHandlers;
+
+    @Autowired
+    private SkillManager skillRegistry;
 
     @Autowired
     private BilibiliProperties bilibiliProperties;
@@ -72,7 +80,11 @@ class ApplicationTests {
     void contextLoads() {
         assertEquals(13, toolRegistry.size());
         assertEquals(5, handlers.size());
-        assertEquals(2, agentTaskHandlers.size());
+        assertEquals(5, agentTaskHandlers.size());
+        assertEquals(3, skillRegistry.size());
+        assertTrue(skillRegistry.contains("bilibili"));
+        assertTrue(skillRegistry.contains("document-generation"));
+        assertTrue(skillRegistry.contains("voice-reply"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name").contains("convert_currency"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name")
             .contains("calculate_bazi_fortune"));
@@ -83,6 +95,10 @@ class ApplicationTests {
         assertTrue(toolRegistry.definitions().findValuesAsText("name")
             .contains("scheduler_manage"));
         assertInstanceOf(DeepSeekChatService.class, chatService);
+        assertTrue(
+            botConfig.getSystemPrompt().contains("不寒暄、不卖萌"),
+            botConfig.getSystemPrompt());
+        assertTrue(botConfig.getSystemPrompt().contains("API供应商"));
         assertTrue(agentOrchestrator.isConfigured() == chatService.isConfigured());
         assertFalse(bilibiliProperties.isEnabled());
         assertTrue(bilibiliProperties.getDefaultMinimumRating()

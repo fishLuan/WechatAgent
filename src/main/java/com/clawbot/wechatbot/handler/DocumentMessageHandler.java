@@ -63,7 +63,7 @@ public class DocumentMessageHandler implements MessageHandler {
             MessageItem msgItem = findFileMessageItem(msg);
             byte[] fileBytes = (msgItem != null) ? client.downloadFileFromMessageItem(msgItem) : null;
             if (fileBytes == null || fileBytes.length == 0) {
-                safeSendText(client, from, "❌ 文件下载失败，可能是网络问题，重试一下？");
+                safeSendText(client, from, "文件下载失败，请稍后重试。");
                 return;
             }
             // 2. 提取文本
@@ -95,7 +95,7 @@ public class DocumentMessageHandler implements MessageHandler {
         } catch (Exception e) {
             System.err.println("[ERROR] 处理文档失败: " + e.getMessage());
             e.printStackTrace();
-            safeSendText(client, from, "❌ 处理文件时出错：" + e.getMessage()
+            safeSendText(client, from, "文件处理失败：" + e.getMessage()
                     + "。可能是文件格式太复杂，或者已加密。");
         }
     }

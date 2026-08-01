@@ -31,6 +31,7 @@ public class BilibiliContent {
     private String latestEpisodeId;
     private String latestEpisodeTitle;
     private Integer latestEpisodeNumber;
+    private Instant latestEpisodePubTime;
     private boolean finished;
     private Instant createdAt;
     private Instant updatedAt;
@@ -93,6 +94,8 @@ public class BilibiliContent {
     public void setLatestEpisodeTitle(String value) { this.latestEpisodeTitle = value; }
     public Integer getLatestEpisodeNumber() { return latestEpisodeNumber; }
     public void setLatestEpisodeNumber(Integer value) { this.latestEpisodeNumber = value; }
+    public Instant getLatestEpisodePubTime() { return latestEpisodePubTime; }
+    public void setLatestEpisodePubTime(Instant value) { this.latestEpisodePubTime = value; }
     public boolean isFinished() { return finished; }
     public void setFinished(boolean finished) { this.finished = finished; }
     public Instant getCreatedAt() { return createdAt; }

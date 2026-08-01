@@ -1,0 +1,16 @@
+name: document-generation
+version: 1.0.0
+enabled: true
+display-name: 文档生成
+description: 将用户提供或前置任务生成的完整正文制作成Word或PDF文件
+executor: document-generation
+capabilities:
+  - 生成Word文档
+  - 生成PDF文档
+  - 将前置任务结果制作成文件
+triggers:
+  - 生成Word
+  - 生成PDF
+  - 导出文档
+timeout-seconds: 30
+requires-user-context: false

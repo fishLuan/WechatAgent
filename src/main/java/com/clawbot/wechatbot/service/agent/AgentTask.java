@@ -2,25 +2,41 @@ package com.clawbot.wechatbot.service.agent;
 
 import java.util.List;
 
-/** 任务规划器输出的结构化任务。 */
+/** A structured task emitted by the outer-loop planner. */
 public record AgentTask(
     String id,
     int order,
     AgentTaskType type,
+    String skillName,
     String instruction,
     List<String> dependencies
 ) {
     public AgentTask {
-        if (id == null || id.isBlank()) throw new IllegalArgumentException("任务 ID 不能为空");
-        if (order < 0) throw new IllegalArgumentException("任务顺序不能小于 0");
-        if (type == null) throw new IllegalArgumentException("任务类型不能为空");
+        if (id == null || id.isBlank()) throw new IllegalArgumentException("Task id is required");
+        if (order < 0) throw new IllegalArgumentException("Task order cannot be negative");
+        if (type == null) throw new IllegalArgumentException("Task type is required");
+        skillName = skillName == null ? "" : skillName.trim();
+        if (type == AgentTaskType.SKILL && skillName.isBlank()) {
+            throw new IllegalArgumentException("SKILL task requires skillName");
+        }
         if (instruction == null || instruction.isBlank()) {
-            throw new IllegalArgumentException("任务内容不能为空");
+            throw new IllegalArgumentException("Task instruction is required");
         }
         dependencies = dependencies == null ? List.of() : List.copyOf(dependencies);
     }
 
+    public AgentTask(
+        String id,
+        int order,
+        AgentTaskType type,
+        String instruction,
+        List<String> dependencies
+    ) {
+        this(id, order, type, "", instruction, dependencies);
+    }
+
     public static AgentTask chat(String instruction) {
-        return new AgentTask("task-1", 0, AgentTaskType.CHAT_TOOL, instruction, List.of());
+        return new AgentTask(
+            "task-1", 0, AgentTaskType.CHAT_TOOL, "", instruction, List.of());
     }
 }

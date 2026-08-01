@@ -7,6 +7,8 @@ import com.clawbot.wechatbot.feature.bilibili.source.dto.BilibiliContentDto;
 import com.clawbot.wechatbot.feature.bilibili.source.dto.BilibiliEpisodeDto;
 import com.clawbot.wechatbot.feature.bilibili.source.parser.BilibiliPageParser;
 import com.clawbot.wechatbot.feature.bilibili.source.parser.BilibiliUrlParser;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -40,26 +42,31 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
             + "season_type=%d&type=1&st=1&sort=0&page=%d&pagesize=%d";
     private static final String SEARCH =
         "https://api.bilibili.com/x/web-interface/search/type?search_type=%s&keyword=%s&page_size=%d";
+    private static final String PGC_TIMELINE =
+        "https://api.bilibili.com/pgc/web/timeline?season_type=%d";
 
     private final BilibiliHttpClient httpClient;
     private final BilibiliUrlParser urlParser;
     private final BilibiliPageParser pageParser;
+    private final ObjectMapper objectMapper;
     private final Map<ContentType, Integer> nextPgcIndexPage =
         new EnumMap<>(ContentType.class);
 
     @Autowired
-    public PublicPageBilibiliSource(BilibiliHttpClient httpClient) {
-        this(httpClient, new BilibiliUrlParser(), new BilibiliPageParser());
+    public PublicPageBilibiliSource(BilibiliHttpClient httpClient, ObjectMapper objectMapper) {
+        this(httpClient, new BilibiliUrlParser(), new BilibiliPageParser(), objectMapper);
     }
 
     PublicPageBilibiliSource(
         BilibiliHttpClient httpClient,
         BilibiliUrlParser urlParser,
-        BilibiliPageParser pageParser
+        BilibiliPageParser pageParser,
+        ObjectMapper objectMapper
     ) {
         this.httpClient = httpClient;
         this.urlParser = urlParser;
         this.pageParser = pageParser;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -241,6 +248,292 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
     }
 
     @Override
+    public List<BilibiliContent> findTodayAiring(ContentType contentType)
+        throws Exception {
+        if (contentType == null) return List.of();
+        Integer seasonType = pgcSeasonType(contentType);
+        if (seasonType == null) return List.of();
+
+        List<BilibiliContent> contents = new ArrayList<>();
+        // 翻 PGC 索引 st=1 前 5 页（150条），找 index_show 含"更新至"的真·连载番
+        for (int page = 1; page <= 10 && contents.size() < 30; page++) {
+            String url = String.format(
+                "https://api.bilibili.com/pgc/season/index/result?"
+                + "season_type=%d&type=1&st=1&sort=0&page=%d&pagesize=30",
+                seasonType, page);
+            try {
+                String body = httpClient.getText(url);
+                if (body == null || body.isBlank()) break;
+                JsonNode root = objectMapper.readTree(body);
+                JsonNode list = root.at("/data/list");
+                if (!list.isArray() || list.size() == 0) break;
+                for (JsonNode item : list) {
+                    // 过滤：只取番剧/国创（排除电影、电视剧等）
+                    int st = item.has("season_type") && item.get("season_type").isNumber()
+                        ? item.get("season_type").asInt() : -1;
+                    if (contentType == ContentType.BANGUMI && st != 1) continue;
+                    if (contentType == ContentType.SERIES && st != 5) continue;
+
+                    String idx = item.has("index_show")
+                        ? item.get("index_show").asText("").trim() : "";
+                    if (idx.isEmpty()) continue;
+                    // 判断连载中：index_show 含"更新至" 且解析出集数
+                    Integer epNum = parseIntFromText(idx);
+                    if (!idx.contains("更新至") || epNum == null || epNum <= 0) continue;
+                    String seasonId = item.has("season_id")
+                        ? item.get("season_id").asText("").trim() : "";
+                    String title = item.has("title")
+                        ? item.get("title").asText("").trim() : "";
+                    if (seasonId.isEmpty() || title.isEmpty()) continue;
+                    title = title.replaceAll("(?is)<[^>]+>", "").trim();
+                    BilibiliContent c = new BilibiliContent(contentType, seasonId, title);
+                    c.setSeasonId(seasonId);
+                    if (item.has("cover")) c.setCoverUrl(item.get("cover").asText(""));
+                    if (item.has("link")) c.setPageUrl(item.get("link").asText(""));
+                    if (item.has("score") && item.get("score").isNumber())
+                        c.setRating(item.get("score").asDouble());
+                    c.setFinished(false);
+                    c.setLatestEpisodeTitle(idx);
+                    c.setLatestEpisodeNumber(parseIntFromText(idx));
+                    c.setLastFetchedAt(Instant.now());
+
+                    // 前几条调详情 API 拿发布时间
+                    if (contents.size() < 5) {
+                        try {
+                            Optional<BilibiliContent> detail = findBySeasonId(contentType, seasonId);
+                            if (detail.isPresent() && detail.get().getLatestEpisodePubTime() != null) {
+                                c.setLatestEpisodePubTime(detail.get().getLatestEpisodePubTime());
+                            } else if (detail.isPresent() && detail.get().getLatestEpisodeTitle() != null) {
+                                c.setLatestEpisodeTitle(detail.get().getLatestEpisodeTitle());
+                                if (detail.get().getLatestEpisodeNumber() != null)
+                                    c.setLatestEpisodeNumber(detail.get().getLatestEpisodeNumber());
+                            }
+                        } catch (Exception ignored) { }
+                    }
+
+                    contents.add(c);
+                }
+            } catch (Exception e) {
+                System.err.println("[BILIBILI] st=1 page " + page + " 失败: " + e.getMessage());
+                break;
+            }
+        }
+        System.out.println("[BILIBILI] st=1 翻页 scan，找到 " + contents.size() + " 条含更新至");
+        for (BilibiliContent c : contents.stream().limit(5).toList()) {
+            System.out.println("[BILIBILI]   " + c.getTitle() + " → " + c.getLatestEpisodeTitle());
+        }
+        return contents;
+    }
+
+    /** 爬 B站动画时间表网页，提取 __INITIAL_STATE__ 中的当日更新数据 */
+    private List<BilibiliContent> tryFetchTimelineWebPage(ContentType contentType) {
+        try {
+            String html = httpClient.getText("https://www.bilibili.com/anime/timeline");
+            if (html == null || html.isBlank()) return List.of();
+            // 提取 __INITIAL_STATE__ JSON
+            String json = extractInitialState(html);
+            if (json == null) {
+                System.err.println("[BILIBILI] 网页未找到 __INITIAL_STATE__");
+                return List.of();
+            }
+            JsonNode root = objectMapper.readTree(json);
+            // 数据在 root.timeline，结构类似 { daily: [...] } 或直接是数组
+            JsonNode timelineNode = root.path("timeline");
+            if (timelineNode.isMissingNode()) {
+                System.err.println("[BILIBILI] 网页未找到 timeline 节点");
+                return List.of();
+            }
+            // timeline 可能是 { daily: [{seasons:[...]}] } 或 [{seasons:[...]}]
+            JsonNode dailyData = timelineNode.path("daily");
+            if (dailyData.isMissingNode() || !dailyData.isArray()) {
+                // 也可能是 timeline 本身就是数组
+                if (timelineNode.isArray()) dailyData = timelineNode;
+            }
+            if (!dailyData.isArray() || dailyData.size() == 0) {
+                // 打印 timelineNode 的 key 进一步调试
+                java.util.Iterator<String> tlKeys = timelineNode.fieldNames();
+                java.util.List<String> tlKeyList = new java.util.ArrayList<>();
+                while (tlKeys.hasNext()) tlKeyList.add(tlKeys.next());
+                System.err.println("[BILIBILI] timeline keys: " + String.join(", ", tlKeyList)
+                    + " isArray=" + timelineNode.isArray());
+                return List.of();
+            }
+            List<BilibiliContent> contents = new ArrayList<>();
+            for (JsonNode day : dailyData) {
+                JsonNode seasons = day.path("seasons");
+                if (!seasons.isArray() && day.has("season_id")) {
+                    seasons = objectMapper.createArrayNode().add(day);
+                }
+                if (!seasons.isArray()) continue;
+                for (JsonNode item : seasons) {
+                    String seasonId = pathText(item, "season_id");
+                    String title = pathText(item, "title");
+                    if (seasonId.isBlank() || title.isBlank()) continue;
+                    BilibiliContent content = new BilibiliContent(contentType, seasonId,
+                        title.replaceAll("(?is)<[^>]+>", "").trim());
+                    content.setCoverUrl(pathText(item, "cover"));
+                    content.setPageUrl(pathText(item, "url"));
+                    String pubIndex = pathText(item, "pub_index");
+                    content.setLatestEpisodeTitle(pubIndex);
+                    content.setLatestEpisodeNumber(parseIntFromText(pubIndex));
+                    content.setLatestEpisodePubTime(parseTimelinePubTime(item));
+                    content.setLastFetchedAt(Instant.now());
+                    contents.add(content);
+                }
+            }
+            System.out.println("[BILIBILI] 网页时间表返回 " + contents.size() + " 条");
+            return contents;
+        } catch (Exception e) {
+            System.err.println("[BILIBILI] 网页时间表解析失败: " + e.getMessage());
+            return List.of();
+        }
+    }
+
+    private List<BilibiliContent> tryFetchTimeline(String url, ContentType contentType) {
+        try {
+            String body = httpClient.getText(url);
+            if (body == null || body.isBlank()) return List.of();
+            JsonNode root = objectMapper.readTree(body);
+            JsonNode episodes = root.at("/result/episodes");
+            if (episodes.isMissingNode()) episodes = root.at("/data/episodes");
+            if (!episodes.isArray() || episodes.size() == 0) return List.of();
+            List<BilibiliContent> contents = new ArrayList<>();
+            for (JsonNode ep : episodes) {
+                String seasonId = pathText(ep, "season_id");
+                String title = pathText(ep, "title");
+                if (seasonId.isBlank() || title.isBlank()) continue;
+                BilibiliContent content = new BilibiliContent(contentType, seasonId, title);
+                content.setCoverUrl(pathText(ep, "cover"));
+                content.setPageUrl(pathText(ep, "url"));
+                String pubIndex = pathText(ep, "pub_index");
+                content.setLatestEpisodeTitle(pubIndex);
+                content.setLatestEpisodeNumber(parseIntFromText(pubIndex));
+                content.setLatestEpisodePubTime(parseTimelinePubTime(ep));
+                content.setLastFetchedAt(Instant.now());
+                contents.add(content);
+            }
+            contents.sort((a, b) -> {
+                Instant ta = a.getLatestEpisodePubTime();
+                Instant tb = b.getLatestEpisodePubTime();
+                if (ta == null && tb == null) return 0;
+                if (ta == null) return 1;
+                if (tb == null) return -1;
+                return tb.compareTo(ta);
+            });
+            System.out.println("[BILIBILI] 时间线 API 命中: " + url);
+            return contents;
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    /** 兜底：PGC 索引 st=2 取连载列表，再逐个调详情 API 拿准确集数+发布时间 */
+    private List<BilibiliContent> fallbackPgcIndexToday(ContentType contentType) {
+        try {
+            Integer seasonType = pgcSeasonType(contentType);
+            if (seasonType == null) return List.of();
+            String url = String.format(
+                "https://api.bilibili.com/pgc/season/index/result?"
+                + "season_type=%d&type=1&st=2&sort=0&page=1&pagesize=20", seasonType);
+            String body = httpClient.getText(url);
+            if (body == null || body.isBlank()) return List.of();
+
+            // 先用解析器拿基础字段
+            List<BilibiliContentDto> dtos = pageParser.parsePgcIndexJson(body, contentType);
+            if (dtos.isEmpty()) return List.of();
+
+            // 逐个调详情 API，最多 5 个，拿到就停（限速 350ms 每个）
+            List<BilibiliContent> contents = new ArrayList<>();
+            for (BilibiliContentDto dto : dtos) {
+                if (dto.getSeasonId() == null || dto.getSeasonId().isBlank()) continue;
+                try {
+                    BilibiliContent detail = findBySeasonId(contentType, dto.getSeasonId())
+                        .orElse(null);
+                    if (detail != null) {
+                        contents.add(detail);
+                    if (contents.size() >= 8) break; // 最多 8 个，避免太慢
+                    }
+                } catch (Exception ignored) {
+                    // 单个失败不影响整体
+                }
+            }
+            long withTime = contents.stream()
+                .filter(c -> c.getLatestEpisodePubTime() != null).count();
+            System.out.println("[BILIBILI] 兜底详情 API 返回 " + contents.size()
+                + " 条，含 pubTime 的 " + withTime);
+            return contents;
+        } catch (Exception e) {
+            System.err.println("[BILIBILI] 兜底详情 API 失败: " + e.getMessage());
+            return List.of();
+        }
+    }
+
+    private static String extractInitialState(String html) {
+        for (String prefix : new String[]{"__INITIAL_STATE__", "window.__INITIAL_STATE__"}) {
+            int idx = html.indexOf(prefix + " = ");
+            if (idx < 0) idx = html.indexOf(prefix + "=");
+            if (idx < 0) continue;
+            idx = html.indexOf('{', idx);
+            if (idx < 0) continue;
+            int depth = 0, end = idx;
+            for (int i = idx; i < html.length(); i++) {
+                char c = html.charAt(i);
+                if (c == '{') depth++;
+                else if (c == '}') { depth--; if (depth == 0) { end = i + 1; break; } }
+            }
+            if (end > idx) return html.substring(idx, end);
+        }
+        return null;
+    }
+
+    private static String pathText(JsonNode node, String field) {
+        JsonNode child = node.path(field);
+        return child.isMissingNode() || child.isNull() ? "" : child.asText("").trim();
+    }
+
+    private static Integer parseIntFromText(String text) {
+        if (text == null || text.isBlank()) return null;
+        try {
+            String digits = text.replaceAll("\\D+", "");
+            return digits.isBlank() ? null : Integer.parseInt(digits);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private Instant parseTimelinePubTime(JsonNode ep) {
+        // pub_ts: Unix 秒级时间戳
+        JsonNode pubTs = ep.path("pub_ts");
+        if (pubTs.isLong() || pubTs.isInt()) {
+            long ts = pubTs.asLong();
+            if (ts > 0) return Instant.ofEpochSecond(ts);
+        }
+        // pub_time: "10:00" 或 "2024-07-31 10:00:00"
+        JsonNode pubTime = ep.path("pub_time");
+        if (pubTime.isTextual()) {
+            String text = pubTime.asText().trim();
+            if (text.isBlank()) return null;
+            try {
+                // 先尝试完整日期时间
+                return Instant.from(
+                    java.time.format.DateTimeFormatter
+                        .ofPattern("yyyy-MM-dd HH:mm:ss")
+                        .withZone(java.time.ZoneId.of("Asia/Shanghai"))
+                        .parse(text));
+            } catch (Exception ignored) {}
+            try {
+                // 再尝试仅时间（HH:mm），结合今天日期
+                java.time.LocalTime lt = java.time.LocalTime.parse(text);
+                return java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"))
+                    .atTime(lt)
+                    .atZone(java.time.ZoneId.of("Asia/Shanghai"))
+                    .toInstant();
+            } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
+    @Override
     public BilibiliContent refresh(BilibiliContent content) throws Exception {
         if (content == null) throw new IllegalArgumentException("content 不能为空");
         if (content.getSeasonId() != null
@@ -326,6 +619,10 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
             content.setLatestEpisodeId(latest.episodeId());
             content.setLatestEpisodeTitle(latest.title());
             content.setLatestEpisodeNumber(latest.episodeNumber());
+            content.setLatestEpisodePubTime(latest.pubTime());
+        }
+        if (dto.getLatestEpisodePubTime() != null) {
+            content.setLatestEpisodePubTime(dto.getLatestEpisodePubTime());
         }
         content.setFinished(dto.isFinished());
         content.setLastFetchedAt(Instant.now());

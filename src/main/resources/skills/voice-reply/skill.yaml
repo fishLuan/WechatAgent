@@ -1,0 +1,17 @@
+name: voice-reply
+version: 1.0.0
+enabled: true
+display-name: 语音回复
+description: 将用户提供或前置任务生成的文字合成为MP3等音频文件，支持选择男声或女声
+executor: voice-reply
+capabilities:
+  - 文字转语音
+  - 男声音色
+  - 女声音色
+triggers:
+  - 语音回复
+  - 朗读
+  - 男声
+  - 女声
+timeout-seconds: 60
+requires-user-context: false

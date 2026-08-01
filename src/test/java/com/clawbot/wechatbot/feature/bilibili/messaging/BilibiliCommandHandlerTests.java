@@ -2,13 +2,17 @@ package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
+import com.clawbot.wechatbot.feature.bilibili.model.BilibiliPreference;
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
+import com.clawbot.wechatbot.feature.bilibili.model.PreferenceUpdate;
 import com.clawbot.wechatbot.feature.bilibili.model.RecommendedContent;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionResult;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionStatus;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliPreferenceService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliRecommendationService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.RecommendationHistoryService;
+import com.clawbot.wechatbot.feature.bilibili.rag.BilibiliRagService;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliContentRepository;
 import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
 import com.clawbot.wechatbot.scheduler.controller.SchedulerControlService;
@@ -18,17 +22,24 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Set;
+import java.time.DayOfWeek;
+import java.time.LocalTime;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 class BilibiliCommandHandlerTests {
     private BilibiliSubscriptionService subscriptionService;
     private BilibiliRecommendationService recommendationService;
     private BilibiliContentSource contentSource;
     private RecommendationHistoryService historyService;
+    private BilibiliPreferenceService preferenceService;
+    private PendingSearchResultStore pendingSearchResults;
+    private BilibiliRagService ragService;
     private BilibiliCommandHandler handler;
 
     @BeforeEach
@@ -37,17 +48,23 @@ class BilibiliCommandHandlerTests {
         recommendationService = mock(BilibiliRecommendationService.class);
         contentSource = mock(BilibiliContentSource.class);
         historyService = mock(RecommendationHistoryService.class);
+        preferenceService = mock(BilibiliPreferenceService.class);
+        pendingSearchResults = new PendingSearchResultStore();
+        ragService = mock(BilibiliRagService.class);
         BilibiliProperties properties = new BilibiliProperties();
         handler = new BilibiliCommandHandler(
             subscriptionService,
             recommendationService,
-            mock(BilibiliPreferenceService.class),
+            preferenceService,
             mock(SchedulerControlService.class),
             new WeChatSessionRegistry(),
             new ObjectMapper(),
             contentSource,
             properties,
-            historyService);
+            historyService,
+            pendingSearchResults,
+            ragService,
+            mock(BilibiliContentRepository.class));
     }
 
     @Test
@@ -110,6 +127,43 @@ class BilibiliCommandHandlerTests {
         assertTrue(reply.contains(
             "https://www.bilibili.com/bangumi/play/ss38729"));
         verify(contentSource).searchByTitle("老友记", 5);
+    }
+
+    @Test
+    void subscribesToThirdSearchResultUsingChineseOrdinal() throws Exception {
+        BilibiliContent first = content("media-1", "ss1", "第一部", false);
+        BilibiliContent second = content("media-2", "ss2", "第二部", false);
+        BilibiliContent third = content("media-3", "ss3", "第三部", false);
+        when(contentSource.searchByTitle("间谍过家家", 5))
+            .thenReturn(List.of(first, second, third));
+        when(subscriptionService.subscribeBySeasonId(
+            "user-1", ContentType.BANGUMI, "ss3"))
+            .thenReturn(success());
+
+        handler.handleSearchByTitle("user-1", "间谍过家家");
+        String reply = handler.handle("user-1", "订阅第三个");
+
+        assertTrue(reply.contains("订阅成功"));
+        verify(subscriptionService).subscribeBySeasonId(
+            "user-1", ContentType.BANGUMI, "ss3");
+    }
+
+    @Test
+    void doesNotSubscribeToFinishedSearchResult() throws Exception {
+        BilibiliContent first = content("media-1", "ss1", "第一部", false);
+        BilibiliContent second = content("media-2", "ss2", "第二部", false);
+        BilibiliContent third = content("media-3", "ss3", "第三部", true);
+        when(contentSource.searchByTitle("间谍过家家", 5))
+            .thenReturn(List.of(first, second, third));
+
+        handler.handleSearchByTitle("user-1", "间谍过家家");
+        String reply = handler.handle("user-1", "订阅第三个");
+
+        assertTrue(reply.contains("已经完结"));
+        verify(subscriptionService, never()).subscribeBySeasonId(
+            "user-1", ContentType.BANGUMI, "ss3");
+        verify(subscriptionService, never()).subscribeByContentId(
+            "user-1", ContentType.BANGUMI, "media-3");
     }
 
     @Test
@@ -215,6 +269,76 @@ class BilibiliCommandHandlerTests {
             "测试动漫");
     }
 
+    @Test
+    void naturalDailyPushUpdatesPreferenceWithoutImmediateRecommendation() {
+        BilibiliPreference current =
+            new BilibiliPreference("user-1", ContentType.MOVIE);
+        current.setPushTime(LocalTime.of(19, 30));
+        current.setMinimumRating(8.0);
+        current.setRecommendationCount(3);
+        current.setPushEnabled(true);
+        when(preferenceService.getOrCreate("user-1", ContentType.MOVIE))
+            .thenReturn(current);
+        BilibiliPreference saved =
+            new BilibiliPreference("user-1", ContentType.MOVIE);
+        saved.setPushTime(LocalTime.of(22, 10));
+        saved.setMinimumRating(9.0);
+        saved.setRecommendationCount(3);
+        saved.setPushEnabled(true);
+        when(preferenceService.update(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(ContentType.MOVIE),
+            any(PreferenceUpdate.class))).thenReturn(saved);
+
+        String reply = handler.handle(
+            "user-1", "每天晚上十点十分给我推送高分电影");
+
+        assertTrue(reply.contains("22:10"));
+        verify(preferenceService).update(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(ContentType.MOVIE),
+            any(PreferenceUpdate.class));
+        verify(recommendationService, never()).recommend(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    void weekdayExclusionWithoutTypeAppliesToAllRecommendationTypes() {
+        String reply = handler.handle("user-1", "周六不推送");
+
+        assertTrue(reply.contains("周六不发送每日推荐"));
+        for (ContentType type : List.of(
+            ContentType.BANGUMI, ContentType.SERIES, ContentType.MOVIE
+        )) {
+            verify(preferenceService).setExcludedPushDays(
+                "user-1", type, Set.of(DayOfWeek.SATURDAY), true);
+        }
+    }
+
+    @Test
+    void routesRagQuestionToRagService() {
+        when(ragService.answer("user-1", "智能推荐动漫", ContentType.BANGUMI))
+            .thenReturn("RAG 推荐结果");
+
+        String reply = handler.handle("user-1", "智能推荐动漫");
+
+        assertTrue(reply.contains("RAG 推荐结果"));
+        verify(ragService).answer("user-1", "智能推荐动漫", ContentType.BANGUMI);
+    }
+
+    @Test
+    void routesSimilarQuestionToRagService() {
+        when(ragService.answerSimilar("user-1", "葬送的芙莉莲", ContentType.BANGUMI))
+            .thenReturn("相似推荐结果");
+
+        String reply = handler.handle("user-1", "推荐葬送的芙莉莲类似的番");
+
+        assertTrue(reply.contains("相似推荐结果"));
+        verify(ragService).answerSimilar("user-1", "葬送的芙莉莲", ContentType.BANGUMI);
+    }
+
     private RecommendedContent item(String contentId, String seasonId) {
         return item(ContentType.BANGUMI, contentId, seasonId);
     }
@@ -244,5 +368,18 @@ class BilibiliCommandHandlerTests {
             SubscriptionStatus.ACTIVE,
             7,
             "订阅成功");
+    }
+
+    private BilibiliContent content(
+        String contentId,
+        String seasonId,
+        String title,
+        boolean finished
+    ) {
+        BilibiliContent content =
+            new BilibiliContent(ContentType.BANGUMI, contentId, title);
+        content.setSeasonId(seasonId);
+        content.setFinished(finished);
+        return content;
     }
 }

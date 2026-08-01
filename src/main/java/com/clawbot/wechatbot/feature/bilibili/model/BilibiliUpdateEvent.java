@@ -24,6 +24,8 @@ public class BilibiliUpdateEvent {
     private String episodeUrl;
     private UpdateEventStatus status = UpdateEventStatus.PENDING;
     private String failureReason;
+    private int deliveryAttempts;
+    private Instant nextAttemptAt;
     private Instant detectedAt;
     private Instant notifiedAt;
     private Instant updatedAt;
@@ -67,6 +69,10 @@ public class BilibiliUpdateEvent {
     public void setStatus(UpdateEventStatus value) { this.status = value; }
     public String getFailureReason() { return failureReason; }
     public void setFailureReason(String value) { this.failureReason = value; }
+    public int getDeliveryAttempts() { return deliveryAttempts; }
+    public void setDeliveryAttempts(int value) { this.deliveryAttempts = value; }
+    public Instant getNextAttemptAt() { return nextAttemptAt; }
+    public void setNextAttemptAt(Instant value) { this.nextAttemptAt = value; }
     public Instant getDetectedAt() { return detectedAt; }
     public void setDetectedAt(Instant value) { this.detectedAt = value; }
     public Instant getNotifiedAt() { return notifiedAt; }

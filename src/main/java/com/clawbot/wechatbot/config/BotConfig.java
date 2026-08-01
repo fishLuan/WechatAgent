@@ -3,6 +3,8 @@ package com.clawbot.wechatbot.config;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * Spring 管理的类型安全配置门面。
  *
@@ -43,8 +45,11 @@ public class BotConfig {
     public boolean isAgentEnabled() {
         return getBoolean("agent.enabled");
     }
-    public int getAgentMaxTasks() {
-        return getInt("agent.max-tasks");
+    public int getAgentMaxPlannedTasks() {
+        return getInt("agent.max-planned-tasks");
+    }
+    public int getAgentMaxTasksPerBatch() {
+        return getInt("agent.max-tasks-per-batch");
     }
     public int getAgentMaxParallelism() {
         return getInt("agent.max-parallelism");
@@ -72,6 +77,36 @@ public class BotConfig {
     }
     public int getAgentExecutionTimeoutSeconds() {
         return getInt("agent.guard.execution-timeout-seconds");
+    }
+    public int getAgentMaxInputAttachments() {
+        return getInt("agent.input.max-attachments");
+    }
+    public int getAgentMaxSingleInputBytes() {
+        return getInt("agent.input.max-single-bytes");
+    }
+    public int getAgentMaxTotalInputBytes() {
+        return getInt("agent.input.max-total-bytes");
+    }
+    public int getAgentMaxDocumentChars() {
+        return getInt("agent.input.max-document-chars");
+    }
+    public String getSkillClasspathPattern() {
+        return get("agent.skills.classpath-pattern");
+    }
+    public String getSkillExternalDirectory() {
+        return get("agent.skills.external-directory");
+    }
+    public boolean isSkillWatchEnabled() {
+        return getBoolean("agent.skills.watch-enabled");
+    }
+    public int getSkillReloadDebounceMillis() {
+        return getInt("agent.skills.reload-debounce-millis");
+    }
+    public int getSkillMaxCount() {
+        return getInt("agent.skills.max-count");
+    }
+    public int getSkillMaxDefinitionBytes() {
+        return getInt("agent.skills.max-definition-bytes");
     }
     public int getDeepSeekConnectTimeoutSeconds() { return getInt("deepseek.connect-timeout-seconds"); }
     public int getDeepSeekRequestTimeoutSeconds() { return getInt("deepseek.request-timeout-seconds"); }
@@ -132,6 +167,15 @@ public class BotConfig {
     public String getTianapiApiKey() { return get("tianapi.api.key"); }
     public int getLoginTimeoutMs() { return getInt("wechat.login.timeout-ms"); }
     public int getMaxSessions() { return getInt("wechat.max-sessions"); }
+    public int getMessageDispatchParallelism() {
+        return getInt("wechat.dispatch.parallelism");
+    }
+    public int getMessageDispatchMaxPending() {
+        return getInt("wechat.dispatch.max-pending-messages");
+    }
+    public int getMessageDispatchShutdownWaitSeconds() {
+        return getInt("wechat.dispatch.shutdown-wait-seconds");
+    }
     public int getLongReplyThreshold() { return getInt("wechat.reply.long-text-threshold"); }
     public int getLongReplyChunkSize() { return getInt("wechat.reply.chunk-size"); }
     public int getLongReplyPendingExpireMinutes() {
@@ -166,7 +210,30 @@ public class BotConfig {
     private String get(String key) {
         String value = environment.getProperty(key);
         if (value == null) throw new IllegalStateException("缺少配置项：" + key);
-        return value.trim();
+        return normalizeUtf8Value(value.trim());
+    }
+
+    /**
+     * Spring 的传统 .properties 加载链可能把 UTF-8 中文按 ISO-8859-1 解码。
+     * 仅当重新解码后能得到更多中文字符时采用修复结果，避免改动正常环境变量。
+     */
+    private String normalizeUtf8Value(String value) {
+        if (value.isEmpty()) return value;
+        byte[] originalBytes = value.getBytes(StandardCharsets.ISO_8859_1);
+        String decoded = new String(originalBytes, StandardCharsets.UTF_8);
+        if (decoded.indexOf('\uFFFD') >= 0) return value;
+        return countChinese(decoded) > countChinese(value) ? decoded : value;
+    }
+
+    private int countChinese(String value) {
+        int count = 0;
+        for (int offset = 0; offset < value.length();) {
+            int codePoint = value.codePointAt(offset);
+            Character.UnicodeScript script = Character.UnicodeScript.of(codePoint);
+            if (script == Character.UnicodeScript.HAN) count++;
+            offset += Character.charCount(codePoint);
+        }
+        return count;
     }
 
     private int getInt(String key) {

@@ -57,6 +57,16 @@ class BilibiliCommandParserTests {
 
         c = BilibiliCommandParser.parse("订阅 1");
         assertEquals(1, c.index());
+
+        c = BilibiliCommandParser.parse("订阅第三个");
+        assertEquals(BilibiliCommandParser.CmdType.SUBSCRIBE_BY_INDEX, c.type());
+        assertEquals(3, c.index());
+
+        c = BilibiliCommandParser.parse("订阅第3个");
+        assertEquals(3, c.index());
+
+        c = BilibiliCommandParser.parse("追更第十二部");
+        assertEquals(12, c.index());
     }
 
     @Test
@@ -103,6 +113,23 @@ class BilibiliCommandParserTests {
         // m 站移动端链接
         c = BilibiliCommandParser.parse("看这个剧 https://m.bilibili.com/bangumi/play/ep987");
         assertEquals(BilibiliCommandParser.CmdType.SUBSCRIBE_BY_URL, c.type());
+    }
+
+    @Test
+    void removesPoliteParticleFromSubscriptionTitle() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("订阅一下牧神记");
+        assertEquals(BilibiliCommandParser.CmdType.SUBSCRIBE_BY_TITLE, command.type());
+        assertEquals("牧神记", command.title());
+
+        command = BilibiliCommandParser.parse("帮我订阅一下《牧神记》");
+        assertEquals("牧神记", command.title());
+
+        command = BilibiliCommandParser.parse("我想追更一下牧神记");
+        assertEquals("牧神记", command.title());
+
+        command = BilibiliCommandParser.parse("订阅牧神记");
+        assertEquals("牧神记", command.title());
     }
 
     // ============================
@@ -169,6 +196,21 @@ class BilibiliCommandParserTests {
     }
 
     @Test
+    void parsesNaturalDailyMoviePushBeforeImmediateRecommendation() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("每天晚上十点十分给我推送3部9.2分以上的高分电影");
+
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals(ContentType.MOVIE, command.contentType());
+        assertEquals("22:10", command.fieldValue());
+        assertEquals(9.2, command.minimumRating());
+        assertEquals(3, command.recommendationCount());
+        assertTrue(command.pushEnabled());
+    }
+
+    @Test
     void parsesSetMinRatingCommands() {
         BilibiliCommandParser.ParsedCommand c = BilibiliCommandParser.parse("设置电影最低评分 9.5");
         assertEquals(BilibiliCommandParser.CmdType.SET_MIN_RATING, c.type());
@@ -208,6 +250,27 @@ class BilibiliCommandParserTests {
         assertFalse(c.pushEnabled());
     }
 
+    @Test
+    void parsesExcludedAndRestoredWeekdays() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("电影周六周日不推送");
+        assertEquals(
+            BilibiliCommandParser.CmdType.SET_WEEKDAY_PUSH_POLICY,
+            command.type());
+        assertEquals(ContentType.MOVIE, command.contentType());
+        assertEquals("SATURDAY,SUNDAY", command.fieldValue());
+        assertEquals("exclude", command.state());
+
+        command = BilibiliCommandParser.parse("恢复周六动漫推送");
+        assertEquals(ContentType.BANGUMI, command.contentType());
+        assertEquals("SATURDAY", command.fieldValue());
+        assertEquals("include", command.state());
+
+        command = BilibiliCommandParser.parse("星期三不要推送");
+        assertNull(command.contentType());
+        assertEquals("WEDNESDAY", command.fieldValue());
+    }
+
     // ============================
     // 6. 查看设置 + 立即检查更新
     // ============================
@@ -220,6 +283,24 @@ class BilibiliCommandParserTests {
         assertCmdType("检查更新", BilibiliCommandParser.CmdType.CHECK_UPDATES_NOW);
         assertCmdType("立即检查更新", BilibiliCommandParser.CmdType.CHECK_UPDATES_NOW);
         assertCmdType("刷新更新", BilibiliCommandParser.CmdType.CHECK_UPDATES_NOW);
+    }
+
+    @Test
+    void parsesRagRecommendationCommands() {
+        BilibiliCommandParser.ParsedCommand command =
+            BilibiliCommandParser.parse("智能推荐动漫");
+        assertEquals(BilibiliCommandParser.CmdType.RAG_QA, command.type());
+        assertEquals(ContentType.BANGUMI, command.contentType());
+        assertEquals("智能推荐动漫", command.title());
+
+        command = BilibiliCommandParser.parse("推荐类似葬送的芙莉莲的番");
+        assertEquals(BilibiliCommandParser.CmdType.RAG_SIMILAR, command.type());
+        assertEquals(ContentType.BANGUMI, command.contentType());
+        assertEquals("葬送的芙莉莲", command.title());
+
+        command = BilibiliCommandParser.parse("推荐葬送的芙莉莲类似的番");
+        assertEquals(BilibiliCommandParser.CmdType.RAG_SIMILAR, command.type());
+        assertEquals("葬送的芙莉莲", command.title());
     }
 
     // ============================

@@ -11,51 +11,41 @@ import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** 优先拦截 B 站链接，避免进入大模型网页搜索循环。 */
-public class BilibiliLinkMessageHandler implements MessageHandler {
-    private static final Pattern BILIBILI_LINK = Pattern.compile(
-        "(?i)((?:https?://)?(?:(?:[a-z0-9-]+\\.)?bilibili\\.com|b23\\.tv)/\\S+)");
+/** B站链接专用入口，优先于普通文本和大模型工具循环。 */
+public final class BilibiliLinkMessageHandler implements MessageHandler {
+    private static final Pattern LINK = Pattern.compile(
+        "(?i)((?:https?://)?(?:(?:[a-z0-9-]+\\.)?bilibili\\.com|b23\\.tv)/[^\\s，。！？]+)");
 
-    private final BilibiliSubscriptionService subscriptionService;
-    private final BilibiliMessageFormatter formatter;
-    private final WeChatOutboundGateway outboundGateway;
+    private final BilibiliSubscriptionService subscriptions;
+    private final WeChatOutboundGateway gateway;
 
     public BilibiliLinkMessageHandler(
-        BilibiliSubscriptionService subscriptionService,
-        BilibiliMessageFormatter formatter,
-        WeChatOutboundGateway outboundGateway
+        BilibiliSubscriptionService subscriptions,
+        BilibiliMessageFormatter ignoredFormatter,
+        WeChatOutboundGateway gateway
     ) {
-        this.subscriptionService = subscriptionService;
-        this.formatter = formatter;
-        this.outboundGateway = outboundGateway;
+        this.subscriptions = subscriptions;
+        this.gateway = gateway;
     }
 
     @Override
-    public boolean canHandle(WeixinMessage msg) {
-        String text = extractText(msg);
-        return firstBilibiliLink(text) != null;
+    public boolean canHandle(WeixinMessage message) {
+        return findLink(extractText(message)) != null;
     }
 
     @Override
-    public void handle(ILinkClient client, WeixinMessage msg) {
-        String from = msg.getFrom_user_id();
-        String link = firstBilibiliLink(extractText(msg));
-        if (from == null || from.isBlank() || link == null) return;
-
+    public void handle(ILinkClient client, WeixinMessage message) {
+        String userId = message == null ? null : message.getFrom_user_id();
+        String link = findLink(extractText(message));
+        if (userId == null || userId.isBlank() || link == null) return;
         String reply;
         try {
-            SubscriptionResult result =
-                subscriptionService.subscribeByUrl(from, link);
-            reply = BilibiliMessageFormatter
-                .formatSubscriptionResult(result);
-            System.out.println(
-                "[BILIBILI] URL subscription processed " + link);
-        } catch (Exception e) {
-            reply = formatter.formatResolveFailure(e.getMessage());
-            System.err.println("[BILIBILI] URL subscription failed "
-                + link + ": " + e.getMessage());
+            SubscriptionResult result = subscriptions.subscribeByUrl(userId, link);
+            reply = BilibiliMessageFormatter.formatSubscription(result);
+        } catch (Exception error) {
+            reply = BilibiliMessageFormatter.formatResolveFailure(error.getMessage());
         }
-        safeSend(from, reply);
+        gateway.sendText(userId, reply);
     }
 
     @Override
@@ -63,44 +53,35 @@ public class BilibiliLinkMessageHandler implements MessageHandler {
         return 40;
     }
 
-    private void safeSend(String to, String text) {
-        try {
-            outboundGateway.sendText(to, text);
-        } catch (Exception e) {
-            System.err.println("[BILIBILI] send failed: " + e.getMessage());
-        }
-    }
-
-    private String firstBilibiliLink(String text) {
+    private String findLink(String text) {
         if (text == null || text.isBlank()) return null;
-        Matcher matcher = BILIBILI_LINK.matcher(text);
-        return matcher.find() ? trimTrailingPunctuation(matcher.group(1)) : null;
+        Matcher matcher = LINK.matcher(text);
+        if (!matcher.find()) return null;
+        String link = matcher.group(1);
+        if (!link.startsWith("http")) link = "https://" + link;
+        return trimPunctuation(link);
     }
 
-    private String trimTrailingPunctuation(String link) {
-        String trimmed = link == null ? "" : link.trim();
-        while (!trimmed.isEmpty()) {
-            char last = trimmed.charAt(trimmed.length() - 1);
-            if (Character.isLetterOrDigit(last) || last == '/' || last == '=') break;
-            trimmed = trimmed.substring(0, trimmed.length() - 1);
+    private String trimPunctuation(String link) {
+        int end = link.length();
+        while (end > 0 && "。！？，,.;；）)]】》」".indexOf(link.charAt(end - 1)) >= 0) {
+            end--;
         }
-        return trimmed.isBlank() ? null : trimmed;
+        return end == 0 ? null : link.substring(0, end);
     }
 
-    private String extractText(WeixinMessage msg) {
-        if (msg == null || msg.getItem_list() == null) return null;
-        StringBuilder text = new StringBuilder();
-        for (MessageItem item : msg.getItem_list()) {
+    static String extractText(WeixinMessage message) {
+        if (message == null || message.getItem_list() == null) return "";
+        StringBuilder result = new StringBuilder();
+        for (MessageItem item : message.getItem_list()) {
+            if (item == null) continue;
             if (item.getType() == 1 && item.getText_item() != null) {
-                text.append(item.getText_item().getText());
+                result.append(item.getText_item().getText());
             } else if (item.getVoice_item() != null) {
                 VoiceItem voice = item.getVoice_item();
-                if (voice.getText() != null
-                    && !voice.getText().isBlank()) {
-                    text.append(voice.getText());
-                }
+                if (voice.getText() != null) result.append(voice.getText());
             }
         }
-        return text.toString();
+        return result.toString();
     }
 }

@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class SimpleTextContentProvider implements ScheduledTaskContentProvider {
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final String DEFAULT_TEXT = "⏰ 这是你的定时消息呀～\n（后面在这里加天气/新闻/提醒内容就行啦）";
+    private static final String DEFAULT_TEXT = "定时消息已触发。";
 
     @Override
     public TaskType taskType() { return TaskType.SIMPLE_TEXT; }

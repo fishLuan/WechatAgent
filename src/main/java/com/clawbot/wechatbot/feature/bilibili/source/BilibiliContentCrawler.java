@@ -125,6 +125,7 @@ public class BilibiliContentCrawler {
         target.setLatestEpisodeId(source.getLatestEpisodeId());
         target.setLatestEpisodeTitle(source.getLatestEpisodeTitle());
         target.setLatestEpisodeNumber(source.getLatestEpisodeNumber());
+        target.setLatestEpisodePubTime(source.getLatestEpisodePubTime());
         target.setFinished(source.isFinished());
     }
 

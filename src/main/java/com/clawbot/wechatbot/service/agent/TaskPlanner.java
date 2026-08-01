@@ -5,4 +5,12 @@ import java.util.List;
 /** 将一条用户消息规划为带类型和依赖关系的结构化任务。 */
 public interface TaskPlanner {
     List<AgentTask> plan(String userText) throws Exception;
+
+    default TaskPlan planDetailed(String userText) throws Exception {
+        return TaskPlan.accepted(plan(userText));
+    }
+
+    default boolean isConfigured() {
+        return true;
+    }
 }
