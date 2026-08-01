@@ -16,6 +16,7 @@ import com.github.wechat.ilink.sdk.core.model.ImageItem;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.env.Environment;
 
 import java.util.List;
 import java.util.Optional;
@@ -198,7 +199,8 @@ class WeChatBotMessageRoutingTests {
             registry,
             memory,
             gate,
-            dispatcher);
+            dispatcher,
+            mock(Environment.class));
 
         bot.routeMessages(client, List.of(message));
 
@@ -259,7 +261,8 @@ class WeChatBotMessageRoutingTests {
             registry,
             memory,
             gate,
-            immediateDispatcher());
+            immediateDispatcher(),
+            mock(Environment.class));
     }
 
     private MessageDispatchCoordinator immediateDispatcher() {
