@@ -101,8 +101,14 @@ public final class BilibiliCommandParser {
     private static final Pattern CHECK_NOW = Pattern.compile(
         "^(立即|马上|现在)?\\s*(检查更新|刷新更新|扫一下更新)\\s*$");
 
-    private static final Pattern TODAY_UPDATES = Pattern.compile(
-        "^(?:今天|今日|现在).*?(?:更新|上新|出了|上线|新番|新动漫).*?(动漫|番剧|番(?!茄|号)|剧集|电视剧|剧)(?:呢|吗|啊|呀)?\\s*$");
+    private static final Pattern UPDATE_QUERY = Pattern.compile(
+        "^(?:(?:请|帮我|给我)?\\s*(?:查找|搜索|搜一下|找一下|找|看看|看一下|查询)?\\s*)?"
+            + "(今天|今日|最近(?:24|二十四)小时|近(?:24|二十四)小时|最近(?:7|七)天|近(?:7|七)天|最近一周|近一周|最近(?:3|三)天|近(?:3|三)天|本周|这周|最近)"
+            + ".*?(?:更新|上新|上线|出了|新番|新动漫).*?"
+            + "(动漫|番剧|番(?!茄|号)|剧集|电视剧|剧)(?:呢|吗|啊|呀|有哪些|有什么)?\\s*$");
+    private static final Pattern NEW_CONTENT_QUERY = Pattern.compile(
+        "^(今天|今日|最近|本周|这周).*?(?:有什么|有啥|出了哪些|上线了哪些)\\s*"
+            + "(新番|新动漫|新剧|新电视剧)(?:呢|吗|啊|呀)?\\s*$");
 
     private static final Pattern SEARCH_BY_TITLE = Pattern.compile(
         "^(?:搜索|查找|搜一下|找一下|帮我找(?:一下)?)\\s*(?:B站)?\\s*(.+?)\\s*$");
@@ -218,15 +224,26 @@ public final class BilibiliCommandParser {
             return ParsedCommand.of(CmdType.CHECK_UPDATES_NOW);
         }
 
+        // 更新查询必须先于标题搜索和 RAG，避免把“最近更新的动漫”当成作品名。
+        matcher = UPDATE_QUERY.matcher(text);
+        if (matcher.matches()) {
+            ContentType ct = typeOf(matcher.group(2));
+            CmdType ty = ct == ContentType.SERIES ? CmdType.TODAY_UPDATES_SERIES : CmdType.TODAY_UPDATES_ANIME;
+            return new ParsedCommand(ty, null, null, ct, null, "update_range",
+                updateRangeValue(matcher.group(1)), null, null, null, null, null);
+        }
+        matcher = NEW_CONTENT_QUERY.matcher(text);
+        if (matcher.matches()) {
+            ContentType ct = matcher.group(2).contains("剧")
+                && !matcher.group(2).contains("番剧") ? ContentType.SERIES : ContentType.BANGUMI;
+            CmdType ty = ct == ContentType.SERIES
+                ? CmdType.TODAY_UPDATES_SERIES : CmdType.TODAY_UPDATES_ANIME;
+            return new ParsedCommand(ty, null, null, ct, null, "update_range",
+                updateRangeValue(matcher.group(1)), null, null, null, null, null);
+        }
+
         ParsedCommand rag = parseRag(text);
         if (rag != null) return rag;
-        // 11. 今日更新（"今天更新了哪些动漫"/"今日更新的番"/"今天有什么新番"）
-        matcher = TODAY_UPDATES.matcher(text);
-        if (matcher.find()) {
-            ContentType ct = typeOf(matcher.group(1));
-            CmdType ty = ct == ContentType.SERIES ? CmdType.TODAY_UPDATES_SERIES : CmdType.TODAY_UPDATES_ANIME;
-            return new ParsedCommand(ty, null, null, ct, null, null, null, null, null, null, null, null);
-        }
 
         matcher = SEARCH_BY_TITLE.matcher(text);
         if (matcher.find() && !matcher.group(1).isBlank()) {
@@ -579,6 +596,23 @@ public final class BilibiliCommandParser {
             case "不喜欢" -> "disliked";
             default -> "watched";
         };
+    }
+
+    private static String updateRangeValue(String value) {
+        if (value == null) return BilibiliUpdateRange.TODAY.name();
+        if (value.contains("24") || value.contains("二十四")) {
+            return BilibiliUpdateRange.LAST_24_HOURS.name();
+        }
+        if (value.contains("本周") || value.contains("这周")) {
+            return BilibiliUpdateRange.THIS_WEEK.name();
+        }
+        if (value.contains("一周") || value.contains("7天") || value.contains("七天")) {
+            return BilibiliUpdateRange.LAST_7_DAYS.name();
+        }
+        if (value.contains("最近") || value.startsWith("近")) {
+            return BilibiliUpdateRange.LAST_3_DAYS.name();
+        }
+        return BilibiliUpdateRange.TODAY.name();
     }
 
     private static String dayName(String value) {

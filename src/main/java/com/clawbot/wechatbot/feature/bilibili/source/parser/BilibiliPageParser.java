@@ -334,6 +334,10 @@ public class BilibiliPageParser {
         }
         // pub_time: "2024-07-31 12:00:00" 格式字符串
         JsonNode pubTime = episode.path("pub_time");
+        if (pubTime.isIntegralNumber()) {
+            long ts = pubTime.asLong();
+            if (ts > 0) return Instant.ofEpochSecond(ts);
+        }
         if (pubTime.isTextual()) {
             String text = pubTime.asText().trim();
             if (!text.isBlank()) {

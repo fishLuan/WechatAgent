@@ -5,6 +5,7 @@ import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 
 import java.util.List;
 import java.util.Optional;
+import java.time.Instant;
 
 /**
  * B 站外部数据源的公共契约。
@@ -37,6 +38,19 @@ public interface BilibiliContentSource {
     default List<BilibiliContent> findTodayAiring(ContentType contentType)
         throws Exception {
         return List.of();
+    }
+
+    /** 查询给定时间窗口内确实发布了新一集的作品。 */
+    default List<BilibiliContent> findUpdates(
+        ContentType contentType, Instant fromInclusive, Instant toExclusive)
+        throws Exception {
+        return findTodayAiring(contentType).stream()
+            .filter(content -> content.getLatestEpisodePubTime() != null)
+            .filter(content -> !content.getLatestEpisodePubTime().isBefore(fromInclusive))
+            .filter(content -> content.getLatestEpisodePubTime().isBefore(toExclusive))
+            .sorted((left, right) -> right.getLatestEpisodePubTime()
+                .compareTo(left.getLatestEpisodePubTime()))
+            .toList();
     }
 
     BilibiliContent refresh(BilibiliContent content) throws Exception;

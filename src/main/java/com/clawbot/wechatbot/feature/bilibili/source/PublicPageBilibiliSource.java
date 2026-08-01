@@ -43,7 +43,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
     private static final String SEARCH =
         "https://api.bilibili.com/x/web-interface/search/type?search_type=%s&keyword=%s&page_size=%d";
     private static final String PGC_TIMELINE =
-        "https://api.bilibili.com/pgc/web/timeline?season_type=%d";
+        "https://api.bilibili.com/pgc/web/timeline?types=%d&before=6&after=0";
 
     private final BilibiliHttpClient httpClient;
     private final BilibiliUrlParser urlParser;
@@ -325,6 +325,60 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         return contents;
     }
 
+    @Override
+    public List<BilibiliContent> findUpdates(
+        ContentType contentType, Instant fromInclusive, Instant toExclusive
+    ) {
+        if (contentType == null || fromInclusive == null || toExclusive == null
+            || !fromInclusive.isBefore(toExclusive)) {
+            return List.of();
+        }
+
+        // 时间表请求量较低，优先使用；缺失时再对少量连载作品调用详情接口核验发布时间。
+        Map<String, BilibiliContent> verified = new LinkedHashMap<>();
+        Integer seasonType = pgcSeasonType(contentType);
+        List<BilibiliContent> timeline = seasonType == null
+            ? List.of()
+            : tryFetchTimeline(String.format(PGC_TIMELINE, seasonType), contentType);
+        collectVerifiedUpdates(verified, timeline, fromInclusive, toExclusive);
+        List<BilibiliContent> fallback = List.of();
+        if (verified.size() < 8) {
+            fallback = fallbackPgcIndexToday(contentType);
+            collectVerifiedUpdates(verified, fallback, fromInclusive, toExclusive);
+        }
+        boolean receivedCandidates = !timeline.isEmpty() || !fallback.isEmpty();
+        boolean receivedAnyTimestamp = java.util.stream.Stream.concat(
+                timeline.stream(), fallback.stream())
+            .anyMatch(content -> content.getLatestEpisodePubTime() != null);
+        if (receivedCandidates && !receivedAnyTimestamp) {
+            throw new IllegalStateException("B站返回了作品，但没有提供可用的更新时间");
+        }
+        return verified.values().stream()
+            .sorted((left, right) -> right.getLatestEpisodePubTime()
+                .compareTo(left.getLatestEpisodePubTime()))
+            .toList();
+    }
+
+    private static void collectVerifiedUpdates(
+        Map<String, BilibiliContent> target,
+        List<BilibiliContent> candidates,
+        Instant fromInclusive,
+        Instant toExclusive
+    ) {
+        if (candidates == null) return;
+        for (BilibiliContent content : candidates) {
+            Instant publishedAt = content.getLatestEpisodePubTime();
+            if (publishedAt == null || publishedAt.isBefore(fromInclusive)
+                || !publishedAt.isBefore(toExclusive)) {
+                continue;
+            }
+            String key = content.getContentId();
+            if (key == null || key.isBlank()) key = content.getSeasonId();
+            if (key == null || key.isBlank()) key = content.getTitle();
+            if (key != null && !key.isBlank()) target.putIfAbsent(key, content);
+        }
+    }
+
     /** 爬 B站动画时间表网页，提取 __INITIAL_STATE__ 中的当日更新数据 */
     private List<BilibiliContent> tryFetchTimelineWebPage(ContentType contentType) {
         try {
@@ -394,23 +448,28 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
             String body = httpClient.getText(url);
             if (body == null || body.isBlank()) return List.of();
             JsonNode root = objectMapper.readTree(body);
-            JsonNode episodes = root.at("/result/episodes");
-            if (episodes.isMissingNode()) episodes = root.at("/data/episodes");
-            if (!episodes.isArray() || episodes.size() == 0) return List.of();
+            JsonNode result = root.path("result");
+            if (!result.isArray()) result = root.path("data");
+            if (!result.isArray() || result.isEmpty()) return List.of();
             List<BilibiliContent> contents = new ArrayList<>();
-            for (JsonNode ep : episodes) {
-                String seasonId = pathText(ep, "season_id");
-                String title = pathText(ep, "title");
-                if (seasonId.isBlank() || title.isBlank()) continue;
-                BilibiliContent content = new BilibiliContent(contentType, seasonId, title);
-                content.setCoverUrl(pathText(ep, "cover"));
-                content.setPageUrl(pathText(ep, "url"));
-                String pubIndex = pathText(ep, "pub_index");
-                content.setLatestEpisodeTitle(pubIndex);
-                content.setLatestEpisodeNumber(parseIntFromText(pubIndex));
-                content.setLatestEpisodePubTime(parseTimelinePubTime(ep));
-                content.setLastFetchedAt(Instant.now());
-                contents.add(content);
+            for (JsonNode day : result) {
+                JsonNode episodes = day.path("episodes");
+                if (!episodes.isArray()) continue;
+                for (JsonNode ep : episodes) {
+                    String seasonId = pathText(ep, "season_id");
+                    String title = pathText(ep, "title");
+                    if (seasonId.isBlank() || title.isBlank()) continue;
+                    BilibiliContent content = new BilibiliContent(contentType, seasonId, title);
+                    content.setSeasonId(seasonId);
+                    content.setCoverUrl(pathText(ep, "cover"));
+                    content.setPageUrl("https://www.bilibili.com/bangumi/play/ss" + seasonId);
+                    String pubIndex = pathText(ep, "pub_index");
+                    content.setLatestEpisodeTitle(pubIndex);
+                    content.setLatestEpisodeNumber(parseIntFromText(pubIndex));
+                    content.setLatestEpisodePubTime(parseTimelinePubTime(ep));
+                    content.setLastFetchedAt(Instant.now());
+                    contents.add(content);
+                }
             }
             contents.sort((a, b) -> {
                 Instant ta = a.getLatestEpisodePubTime();

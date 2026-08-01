@@ -26,7 +26,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.DayOfWeek;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -143,9 +142,11 @@ public final class BilibiliCommandHandler {
                     BilibiliMessageFormatter.formatCheckResult(
                         subscriptions.checkNow(userId));
                 case TODAY_UPDATES_ANIME ->
-                    handleTodayUpdates(userId, ContentType.BANGUMI);
+                    handleUpdates(userId, ContentType.BANGUMI,
+                        BilibiliUpdateRange.fromCommandValue(command.fieldValue()));
                 case TODAY_UPDATES_SERIES ->
-                    handleTodayUpdates(userId, ContentType.SERIES);
+                    handleUpdates(userId, ContentType.SERIES,
+                        BilibiliUpdateRange.fromCommandValue(command.fieldValue()));
                 case RAG_QA ->
                     ragService.answer(userId, command.title(), command.contentType());
                 case RAG_SIMILAR ->
@@ -615,40 +616,54 @@ public final class BilibiliCommandHandler {
 
     /* ========== 8. 今日更新推荐 ========== */
     public String handleTodayUpdates(String userId, ContentType contentType) {
+        return handleUpdates(userId, contentType, BilibiliUpdateRange.TODAY);
+    }
+
+    public String handleUpdates(
+        String userId, ContentType contentType, BilibiliUpdateRange range
+    ) {
         sessions.markActive(userId);
         if (contentType == null) contentType = ContentType.BANGUMI;
+        if (range == null) range = BilibiliUpdateRange.TODAY;
         try {
-            List<BilibiliContent> updatedToday;
-            ZoneId bj = ZoneId.of("Asia/Shanghai");
-            Instant todayStart = LocalDate.now(bj).atStartOfDay(bj).toInstant();
+            Instant end = Instant.now();
+            Instant start = range.from(end);
+            List<BilibiliContent> updates = contentRepository.findUpdatesBetween(
+                contentType, start, end);
 
-            updatedToday = contentRepository.findTodayUpdates(contentType, todayStart);
-            if (updatedToday != null && !updatedToday.isEmpty()) {
-                System.out.println("[BILIBILI] DB pubTime 查询命中 " + updatedToday.size() + " 条");
+            if (updates != null && !updates.isEmpty()) {
+                System.out.println("[BILIBILI] " + range.displayName()
+                    + " DB 更新时间查询命中 " + updates.size() + " 条");
             } else {
                 try {
-                    updatedToday = contentSource.findTodayAiring(contentType);
-                    System.out.println("[BILIBILI] PGC 索引返回 "
-                        + (updatedToday == null ? 0 : updatedToday.size()) + " 条");
+                    updates = contentSource.findUpdates(contentType, start, end);
+                    if (updates != null && !updates.isEmpty()) {
+                        contentRepository.saveAll(updates);
+                    }
+                    System.out.println("[BILIBILI] " + range.displayName() + " 实时数据返回 "
+                        + (updates == null ? 0 : updates.size()) + " 条");
                 } catch (Exception e) {
-                    System.err.println("[BILIBILI] PGC 索引失败: " + e.getMessage());
+                    System.err.println("[BILIBILI] 更新时间实时查询失败: " + e.getMessage());
+                    return "暂时无法获取B站实时更新数据，请稍后重试。";
                 }
             }
 
-            if (updatedToday == null || updatedToday.isEmpty()) {
-                return "📭 今天暂时没有" + typeNameOf(contentType) + "更新哦～\n可能B站还没上新，晚点再来看看吧！";
+            if (updates == null || updates.isEmpty()) {
+                return range.displayName() + "暂时没有查到" + typeNameOf(contentType)
+                    + "更新。若本地作品库尚未刷新，也可以稍后再试。";
             }
 
-            int totalCount = updatedToday.size();
+            int totalCount = updates.size();
             int count = resolveDefaultCount(userId, contentType);
             List<String> excluded = history.findExcludedContentIds(userId, contentType);
-            List<BilibiliContent> filtered = updatedToday.stream()
+            List<BilibiliContent> filtered = updates.stream()
                 .filter(c -> !excluded.contains(c.getContentId()))
                 .limit(count)
                 .toList();
-            return BilibiliMessageFormatter.formatTodayUpdates(contentType, totalCount, filtered);
+            return BilibiliMessageFormatter.formatUpdates(
+                contentType, range.displayName(), totalCount, filtered);
         } catch (Exception e) {
-            return failure("获取今日更新失败", e);
+            return failure("获取" + range.displayName() + "更新失败", e);
         }
     }
 

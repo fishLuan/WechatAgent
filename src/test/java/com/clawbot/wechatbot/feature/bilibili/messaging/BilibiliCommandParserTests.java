@@ -362,6 +362,17 @@ class BilibiliCommandParserTests {
     }
 
     @Test
+    void parsesUpdateQueriesBeforeTitleSearch() {
+        assertUpdateQuery("查找今天更新的动漫", ContentType.BANGUMI, "TODAY");
+        assertUpdateQuery("看看最近更新的动漫", ContentType.BANGUMI, "LAST_3_DAYS");
+        assertUpdateQuery("找最近一周更新的电视剧", ContentType.SERIES, "LAST_7_DAYS");
+        assertUpdateQuery("查询近7天更新的番剧", ContentType.BANGUMI, "LAST_7_DAYS");
+        assertUpdateQuery("查询最近24小时更新的电视剧", ContentType.SERIES, "LAST_24_HOURS");
+        assertUpdateQuery("本周上线的剧集有哪些", ContentType.SERIES, "THIS_WEEK");
+        assertUpdateQuery("今天有什么新番", ContentType.BANGUMI, "TODAY");
+    }
+
+    @Test
     void parsesRagRecommendationCommands() {
         BilibiliCommandParser.ParsedCommand command =
             BilibiliCommandParser.parse("智能推荐动漫");
@@ -422,5 +433,14 @@ class BilibiliCommandParserTests {
         BilibiliCommandParser.ParsedCommand c = BilibiliCommandParser.parse(input);
         assertEquals(expectedType, c.contentType(),
             "contentType 不匹配: input=「" + input + "」");
+    }
+
+    private void assertUpdateQuery(String input, ContentType expectedType, String range) {
+        BilibiliCommandParser.ParsedCommand command = BilibiliCommandParser.parse(input);
+        assertTrue(command.type() == BilibiliCommandParser.CmdType.TODAY_UPDATES_ANIME
+            || command.type() == BilibiliCommandParser.CmdType.TODAY_UPDATES_SERIES,
+            "未识别成更新查询: " + input + "，实际=" + command.type());
+        assertEquals(expectedType, command.contentType());
+        assertEquals(range, command.fieldValue());
     }
 }
