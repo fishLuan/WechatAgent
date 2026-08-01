@@ -259,17 +259,6 @@ public class SchedulerControlService implements SmartLifecycle {
         }
     }
 
-    private boolean isOneTime(ScheduledSubscription subscription) {
-        if (subscription.getTaskType() == TaskType.ONE_TIME_REMINDER) return true;
-        try {
-            com.fasterxml.jackson.databind.JsonNode params =
-                new com.fasterxml.jackson.databind.ObjectMapper()
-                    .readTree(subscription.getParamsJson());
-            return params.path("fire_timestamp").asLong(0L) > 0L;
-        } catch (Exception ignored) {
-            return false;
-        }
-    }
 
     /** 把 Cron 表达式转成用户能看懂的文字描述（目前只支持「每天 HH:mm」格式，其他直接返回原 Cron） */
     public static String cronToTimeDesc(String cron) {
