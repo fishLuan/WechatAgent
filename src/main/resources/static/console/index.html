@@ -208,6 +208,7 @@
         <select id="fType" onchange="onTypeChange()">
           <option value="SIMPLE_TEXT">周期任务（每天固定时间）</option>
           <option value="ONE_TIME_REMINDER">单次提醒（到点发一次）</option>
+          <option value="BILIBILI_PUSH">B站推送（定时推荐电影/动漫/剧集）</option>
         </select>
       </div>
       <div id="groupCron">
@@ -223,6 +224,23 @@
             <div class="hint">填了 Cron 则优先使用</div>
           </div>
         </div>
+      </div>
+      <div class="form-field" id="groupBili" style="display:none;">
+        <div class="form-row">
+          <div class="form-field">
+            <label>内容类型 <span class="req">*</span></label>
+            <select id="fContentType">
+              <option value="MOVIE">电影</option>
+              <option value="BANGUMI">动漫</option>
+              <option value="SERIES">剧集</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>推送数量 <span class="req">*</span></label>
+            <input type="number" id="fCount" min="1" max="10" value="2">
+          </div>
+        </div>
+        <div class="hint">到点后从 B 站候选池推荐并推送（每天重复）</div>
       </div>
       <div class="form-field" id="groupOnce" style="display:none;">
         <label>提醒时间 <span class="req">*</span></label>
@@ -316,12 +334,14 @@ async function loadCaps() {
     const icons = ["🔧","🌐","📊","🛠️","🧮","📰","💱","🛡️","📄","🕐","🗺️","🎨","🔍","🧪"];
     grid.innerHTML = "";
     data.tools.forEach((t, i) => {
-      const card = mkCard({ icon: icons[i % icons.length], cls: "", mark: "AUTO", name: t.name, desc: t.description || "（无描述）", cat: "tool", meta: "params: " + JSON.stringify(t.parameters && t.parameters.properties ? Object.keys(t.parameters.properties) : []) });
+      const card = mkCard({ icon: icons[i % icons.length], cls: "", mark: "AUTO", name: t.name, desc: brief(t.description), cat: "tool", meta: "params: " + JSON.stringify(t.parameters && t.parameters.properties ? Object.keys(t.parameters.properties) : []) });
+      card.title = t.description || "";
       card.onclick = () => showCapDetail(t, icons[i % icons.length]);
       grid.appendChild(card);
     });
     data.skills.forEach(s => {
-      const card = mkCard({ icon: "🎯", cls: "skill", mark: s.enabled ? "SKILL" : "OFF", name: s.displayName || s.name, desc: s.description || "（无描述）", cat: "skill v" + (s.version || "?"), meta: "capabilities: " + (s.capabilities || []).join(", ") });
+      const card = mkCard({ icon: "🎯", cls: "skill", mark: s.enabled ? "SKILL" : "OFF", name: s.displayName || s.name, desc: brief(s.description), cat: "skill v" + (s.version || "?"), meta: "capabilities: " + (s.capabilities || []).join(", ") });
+      card.title = s.description || "";
       card.onclick = () => showCapDetail(s, "🎯");
       grid.appendChild(card);
     });
@@ -339,6 +359,15 @@ function mkCard({ icon, cls, mark, name, desc, cat, meta }) {
   return div;
 }
 
+/** 挑重点简要介绍：取第一句（按 。！？.!? 截断），超长再截断到 34 字。完整描述在卡片 hover 提示里。 */
+function brief(s, max = 34) {
+  if (!s) return "（无描述）";
+  const clean = String(s).replace(/\s+/g, " ").trim();
+  const m = clean.match(/^[^。！？.!?]{2,}(?:[。！？.!?]|$)/);
+  const first = m ? m[0] : clean;
+  return first.length > max ? first.slice(0, max) + "…" : first;
+}
+
 /* ---------- 定时任务 ---------- */
 async function loadTasks() {
   const wrap = $("taskTableWrap");
@@ -350,7 +379,7 @@ async function loadTasks() {
     const rows = tasks.map(t => `
       <tr>
         <td><span class="chip ${t.enabled ? "on" : "off"}">${t.enabled ? "● 启用" : "○ 停用"}</span></td>
-        <td><span class="chip type">${t.taskType === "ONE_TIME_REMINDER" ? "单次" : "周期"}</span></td>
+        <td><span class="chip type">${t.taskType === "ONE_TIME_REMINDER" ? "单次" : t.taskType === "BILIBILI_PUSH" ? "B站推送" : "周期"}</span></td>
         <td class="mono">${esc(t.cronExpression || "-")}</td>
         <td style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(contentOf(t))}</td>
         <td class="mono" style="color:var(--sub)">${esc(t.userId || "-")}</td>
@@ -368,7 +397,15 @@ async function loadTasks() {
   }
 }
 function contentOf(t) {
-  try { return JSON.parse(t.paramsJson || "{}").message_content || ""; } catch (e) { return ""; }
+  try {
+    const p = JSON.parse(t.paramsJson || "{}");
+    if (t.taskType === "BILIBILI_PUSH") {
+      const types = { MOVIE: "电影", BANGUMI: "动漫", SERIES: "剧集" };
+      const ct = types[p.content_type] || p.content_type || "电影";
+      return `推送 ${p.count || 1} 部${ct}`;
+    }
+    return p.message_content || "";
+  } catch (e) { return ""; }
 }
 
 function openTaskModal() {
@@ -404,14 +441,19 @@ function editTask(id) {
       // 转本地时区（datetime-local 无时区，直接用本地时间避免 UTC 偏移 8 小时）
       $("fOnce").value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     }
+    if (p.content_type) $("fContentType").value = p.content_type;
+    if (p.count) $("fCount").value = p.count;
   } catch (e) {}
   onTypeChange();
 }
 function closeTaskModal() { $("taskModal").classList.remove("open"); }
 function onTypeChange() {
-  const once = $("fType").value === "ONE_TIME_REMINDER";
+  const t = $("fType").value;
+  const once = t === "ONE_TIME_REMINDER";
+  const bili = t === "BILIBILI_PUSH";
   $("groupCron").style.display = once ? "none" : "";
   $("groupOnce").style.display = once ? "" : "none";
+  $("groupBili").style.display = bili ? "" : "none";
   previewTask();
 }
 
@@ -428,10 +470,15 @@ async function previewTask() {
 
 async function saveTask() {
   const id = $("fId").value;
-  const isOnce = $("fType").value === "ONE_TIME_REMINDER";
+  const type = $("fType").value;
+  const isOnce = type === "ONE_TIME_REMINDER";
   const content = $("fContent").value.trim();
   if (!content) return toast("⚠️ 请填写提醒内容");
-  const body = { taskType: $("fType").value, messageContent: content, userId: $("fUserId").value.trim() || undefined };
+  const body = { taskType: type, messageContent: content, userId: $("fUserId").value.trim() || undefined };
+  if (type === "BILIBILI_PUSH") {
+    body.contentType = $("fContentType").value;
+    body.count = parseInt($("fCount").value, 10) || 2;
+  }
   if (isOnce) {
     const v = $("fOnce").value;
     if (!v) return toast("⚠️ 请选择提醒时间");
@@ -493,20 +540,90 @@ async function loadSettings() {
   } catch (e) { setPillOff(e.message); }
 }
 
-/* ---------- 能力详情弹窗 ---------- */
+/* ---------- 能力详情弹窗（工具可交互调用 / 技能只读） ---------- */
+let curTool = null;
 function showCapDetail(item, icon) {
-  const isTool = item.type === "tool";
-  const detail = isTool
-    ? `<div class="form-field"><label>名称</label><input value="${esc(item.name)}" readonly></div>
-       <div class="form-field"><label>描述</label><textarea rows="3" readonly>${esc(item.description || "")}</textarea></div>
-       <div class="form-field"><label>参数 Schema（JSON Schema，前端可自动生成表单）</label><textarea rows="8" class="mono" readonly>${esc(JSON.stringify(item.parameters || {}, null, 2))}</textarea></div>`
-    : `<div class="form-field"><label>技能名</label><input value="${esc(item.name)}" readonly></div>
+  if (item.type === "tool") { openToolModal(item, icon); return; }
+  const detail = `<div class="form-field"><label>技能名</label><input value="${esc(item.name)}" readonly></div>
        <div class="form-field"><label>展示名</label><input value="${esc(item.displayName || item.name)}" readonly></div>
        <div class="form-field"><label>描述</label><textarea rows="3" readonly>${esc(item.description || "")}</textarea></div>
        <div class="form-field"><label>capabilities</label><input value="${esc((item.capabilities || []).join(", "))}" readonly></div>
-       <div class="form-field"><label>triggers</label><input value="${esc((item.triggers || []).join(", "))}" readonly></div>`;
-  $("capModalBody").innerHTML = `<div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;"><div style="font-size:30px">${icon}</div><div><div style="font-weight:700; font-size:16px;">${esc(item.displayName || item.name)}</div><div class="hint">${isTool ? "function-calling 工具" : "skill.yaml 技能"}</div></div></div>` + detail;
+       <div class="form-field"><label>triggers</label><input value="${esc((item.triggers || []).join(", "))}" readonly></div>
+       <div class="hint">💡 技能在微信对话中触发（如 "用语音回复"、"生成Word文档"），控制台仅展示</div>`;
+  $("capModalBody").innerHTML = `<div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;"><div style="font-size:30px">${icon}</div><div><div style="font-weight:700; font-size:16px;">${esc(item.displayName || item.name)}</div><div class="hint">skill.yaml 技能</div></div></div>` + detail;
   $("capModal").classList.add("open");
+}
+
+function openToolModal(item, icon) {
+  curTool = item;
+  const props = (item.parameters && item.parameters.properties) || {};
+  const required = (item.parameters && item.parameters.required) || [];
+  let form = "";
+  for (const k of Object.keys(props)) {
+    const v = props[k] || {};
+    const req = required.includes(k);
+    const label = v.title || k;
+    const type = v.type || "string";
+    const ph = esc(v.description || "");
+    const reqMark = req ? ' <span style="color:#e11d48">*</span>' : "";
+    form += `<div class="form-field"><label>${esc(label)}${reqMark} <span class="hint mono">${esc(k)}</span></label>`;
+    if (type === "object" || type === "array") {
+      form += `<textarea rows="3" class="mono" id="arg_${esc(k)}" placeholder='${type === "object" ? "JSON 对象，如 {\"a\":1}" : "JSON 数组，如 [1,2]"}'>${ph}</textarea>`;
+    } else if (type === "integer" || type === "number") {
+      form += `<input type="number" id="arg_${esc(k)}" placeholder="${ph}">`;
+    } else if (type === "boolean") {
+      form += `<select id="arg_${esc(k)}"><option value="true">true</option><option value="false">false</option></select>`;
+    } else {
+      form += `<input id="arg_${esc(k)}" placeholder="${ph}">`;
+    }
+    form += `</div>`;
+  }
+  if (!form) form = `<div class="hint" style="margin-bottom:12px">该工具无参数，直接调用即可</div>`;
+  const sessionTool = ["scheduler_manage", "bilibili_manage"].includes(item.name);
+  const userField = sessionTool
+    ? `<div class="form-field"><label>目标 userId（微信会话身份）</label><input id="arg_userId" value="o9cq809XCBM43Y3grR9-uNl8Xcos@im.wechat"><div class="hint">此工具绑定微信会话；默认用淇奥的身份</div></div>`
+    : "";
+  $("capModalBody").innerHTML = `<div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;"><div style="font-size:30px">${icon}</div><div><div style="font-weight:700; font-size:16px;">${esc(item.name)}</div><div class="hint">function-calling 工具 · 填参数后点击调用</div></div></div>
+    ${sessionTool ? `<div style="background:#fef3c7;border:1px solid #fde68a;color:#92400e;padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:12px;">⚠️ 此工具依赖微信会话身份，请确认下方 userId 正确</div>` : ""}
+    ${form}${userField}
+    <button class="btn btn-primary" style="width:100%; margin-top:8px;" onclick="callTool()">🚀 调用工具</button>
+    <div id="toolResult" style="margin-top:12px;"></div>`;
+  $("capModal").classList.add("open");
+}
+
+async function callTool() {
+  if (!curTool) return;
+  const name = curTool.name;
+  const props = (curTool.parameters && curTool.parameters.properties) || {};
+  const args = {};
+  for (const k of Object.keys(props)) {
+    const el = $("arg_" + k);
+    if (!el) continue;
+    const v = el.value.trim();
+    if (!v) continue;
+    const type = (props[k] && props[k].type) || "string";
+    if (type === "object" || type === "array") {
+      try { args[k] = JSON.parse(v); } catch (e) { return toast("❌ 参数 " + k + " 不是合法 JSON"); }
+    } else if (type === "integer" || type === "number") {
+      args[k] = Number(v);
+    } else if (type === "boolean") {
+      args[k] = v === "true";
+    } else {
+      args[k] = v;
+    }
+  }
+  const body = { name, arguments: args };
+  const userIdEl = $("arg_userId");
+  if (userIdEl && userIdEl.value.trim()) body.userId = userIdEl.value.trim();
+  const box = $("toolResult");
+  box.innerHTML = `<div class="loading"><span class="spinner"></span>调用 ${esc(name)} 中…</div>`;
+  try {
+    const r = await api("/api/tools/execute", { method: "POST", body: JSON.stringify(body) });
+    const ok = !!r.success;
+    box.innerHTML = `<div style="border-radius:8px;padding:10px;background:${ok ? "#ecfdf5" : "#fef2f2"};border:1px solid ${ok ? "#a7f3d0" : "#fecaca"};"><div style="font-weight:700;margin-bottom:6px;">${ok ? "✅ 调用成功" : "❌ 调用失败"}</div><pre style="white-space:pre-wrap;word-break:break-all;margin:0;font-size:12px;line-height:1.5;">${esc(r.content || "（无返回内容）")}</pre></div>`;
+  } catch (e) {
+    box.innerHTML = `<div style="border-radius:8px;padding:10px;background:#fef2f2;border:1px solid #fecaca;font-size:12px;">❌ ${esc(e.message)}</div>`;
+  }
 }
 
 /* ---------- 工具 ---------- */

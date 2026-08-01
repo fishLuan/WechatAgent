@@ -78,8 +78,8 @@ public class TaskSchedulerCore implements SmartLifecycle {
         }
 
         try {
-            // ========== 分支1：单次提醒 ONE_TIME_REMINDER（只发一次，发完自毁） ==========
-            if (subscription.getTaskType() == com.clawbot.wechatbot.scheduler.model.TaskType.ONE_TIME_REMINDER) {
+            // ========== 分支1：单次任务（一次性提醒/一次性B站推送，发完自毁） ==========
+            if (isOneTime(subscription)) {
                 long fireAt = 0L;
                 String messageContent = "";
                 boolean alreadyFired = false;
@@ -207,5 +207,23 @@ public class TaskSchedulerCore implements SmartLifecycle {
             future.cancel(false);
             System.out.println("[SCHEDULER-CORE] 已取消定时任务 subId=" + subscriptionId);
         }
+    }
+
+    /** 单次任务：taskType 是一次性提醒，或 paramsJson 里带 fire_timestamp（含一次性B站推送） */
+    private boolean isOneTime(ScheduledSubscription subscription) {
+        if (subscription.getTaskType() == com.clawbot.wechatbot.scheduler.model.TaskType.ONE_TIME_REMINDER) {
+            return true;
+        }
+        try {
+            if (subscription.getParamsJson() != null && !subscription.getParamsJson().isBlank()) {
+                com.fasterxml.jackson.databind.JsonNode p = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readTree(subscription.getParamsJson());
+                if (p != null && p.isObject()) {
+                    return p.path("fire_timestamp").asLong(0L) > 0L;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
     }
 }

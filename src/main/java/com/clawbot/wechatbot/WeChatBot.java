@@ -19,14 +19,18 @@ import com.github.wechat.ilink.sdk.core.login.LoginContext;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.SmartLifecycle;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
+import java.awt.Desktop;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 微信机器人运行时。
@@ -43,8 +47,10 @@ public class WeChatBot implements SmartLifecycle {
     private final ConversationMemoryService memoryService;
     private final MultiTaskPlanningGate planningGate;
     private final MessageDispatchCoordinator messageDispatcher;
+    private final Environment environment;
     private final List<BotSession> sessions = new CopyOnWriteArrayList<>();
     private final String routeNamespace = "clawbot-" + UUID.randomUUID();
+    private final AtomicBoolean consoleOpened = new AtomicBoolean(false);
 
     private volatile boolean running;
     private int maxSessions;
@@ -55,7 +61,8 @@ public class WeChatBot implements SmartLifecycle {
                      WeChatClientRegistry clientRegistry,
                      ConversationMemoryService memoryService,
                      MultiTaskPlanningGate planningGate,
-                     MessageDispatchCoordinator messageDispatcher) {
+                     MessageDispatchCoordinator messageDispatcher,
+                     Environment environment) {
         this.config = config;
         this.handlers = new ArrayList<>(handlers);
         this.handlers.sort(Comparator.comparingInt(MessageHandler::priority));
@@ -64,6 +71,7 @@ public class WeChatBot implements SmartLifecycle {
         this.memoryService = memoryService;
         this.planningGate = planningGate;
         this.messageDispatcher = messageDispatcher;
+        this.environment = environment;
     }
 
     @Override
@@ -78,10 +86,36 @@ public class WeChatBot implements SmartLifecycle {
         startNextLoginSession();
     }
 
+    /**
+     * 扫码登录成功后延迟自动打开可视化控制台（仅 Web 模式；打开失败不影响运行）。
+     */
+    private void openConsoleLater() {
+        if (!consoleOpened.compareAndSet(false, true)) return;
+        if ("none".equalsIgnoreCase(environment.getProperty("spring.main.web-application-type", "servlet"))) {
+            System.out.println("[CONSOLE] 非 Web 模式，跳过自动打开控制台");
+            return;
+        }
+        new Thread(() -> {
+            try {
+                Thread.sleep(2000);
+                String port = environment.getProperty("local.server.port",
+                    environment.getProperty("server.port", "8080"));
+                String url = "http://localhost:" + port + "/console/index.html";
+                if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                    Desktop.getDesktop().browse(URI.create(url));
+                    System.out.println("[CONSOLE] 🖥️ 已自动打开控制台: " + url);
+                } else {
+                    System.out.println("[CONSOLE] 桌面环境不支持自动打开，请手动访问: " + url);
+                }
+            } catch (Exception e) {
+                System.out.println("[CONSOLE] 自动打开控制台失败（不影响运行）: " + e.getMessage());
+            }
+        }, "console-auto-open").start();
+    }
+
     private void runBot(BotSession session) {
         try {
-            System.out.println(session.prefix() + " [1/3] Building client...");
-            ILinkClient builtClient = ILinkClient.builder()
+            System.out.println(session.prefix() + " [1/3] Building client...");            ILinkClient builtClient = ILinkClient.builder()
                 .config(createSessionConfig(session))
                 .onLogin(new OnLoginListener() {
                     @Override
@@ -93,6 +127,7 @@ public class WeChatBot implements SmartLifecycle {
                         System.out.println("       现在可以在微信里给机器人发消息了");
                         System.out.println();
                         notifications.notifyLoginSuccess(ctx.getBotId(), ctx.getUserId());
+                        openConsoleLater();
                         startNextLoginSession();
                     }
 

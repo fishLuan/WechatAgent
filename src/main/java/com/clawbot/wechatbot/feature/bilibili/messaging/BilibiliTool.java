@@ -49,8 +49,9 @@ public final class BilibiliTool implements FunctionTool {
         ObjectNode function = root.putObject("function");
         function.put("name", TOOL_NAME);
         function.put("description",
-            "管理B站动漫、电影和剧集的推荐、追更、搜索、标记及每日推送设置。"
-                + "不要传user_id，系统会绑定当前微信用户。");
+            "管理B站动漫、电影和剧集的【立即】推荐、追更、搜索、标记操作。"
+                + "不要传user_id，系统会绑定当前微信用户。"
+                + "【注意】本工具只处理现在/马上/立即的即时操作；如果用户提到具体时间（如『11点推送』『每天几点推送』『明天推送』）要求定时推送，请改用 scheduler_manage 工具创建定时任务，不要用本工具。");
         ObjectNode parameters = function.putObject("parameters");
         parameters.put("type", "object");
         ObjectNode properties = parameters.putObject("properties");

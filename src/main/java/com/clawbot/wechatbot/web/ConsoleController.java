@@ -3,14 +3,20 @@ package com.clawbot.wechatbot.web;
 import com.clawbot.wechatbot.config.BotConfig;
 import com.clawbot.wechatbot.memory.ConversationMemory;
 import com.clawbot.wechatbot.scheduler.model.ScheduledSubscription;
+import com.clawbot.wechatbot.service.agent.AgentRequestContext;
+import com.clawbot.wechatbot.service.agent.AgentRequestContextHolder;
 import com.clawbot.wechatbot.skills.SkillCatalog;
 import com.clawbot.wechatbot.skills.SkillDefinition;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
+import com.clawbot.wechatbot.tools.ToolExecutionOutcome;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -32,6 +38,7 @@ public class ConsoleController {
     private final MongoTemplate mongoTemplate;
     private final BotConfig config;
     private final ObjectMapper mapper;
+    private final AgentRequestContextHolder contextHolder;
     private final long startedAt = System.currentTimeMillis();
 
     public ConsoleController(
@@ -39,13 +46,15 @@ public class ConsoleController {
         SkillCatalog skillCatalog,
         MongoTemplate mongoTemplate,
         BotConfig config,
-        ObjectMapper mapper
+        ObjectMapper mapper,
+        AgentRequestContextHolder contextHolder
     ) {
         this.toolRegistry = toolRegistry;
         this.skillCatalog = skillCatalog;
         this.mongoTemplate = mongoTemplate;
         this.config = config;
         this.mapper = mapper;
+        this.contextHolder = contextHolder;
     }
 
     /** 机器人运行状态 */
@@ -138,5 +147,51 @@ public class ConsoleController {
         node.put("users", mongoTemplate.find(new Query(), ConversationMemory.class).size());
         node.put("tasks", mongoTemplate.findAll(ScheduledSubscription.class).size());
         return node;
+    }
+
+    /**
+     * 控制台直接调用工具（弹窗交互）。
+     * body: { "name": "get_weather", "arguments": { "city": "杭州" }, "userId": "可选" }
+     * 传 userId 时以该身份执行（用于 scheduler_manage / bilibili_manage 等微信会话工具）。
+     */
+    @PostMapping("/tools/execute")
+    public ResponseEntity<?> executeTool(@RequestBody Map<String, Object> body) {
+        try {
+            String name = body.get("name") instanceof String s ? s.trim() : "";
+            if (name.isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "缺少工具名称 name"));
+            }
+            Object argsObj = body.get("arguments");
+            Map<String, Object> args = argsObj instanceof Map<?, ?> m
+                ? castMap(m) : new LinkedHashMap<>();
+            String argsJson = mapper.writeValueAsString(args);
+
+            String userId = body.get("userId") instanceof String s ? s.trim() : "";
+            ToolExecutionOutcome outcome;
+            if (!userId.isBlank()) {
+                AgentRequestContext ctx = new AgentRequestContext(userId, null);
+                outcome = contextHolder.callWith(ctx,
+                    () -> toolRegistry.executeWithOutcome(name, argsJson));
+            } else {
+                outcome = toolRegistry.executeWithOutcome(name, argsJson);
+            }
+
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("tool", name);
+            resp.put("success", outcome.success());
+            resp.put("content", outcome.content());
+            resp.put("code", outcome.code());
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest()
+                .body(Map.of("error", "工具执行失败：" + e.getMessage()));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> castMap(Map<?, ?> m) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        m.forEach((k, v) -> out.put(String.valueOf(k), v));
+        return out;
     }
 }
