@@ -51,6 +51,7 @@ application-local.properties
 application-secret.properties
 *.properties.local
 *.conf.local
+.claude/settings.local.json
 
 # 密钥/证书
 secret/

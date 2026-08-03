@@ -1,0 +1,20 @@
+name: excel-operation
+version: 1.0.0
+enabled: true
+display-name: Excel表格操作
+description: 生成Excel表格(.xlsx)并支持轻量操作：添加/修改/删除行、查询某列最大/最小/合计/平均值。表格数据需为每行一条、用逗号/Tab/竖线分隔的文本（首行为表头）。若数据未整理好，先让其他能力生成数据再调用本技能。查询类操作直接返回文字，增删改会重新导出表格文件
+executor: excel-operation
+capabilities:
+  - 生成Excel表格文件
+  - 添加表格行数据
+  - 修改表格行数据
+  - 删除表格行数据
+  - 查询表格列的最大值/最小值/合计/平均值
+triggers:
+  - 生成Excel
+  - 制作表格
+  - 导出表格
+  - Excel
+  - 表格数据
+timeout-seconds: 30
+requires-user-context: true
