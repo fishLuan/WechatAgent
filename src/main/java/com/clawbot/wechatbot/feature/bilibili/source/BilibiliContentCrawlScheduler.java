@@ -18,8 +18,8 @@ public class BilibiliContentCrawlScheduler {
     }
 
     @Scheduled(
-        initialDelayString = "PT30S",
-        fixedDelayString = "#{@bilibiliProperties.checkIntervalMinutes * 60000}"
+        initialDelayString = "#{@bilibiliProperties.candidateCrawlInitialDelayMinutes * 60000}",
+        fixedDelayString = "#{@bilibiliProperties.candidateCrawlIntervalMinutes * 60000}"
     )
     public void crawlCandidates() {
         BilibiliContentCrawler.CrawlResult result =
@@ -29,6 +29,7 @@ public class BilibiliContentCrawlScheduler {
                 + result.candidateCount()
                 + " 条，新增 " + result.insertedCount()
                 + " 条，更新 " + result.updatedCount()
+                + " 条，未变化 " + result.unchangedCount()
                 + " 条，明细 " + describeTypes(result)
                 + "，失败 " + result.failures());
         } else {
@@ -36,6 +37,7 @@ public class BilibiliContentCrawlScheduler {
                 + result.candidateCount()
                 + " 条，新增 " + result.insertedCount()
                 + " 条，更新 " + result.updatedCount()
+                + " 条，未变化 " + result.unchangedCount()
                 + " 条，明细 " + describeTypes(result));
         }
     }
@@ -46,6 +48,7 @@ public class BilibiliContentCrawlScheduler {
                 + "(候选 " + type.candidateCount()
                 + ", 新增 " + type.insertedCount()
                 + ", 更新 " + type.updatedCount()
+                + ", 未变化 " + type.unchangedCount()
                 + ")")
             .toList()
             .toString();

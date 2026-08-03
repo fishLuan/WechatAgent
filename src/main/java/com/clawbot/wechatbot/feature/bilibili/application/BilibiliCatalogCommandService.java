@@ -1,6 +1,5 @@
 package com.clawbot.wechatbot.feature.bilibili.application;
 
-import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
 import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliMessageFormatter;
 import com.clawbot.wechatbot.feature.bilibili.messaging.PendingSearchResultStore;
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
@@ -9,7 +8,6 @@ import com.clawbot.wechatbot.feature.bilibili.model.RecommendedContent;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionResult;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliRecommendationService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.RecommendationHistoryService;
-import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -23,23 +21,20 @@ public final class BilibiliCatalogCommandService {
     private final BilibiliSubscriptionService subscriptions;
     private final BilibiliRecommendationService recommendations;
     private final RecommendationHistoryService history;
-    private final BilibiliContentSource contentSource;
-    private final BilibiliProperties properties;
+    private final BilibiliTitleSearchService titleSearch;
     private final PendingSearchResultStore pendingSearchResults;
 
     public BilibiliCatalogCommandService(
         @Lazy BilibiliSubscriptionService subscriptions,
         @Lazy BilibiliRecommendationService recommendations,
         RecommendationHistoryService history,
-        BilibiliContentSource contentSource,
-        BilibiliProperties properties,
+        BilibiliTitleSearchService titleSearch,
         PendingSearchResultStore pendingSearchResults
     ) {
         this.subscriptions = subscriptions;
         this.recommendations = recommendations;
         this.history = history;
-        this.contentSource = contentSource;
-        this.properties = properties;
+        this.titleSearch = titleSearch;
         this.pendingSearchResults = pendingSearchResults;
     }
 
@@ -130,7 +125,7 @@ public final class BilibiliCatalogCommandService {
 
     private List<BilibiliContent> search(String title) throws Exception {
         if (!hasText(title)) return List.of();
-        return contentSource.searchByTitle(title.trim(), properties.getSearchResultCount());
+        return titleSearch.search(title.trim());
     }
 
     private BilibiliContent uniqueExactMatch(String requestedTitle, List<BilibiliContent> matches) {
