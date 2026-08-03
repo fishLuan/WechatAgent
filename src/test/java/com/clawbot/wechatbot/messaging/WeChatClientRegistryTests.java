@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -39,6 +41,19 @@ class WeChatClientRegistryTests {
 
         assertThrows(IllegalStateException.class,
             () -> registry.requireClient("unknown-user"));
+    }
+
+    @Test
+    void reportsUserReadyOnlyAfterAnInboundMessageBindsTheClient() {
+        ILinkClient client = loggedInClient();
+        WeChatClientRegistry registry = new WeChatClientRegistry();
+        registry.registerClient(client);
+
+        assertFalse(registry.hasActiveUserBinding("user-1"));
+
+        registry.bindUser("user-1", client);
+
+        assertTrue(registry.hasActiveUserBinding("user-1"));
     }
 
     private ILinkClient loggedInClient() {

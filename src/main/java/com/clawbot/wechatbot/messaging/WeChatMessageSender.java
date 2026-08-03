@@ -73,6 +73,11 @@ public class WeChatMessageSender implements MessageSender {
         return clientRegistry.isReady();
     }
 
+    @Override
+    public boolean isReadyFor(String userId) {
+        return clientRegistry.hasActiveUserBinding(userId);
+    }
+
     private IllegalStateException sendFailure(
         String messageType,
         String userId,

@@ -4,10 +4,6 @@ import com.clawbot.wechatbot.base.MessageHandler;
 import com.clawbot.wechatbot.handler.DocumentMessageHandler;
 import com.clawbot.wechatbot.handler.ImageMessageHandler;
 import com.clawbot.wechatbot.handler.TextMessageHandler;
-import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliLinkMessageHandler;
-import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliMessageFormatter;
-import com.clawbot.wechatbot.feature.bilibili.messaging.WeChatOutboundGateway;
-import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
 import com.clawbot.wechatbot.intent.IntentRecognizer;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.memory.MemoryProperties;
@@ -16,459 +12,120 @@ import com.clawbot.wechatbot.messaging.PerUserMessageDispatchCoordinator;
 import com.clawbot.wechatbot.notification.DingTalkNotificationService;
 import com.clawbot.wechatbot.notification.NoOpNotificationService;
 import com.clawbot.wechatbot.notification.NotificationService;
-import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
+import com.clawbot.wechatbot.service.DocumentService;
+import com.clawbot.wechatbot.service.ImageGenService;
+import com.clawbot.wechatbot.service.SpeechSynthesisService;
+import com.clawbot.wechatbot.service.VisionService;
 import com.clawbot.wechatbot.service.agent.AgentInputAttachmentLoader;
-import com.clawbot.wechatbot.service.agent.AgentRequestContextHolder;
+import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
 import com.clawbot.wechatbot.service.agent.AgentTaskHandler;
-import com.clawbot.wechatbot.service.agent.ChatAgentTaskHandler;
 import com.clawbot.wechatbot.service.agent.DocumentAnalysisAgentTaskHandler;
-import com.clawbot.wechatbot.service.agent.ImageGenerationAgentTaskHandler;
-import com.clawbot.wechatbot.service.agent.ImageUnderstandingAgentTaskHandler;
-import com.clawbot.wechatbot.service.agent.LlmTaskPlanner;
-import com.clawbot.wechatbot.service.agent.MultiTaskPlanningGate;
-import com.clawbot.wechatbot.service.agent.TaskPlanner;
-import com.clawbot.wechatbot.service.agent.guard.AgentExecutionGuard;
-import com.clawbot.wechatbot.service.agent.guard.AgentGuardPolicy;
 import com.clawbot.wechatbot.service.client.DashScopeClient;
 import com.clawbot.wechatbot.service.client.DeepSeekClient;
 import com.clawbot.wechatbot.service.document.PdfDocumentService;
 import com.clawbot.wechatbot.service.document.WordDocumentService;
-import com.clawbot.wechatbot.service.DocumentService;
-import com.clawbot.wechatbot.service.ImageGenService;
 import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
 import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
 import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
-import com.clawbot.wechatbot.service.longform.LongFormGenerationPolicy;
 import com.clawbot.wechatbot.service.reply.LongReplyManager;
-import com.clawbot.wechatbot.service.SpeechSynthesisService;
-import com.clawbot.wechatbot.service.VisionService;
-import com.clawbot.wechatbot.skills.SkillDefinitionLoader;
-import com.clawbot.wechatbot.skills.SkillExecutor;
-import com.clawbot.wechatbot.skills.SkillManager;
-import com.clawbot.wechatbot.tools.bazitool.BaziFortuneTool;
-import com.clawbot.wechatbot.tools.currenttimetool.CurrentTimeTool;
-import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
-import com.clawbot.wechatbot.tools.FunctionTool;
-import com.clawbot.wechatbot.tools.FunctionToolRegistry;
-import com.clawbot.wechatbot.tools.idcardtool.IdCardTool;
-import com.clawbot.wechatbot.tools.pathplantool.PathPlanTool;
-import com.clawbot.wechatbot.tools.calculatezodiacinfotool.CalculateZodiacInfoTool;
-import com.clawbot.wechatbot.tools.searchonlinetool.WebSearchTool;
-import com.clawbot.wechatbot.tools.searchWeatherTool.AmapWeatherTool;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
-import com.clawbot.wechatbot.tools.UrlSafetyCheckerTool.UrlSafetyChecker;
-import com.clawbot.wechatbot.tools.webaccess.SafeHttpFetcher;
-import com.clawbot.wechatbot.tools.webaccess.UrlAccessPolicy;
-import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractClient;
-import com.clawbot.wechatbot.tools.webPageTool.WebPageExtractTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-import java.net.http.HttpClient;
-import java.time.Duration;
-import java.util.Arrays;
-import java.nio.file.Path;
-import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
-
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Lazy;
 
-/**
- * 应用对象装配中心。业务类保持纯 Java 构造器，生命周期和依赖关系由 Spring 管理。
- */
+import java.time.Duration;
+
+/** 核心基础设施、多媒体服务和消息入口的装配。 */
 @Configuration(proxyBeanMethods = false)
 @ComponentScan(basePackages = {"com.clawbot.wechatbot.scheduler"})
 public class BotBeanConfiguration {
-
-    @Bean
-    ObjectMapper objectMapper() {
-        return new ObjectMapper();
-    }
+    @Bean ObjectMapper objectMapper() { return new ObjectMapper(); }
 
     @Bean(destroyMethod = "close")
     MessageDispatchCoordinator messageDispatchCoordinator(BotConfig config) {
-        return new PerUserMessageDispatchCoordinator(
-            config.getMessageDispatchParallelism(),
+        return new PerUserMessageDispatchCoordinator(config.getMessageDispatchParallelism(),
             config.getMessageDispatchMaxPending(),
-            Duration.ofSeconds(
-                config.getMessageDispatchShutdownWaitSeconds()));
+            Duration.ofSeconds(config.getMessageDispatchShutdownWaitSeconds()));
     }
 
     @Bean(destroyMethod = "close")
     NotificationService notificationService(BotConfig config, ObjectMapper mapper) {
-        if (!config.isDingTalkNotificationConfigured()) {
-            return new NoOpNotificationService();
-        }
-        return new DingTalkNotificationService(
-            config.getDingTalkWebhook(),
-            config.getDingTalkSecret(),
-            config.getDingTalkTimeoutSeconds(),
-            config.getDingTalkErrorDeduplicateSeconds(),
-            mapper);
+        if (!config.isDingTalkNotificationConfigured()) return new NoOpNotificationService();
+        return new DingTalkNotificationService(config.getDingTalkWebhook(),
+            config.getDingTalkSecret(), config.getDingTalkTimeoutSeconds(),
+            config.getDingTalkErrorDeduplicateSeconds(), mapper);
     }
 
-    @Bean
-    DeepSeekClient deepSeekClient(BotConfig config) {
-        return new DeepSeekClient(
-            config.getDeepSeekApiKey(), config.getDeepSeekModel(), config.getDeepSeekUrl(),
-            config.getDeepSeekTemperature(), config.getDeepSeekMaxTokens(),
-            config.getDeepSeekConnectTimeoutSeconds(), config.getDeepSeekRequestTimeoutSeconds());
+    @Bean DeepSeekClient deepSeekClient(BotConfig config) {
+        return new DeepSeekClient(config.getDeepSeekApiKey(), config.getDeepSeekModel(),
+            config.getDeepSeekUrl(), config.getDeepSeekTemperature(),
+            config.getDeepSeekMaxTokens(), config.getDeepSeekConnectTimeoutSeconds(),
+            config.getDeepSeekRequestTimeoutSeconds());
     }
 
-    @Bean
-    DashScopeClient dashScopeClient(BotConfig config) {
-        return new DashScopeClient(
-            config.getDashscopeApiKey(), config.getDashscopeEndpoint(),
+    @Bean DashScopeClient dashScopeClient(BotConfig config) {
+        return new DashScopeClient(config.getDashscopeApiKey(), config.getDashscopeEndpoint(),
             config.getDashscopeConnectTimeoutSeconds(), config.getDashscopeRequestTimeoutSeconds());
     }
 
-    @Bean
-    AmapWeatherTool amapWeatherTool(BotConfig config) {
-        return new AmapWeatherTool(
-            config.getAmapWeatherApiKey(), config.getAmapWeatherEndpoint(),
-            config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds());
+    @Bean VisionService visionService(DashScopeClient client, BotConfig config) {
+        return new DashScopeVisionService(client, config.getVisionModel(),
+            config.getVisionDefaultQuestion());
+    }
+    @Bean ImageGenService imageGenService(DashScopeClient client, BotConfig config) {
+        return new DashScopeImageGenService(client, config.getImageModel(),
+            config.getImageDefaultSize(), config.getImageDefaultCount(),
+            config.isImagePromptExtend(), config.isImageWatermark());
+    }
+    @Bean SpeechSynthesisService speechSynthesisService(DashScopeClient client, BotConfig config) {
+        return new DashScopeSpeechSynthesisService(client, config.getTtsModel(),
+            config.getTtsDefaultVoice(), config.getTtsFormat(), config.getTtsMaxTextLength());
     }
 
-    @Bean
-    ExchangeRateTool exchangeRateTool(BotConfig config) {
-        return new ExchangeRateTool(
-            config.getJuheExchangeApiKey(), config.getJuheExchangeEndpoint(),
-            config.getJuheExchangeVersion(), config.getJuheExchangeConnectTimeoutSeconds(),
-            config.getJuheExchangeRequestTimeoutSeconds());
-    }
-
-    @Bean
-    BaziFortuneTool baziFortuneTool(ObjectMapper mapper) {
-        return new BaziFortuneTool(mapper);
-    }
-
-    @Bean
-    WebSearchTool webSearchTool(BotConfig config) {
-        return new WebSearchTool(
-            config.getBochaApiKey(), config.getBochaEndpoint(),
-            config.getBochaConnectTimeoutSeconds(), config.getBochaRequestTimeoutSeconds());
-    }
-
-    @Bean
-    TianNewsTool tianNewsTool(BotConfig config) {
-        return new TianNewsTool(config.getTianapiApiKey());
-    }
-
-    @Bean
-    UrlAccessPolicy urlAccessPolicy(BotConfig config) {
-        Set<Integer> allowedPorts = Arrays.stream(
-                config.getWebPageExtractAllowedPorts().split(","))
-            .map(String::trim)
-            .filter(value -> !value.isEmpty())
-            .map(Integer::parseInt)
-            .collect(Collectors.toUnmodifiableSet());
-        return new UrlAccessPolicy(allowedPorts);
-    }
-
-    @Bean
-    SafeHttpFetcher safeHttpFetcher(BotConfig config, UrlAccessPolicy accessPolicy) {
-        HttpClient http = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(
-                config.getWebPageExtractConnectTimeoutSeconds()))
-            .followRedirects(HttpClient.Redirect.NEVER)
-            .build();
-        return new SafeHttpFetcher(
-            http,
-            accessPolicy,
-            Duration.ofSeconds(config.getWebPageExtractRequestTimeoutSeconds()),
-            config.getWebPageExtractMaxResponseBytes(),
-            config.getWebPageExtractMaxRedirects(),
-            "ClawBot-SafeHttpFetcher/1.0"
-        );
-    }
-
-    @Bean
-    WebPageExtractTool webPageExtractTool(
-        BotConfig config, SafeHttpFetcher fetcher, ObjectMapper mapper
-    ) {
-        WebPageExtractClient client =
-            new WebPageExtractClient(fetcher, config.getWebPageExtractMaxBodyChars());
-        return new WebPageExtractTool(
-            client, mapper, config.getWebPageExtractMaxBodyChars());
-    }
-
-    @Bean
-    UrlSafetyChecker urlSafetyChecker(
-        ObjectMapper mapper, SafeHttpFetcher safeHttpFetcher
-    ) {
-        return new UrlSafetyChecker(mapper, safeHttpFetcher);
-    }
-
-    @Bean
-    CurrentTimeTool currentTimeTool(ObjectMapper mapper) {
-        return new CurrentTimeTool(mapper);
-    }
-
-    @Bean
-    IdCardTool idCardTool(ObjectMapper mapper) {
-        return new IdCardTool(mapper);
-    }
-
-    @Bean
-    PathPlanTool pathPlanTool(BotConfig config) {
-        return new PathPlanTool(
-            config.getAmapWeatherApiKey(),
-            "https://restapi.amap.com/v3/geocode/geo",
-            config.getAmapConnectTimeoutSeconds(),
-            config.getAmapRequestTimeoutSeconds());
-    }
-
-
-    @Bean
-    CalculateZodiacInfoTool calculateZodiacInfoTool(ObjectMapper mapper) {
-        return new CalculateZodiacInfoTool(mapper);
-    }
-
-    @Bean
-    FunctionToolRegistry functionToolRegistry(ObjectMapper mapper, List<FunctionTool> tools) {
-        return new FunctionToolRegistry(mapper, tools);
-    }
-
-    @Bean
-    AgentGuardPolicy agentGuardPolicy(BotConfig config) {
-        return new AgentGuardPolicy(
-            config.getAgentMaxChatDepth(),
-            config.getAgentMaxToolCallsPerRound(),
-            config.getAgentMaxTotalToolCalls(),
-            config.getAgentMaxSameToolFailures(),
-            config.getAgentMaxToolResultChars(),
-            config.getAgentMaxTotalToolResultChars(),
-            Duration.ofSeconds(config.getAgentExecutionTimeoutSeconds()));
-    }
-
-    @Bean
-    AgentExecutionGuard agentExecutionGuard(
-        AgentGuardPolicy policy, ObjectMapper mapper
-    ) {
-        return new AgentExecutionGuard(policy, mapper);
-    }
-
-    @Bean
-    DeepSeekChatService singleTaskChatService(
-        DeepSeekClient client,
-        FunctionToolRegistry registry,
-        BotConfig config,
-        AgentExecutionGuard executionGuard
-    ) {
-        return new DeepSeekChatService(
-            client,
-            registry,
-            config.getSystemPrompt(),
-            config.getDeepSeekMaxToolRounds(),
-            executionGuard,
-            new LongFormGenerationPolicy(
-                config.isLongFormEnabled(),
-                config.getLongFormMinTargetChars(),
-                config.getLongFormMaxTargetChars(),
-                config.getLongFormTolerancePercent(),
-                config.getLongFormMaxContinuationRounds(),
-                config.getLongFormMaxTotalChars()));
-    }
-
-    @Bean
-    SkillManager skillManager(
-        BotConfig config,
-        List<SkillExecutor> executors
-    ) {
-        return new SkillManager(
-            new SkillDefinitionLoader(
-                config.getSkillClasspathPattern(),
-                Path.of(config.getSkillExternalDirectory()),
-                config.getSkillMaxCount(),
-                config.getSkillMaxDefinitionBytes()),
-            executors,
-            config.isSkillWatchEnabled(),
-            config.getSkillReloadDebounceMillis());
-    }
-
-    @Bean
-    TaskPlanner taskPlanner(
-        DeepSeekClient client,
-        BotConfig config,
-        SkillManager skillManager
-    ) {
-        return new LlmTaskPlanner(
-            client, config.getAgentMaxPlannedTasks(), skillManager);
-    }
-
-    @Bean
-    MultiTaskPlanningGate multiTaskPlanningGate(
-        TaskPlanner planner,
-        BotConfig config
-    ) {
-        return new MultiTaskPlanningGate(planner, config.isAgentEnabled());
-    }
-
-    @Bean
-    AgentRequestContextHolder agentRequestContextHolder() {
-        return new AgentRequestContextHolder();
-    }
-
-    @Bean
-    AgentTaskHandler chatAgentTaskHandler(DeepSeekChatService chatService) {
-        return new ChatAgentTaskHandler(chatService);
-    }
-
-    @Bean
-    AgentTaskHandler imageGenerationAgentTaskHandler(ImageGenService imageGenService) {
-        return new ImageGenerationAgentTaskHandler(imageGenService);
-    }
-
-    @Bean
-    AgentTaskHandler imageUnderstandingAgentTaskHandler(
-        VisionService visionService
-    ) {
-        return new ImageUnderstandingAgentTaskHandler(visionService);
-    }
-
-    @Bean
-    AgentTaskHandler documentAnalysisAgentTaskHandler(
-        DocumentService documentService,
-        DeepSeekChatService chatService,
-        BotConfig config
-    ) {
-        return new DocumentAnalysisAgentTaskHandler(
-            documentService,
-            chatService,
-            config.getAgentMaxDocumentChars());
-    }
-
-    @Bean(destroyMethod = "close")
-    AgentOrchestrator agentOrchestrator(
-        DeepSeekChatService singleTaskChatService,
-        TaskPlanner taskPlanner,
-        List<AgentTaskHandler> taskHandlers,
-        AgentRequestContextHolder requestContextHolder,
-        BotConfig config
-    ) {
-        return new AgentOrchestrator(
-            singleTaskChatService,
-            taskPlanner,
-            taskHandlers,
-            config.isAgentEnabled(),
-            config.getAgentMaxOuterRounds(),
-            config.getAgentMaxTasksPerBatch(),
-            config.getAgentMaxParallelism(),
-            Duration.ofSeconds(config.getAgentExecutionTimeoutSeconds()),
-            requestContextHolder);
-    }
-
-    @Bean
-    VisionService visionService(DashScopeClient client, BotConfig config) {
-        return new DashScopeVisionService(
-            client, config.getVisionModel(), config.getVisionDefaultQuestion());
-    }
-
-    @Bean
-    ImageGenService imageGenService(DashScopeClient client, BotConfig config) {
-        return new DashScopeImageGenService(
-            client, config.getImageModel(), config.getImageDefaultSize(),
-            config.getImageDefaultCount(), config.isImagePromptExtend(), config.isImageWatermark());
-    }
-
-    @Bean
-    SpeechSynthesisService speechSynthesisService(DashScopeClient client, BotConfig config) {
-        return new DashScopeSpeechSynthesisService(
-            client, config.getTtsModel(), config.getTtsDefaultVoice(),
-            config.getTtsFormat(), config.getTtsMaxTextLength());
-    }
-
-    @Bean
-    PdfDocumentService pdfDocumentService() {
-        return new PdfDocumentService();
-    }
-
-    @Bean
-    WordDocumentService wordDocumentService() {
-        return new WordDocumentService();
-    }
-
-    @Bean
-    DocumentService documentService(PdfDocumentService pdf, WordDocumentService word) {
+    @Bean PdfDocumentService pdfDocumentService() { return new PdfDocumentService(); }
+    @Bean WordDocumentService wordDocumentService() { return new WordDocumentService(); }
+    @Bean DocumentService documentService(PdfDocumentService pdf, WordDocumentService word) {
         DocumentService.silencePdfLogs();
         return new DocumentService(pdf, word);
     }
-
-    @Bean
-    AgentInputAttachmentLoader agentInputAttachmentLoader(
-        DocumentService documentService,
-        BotConfig config
+    @Bean AgentInputAttachmentLoader agentInputAttachmentLoader(
+        DocumentService documents, BotConfig config
     ) {
-        return new AgentInputAttachmentLoader(
-            documentService,
-            config.getAgentMaxInputAttachments(),
-            config.getAgentMaxSingleInputBytes(),
+        return new AgentInputAttachmentLoader(documents,
+            config.getAgentMaxInputAttachments(), config.getAgentMaxSingleInputBytes(),
             config.getAgentMaxTotalInputBytes());
     }
-
-    @Bean
-    LongReplyManager longReplyManager(BotConfig config) {
-        return new LongReplyManager(
-            config.getLongReplyThreshold(),
-            config.getLongReplyChunkSize(),
-            config.getLongReplyMaxPendingChars(),
+    @Bean AgentTaskHandler documentAnalysisAgentTaskHandler(
+        DocumentService documents, DeepSeekChatService chat, BotConfig config
+    ) {
+        return new DocumentAnalysisAgentTaskHandler(
+            documents, chat, config.getAgentMaxDocumentChars());
+    }
+    @Bean LongReplyManager longReplyManager(BotConfig config) {
+        return new LongReplyManager(config.getLongReplyThreshold(),
+            config.getLongReplyChunkSize(), config.getLongReplyMaxPendingChars(),
             Duration.ofMinutes(config.getLongReplyPendingExpireMinutes()));
     }
 
-    @Bean
-    MessageHandler imageMessageHandler(VisionService service) {
+    @Bean MessageHandler imageMessageHandler(VisionService service) {
         return new ImageMessageHandler(service);
     }
-
-    @Bean
-    MessageHandler documentMessageHandler(DeepSeekChatService singleTaskChatService,
-                                          DocumentService documents) {
-        return new DocumentMessageHandler(singleTaskChatService, documents);
-    }
-
-    @Bean
-    BilibiliMessageFormatter bilibiliMessageFormatter() {
-        return new BilibiliMessageFormatter();
-    }
-
-    @Bean
-    MessageHandler bilibiliLinkMessageHandler(
-        @Lazy BilibiliSubscriptionService subscriptionService,
-        BilibiliMessageFormatter formatter,
-        WeChatOutboundGateway outboundGateway
+    @Bean MessageHandler documentMessageHandler(
+        DeepSeekChatService chat, DocumentService documents
     ) {
-        return new BilibiliLinkMessageHandler(
-            subscriptionService, formatter, outboundGateway);
+        return new DocumentMessageHandler(chat, documents);
     }
-
-    @Bean
-    MessageHandler textMessageHandler(DeepSeekChatService chat,
-                                      AgentOrchestrator agentOrchestrator,
-                                      SpeechSynthesisService speech,
-                                      DocumentService documents, TianNewsTool news,
-                                      BotConfig config,
-                                      ConversationMemoryService memoryService,
-                                      MemoryProperties memoryProperties,
-                                      LongReplyManager longReplyManager,
-                                      IntentRecognizer intentRecognizer,
-                                      AgentInputAttachmentLoader inputAttachmentLoader) {
-        SpeechSynthesisService optionalSpeech =
-            config.isDashscopeConfigured() ? speech : null;
-        return new TextMessageHandler(
-            chat,
-            agentOrchestrator,
-            optionalSpeech,
-            documents,
-            news,
-            memoryService,
-            memoryProperties,
-            longReplyManager,
-            intentRecognizer,
-            inputAttachmentLoader
-        );
+    @Bean MessageHandler textMessageHandler(
+        DeepSeekChatService chat, AgentOrchestrator orchestrator,
+        SpeechSynthesisService speech, DocumentService documents, TianNewsTool news,
+        BotConfig config, ConversationMemoryService memory, MemoryProperties memoryProperties,
+        LongReplyManager replies, IntentRecognizer intents,
+        AgentInputAttachmentLoader attachments
+    ) {
+        SpeechSynthesisService optionalSpeech = config.isDashscopeConfigured() ? speech : null;
+        return new TextMessageHandler(chat, orchestrator, optionalSpeech, documents, news,
+            memory, memoryProperties, replies, intents, attachments);
     }
 }

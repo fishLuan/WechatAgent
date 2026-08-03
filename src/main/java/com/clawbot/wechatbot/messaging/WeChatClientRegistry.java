@@ -61,6 +61,21 @@ public class WeChatClientRegistry {
         return clients.stream().anyMatch(this::isLoggedIn);
     }
 
+    /**
+     * 用户是否在当前进程中发过消息，并且其绑定的客户端仍处于登录状态。
+     *
+     * <p>iLink 的 context token 保存在客户端会话内。仅有客户端登录态并不代表
+     * 可以向任意历史 userId 主动发消息，因此这里不能使用单客户端兜底。</p>
+     */
+    public boolean hasActiveUserBinding(String userId) {
+        if (userId == null || userId.isBlank()) return false;
+        String normalizedUserId = userId.trim();
+        ILinkClient mapped = userClients.get(normalizedUserId);
+        if (isLoggedIn(mapped)) return true;
+        if (mapped != null) userClients.remove(normalizedUserId, mapped);
+        return false;
+    }
+
     public void clear() {
         userClients.clear();
         clients.clear();
