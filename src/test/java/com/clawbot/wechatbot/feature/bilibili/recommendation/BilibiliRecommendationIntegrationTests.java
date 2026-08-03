@@ -1,9 +1,7 @@
 package com.clawbot.wechatbot.feature.bilibili.recommendation;
 
 import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
-import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliNotificationPort;
 import com.clawbot.wechatbot.feature.bilibili.model.*;
-import com.clawbot.wechatbot.feature.bilibili.model.EpisodeUpdateNotification;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliPreferenceRepository;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliRecommendationHistoryRepository;
 import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
@@ -13,10 +11,8 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.time.DayOfWeek;
-import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -33,7 +29,6 @@ class BilibiliRecommendationIntegrationTests {
     private BilibiliPreferenceServiceImpl preferenceService;
     private RecommendationHistoryService historyService;
     private PendingRecommendationStore pendingStore;
-    private BilibiliRecommendationScheduler scheduler;
 
     // ---- 桩 ----
     private StubContentSource contentSource;
@@ -66,8 +61,6 @@ class BilibiliRecommendationIntegrationTests {
         historyService = new RecommendationHistoryService(historyRepo);
         recommendationService = new BilibiliRecommendationServiceImpl(
             contentSource, preferenceService, historyService, pendingStore, properties);
-        scheduler = new BilibiliRecommendationScheduler(
-            properties, recommendationService, preferenceService);
     }
 
     // ================================================================
@@ -428,111 +421,6 @@ class BilibiliRecommendationIntegrationTests {
                 Set.of(DayOfWeek.SUNDAY),
                 preferenceService.getOrCreate(
                     淇奥, ContentType.BANGUMI).getExcludedPushDays());
-        }
-    }
-
-    // ================================================================
-    //  7. 定时推送
-    // ================================================================
-
-    @Nested
-    @DisplayName("定时推送")
-    class Scheduling {
-
-        @Test
-        @DisplayName("推送时间匹配时生成推荐并通知")
-        void pushAtScheduledTime() {
-            // 设置推送时间为当前分钟
-            LocalTime now = LocalTime.now();
-            properties.setDefaultPushTime(LocalTime.of(now.getHour(), now.getMinute()));
-
-            // 注册通知端口
-            AtomicInteger callCount = new AtomicInteger(0);
-            scheduler.setNotificationPort(new BilibiliNotificationPort() {
-                @Override public void notifyEpisodeUpdate(String u, EpisodeUpdateNotification n) {}
-                @Override public void notifyDailyRecommendation(String u, RecommendationResult r) {
-                    callCount.incrementAndGet();
-                }
-            });
-
-            // 确保有偏好且开启推送
-            preferenceService.getOrCreate(淇奥, ContentType.BANGUMI);
-            scheduler.resetPushedToday();
-            scheduler.checkAndPush();
-
-            assertTrue(callCount.get() > 0, "推送应被触发");
-        }
-
-        @Test
-        @DisplayName("同一天同一推送不会重复触发")
-        void noDuplicatePushSameDay() {
-            LocalTime now = LocalTime.now();
-            properties.setDefaultPushTime(LocalTime.of(now.getHour(), now.getMinute()));
-
-            AtomicInteger callCount = new AtomicInteger(0);
-            scheduler.setNotificationPort(new BilibiliNotificationPort() {
-                @Override public void notifyEpisodeUpdate(String u, EpisodeUpdateNotification n) {}
-                @Override public void notifyDailyRecommendation(String u, RecommendationResult r) {
-                    callCount.incrementAndGet();
-                }
-            });
-
-            preferenceService.getOrCreate(淇奥, ContentType.BANGUMI);
-            scheduler.resetPushedToday();
-
-            scheduler.checkAndPush();
-            int firstCount = callCount.get();
-
-            scheduler.checkAndPush();
-            assertEquals(firstCount, callCount.get(), "第二次不应再推送");
-        }
-
-        @Test
-        @DisplayName("排除当天后不发送每日推荐")
-        void excludedWeekdayPreventsDailyRecommendation() {
-            LocalTime now = LocalTime.now();
-            properties.setDefaultPushTime(LocalTime.of(now.getHour(), now.getMinute()));
-            preferenceService.setExcludedPushDays(
-                淇奥,
-                ContentType.BANGUMI,
-                Set.of(LocalDate.now().getDayOfWeek()),
-                true);
-
-            AtomicInteger callCount = new AtomicInteger(0);
-            scheduler.setNotificationPort(new BilibiliNotificationPort() {
-                @Override public void notifyEpisodeUpdate(String u, EpisodeUpdateNotification n) {}
-                @Override public void notifyDailyRecommendation(String u, RecommendationResult r) {
-                    callCount.incrementAndGet();
-                }
-            });
-
-            scheduler.resetPushedToday();
-            scheduler.checkAndPush();
-
-            assertEquals(0, callCount.get());
-        }
-
-        @Test
-        @DisplayName("无通知端口时推送不崩溃")
-        void noNotificationPortDoesNotCrash() {
-            assertDoesNotThrow(() -> scheduler.checkAndPush());
-        }
-
-        @Test
-        @DisplayName("手动触发推送可用")
-        void manualPushWorks() {
-            AtomicInteger callCount = new AtomicInteger(0);
-            scheduler.setNotificationPort(new BilibiliNotificationPort() {
-                @Override public void notifyEpisodeUpdate(String u, EpisodeUpdateNotification n) {}
-                @Override public void notifyDailyRecommendation(String u, RecommendationResult r) {
-                    callCount.incrementAndGet();
-                }
-            });
-
-            preferenceService.getOrCreate(淇奥, ContentType.BANGUMI);
-            scheduler.pushNow(淇奥, ContentType.BANGUMI);
-
-            assertTrue(callCount.get() > 0);
         }
     }
 

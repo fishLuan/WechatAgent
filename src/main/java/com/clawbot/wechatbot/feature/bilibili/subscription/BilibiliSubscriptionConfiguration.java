@@ -2,7 +2,6 @@ package com.clawbot.wechatbot.feature.bilibili.subscription;
 
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliSubscriptionRepository;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliUpdateEventRepository;
-import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliNotificationPort;
 import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -72,13 +71,4 @@ public class BilibiliSubscriptionConfiguration {
         return new BilibiliSubscriptionScheduler(repository, checkService);
     }
 
-    @Bean
-    BilibiliUpdateNotificationDispatcher bilibiliUpdateNotificationDispatcher(
-        BilibiliUpdateEventService eventService,
-        BilibiliSubscriptionRepository subscriptionRepository,
-        BilibiliNotificationPort notificationPort
-    ) {
-        return new BilibiliUpdateNotificationDispatcher(
-            eventService, subscriptionRepository, notificationPort);
-    }
 }

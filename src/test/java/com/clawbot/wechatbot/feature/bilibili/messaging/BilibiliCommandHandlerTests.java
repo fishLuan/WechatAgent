@@ -1,5 +1,7 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
+import com.clawbot.wechatbot.feature.bilibili.application.BilibiliCatalogCommandService;
+import com.clawbot.wechatbot.feature.bilibili.application.BilibiliUpdateQueryService;
 import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliPreference;
@@ -9,15 +11,14 @@ import com.clawbot.wechatbot.feature.bilibili.model.RecommendedContent;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionResult;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionStatus;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliPreferenceService;
+import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliPreferenceCommandService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliRecommendationService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.RecommendationHistoryService;
 import com.clawbot.wechatbot.feature.bilibili.rag.BilibiliRagService;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliContentRepository;
+import com.clawbot.wechatbot.feature.bilibili.scheduling.BilibiliSchedulePort;
 import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
-import com.clawbot.wechatbot.scheduler.controller.SchedulerControlService;
-import com.clawbot.wechatbot.scheduler.model.TaskType;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -42,7 +43,8 @@ class BilibiliCommandHandlerTests {
     private BilibiliPreferenceService preferenceService;
     private PendingSearchResultStore pendingSearchResults;
     private BilibiliRagService ragService;
-    private SchedulerControlService schedulerService;
+    private BilibiliSchedulePort schedulePort;
+    private BilibiliPreferenceCommandService preferenceCommands;
     private BilibiliContentRepository contentRepository;
     private BilibiliCommandHandler handler;
 
@@ -55,22 +57,25 @@ class BilibiliCommandHandlerTests {
         preferenceService = mock(BilibiliPreferenceService.class);
         pendingSearchResults = new PendingSearchResultStore();
         ragService = mock(BilibiliRagService.class);
-        schedulerService = mock(SchedulerControlService.class);
+        schedulePort = mock(BilibiliSchedulePort.class);
+        preferenceCommands = new BilibiliPreferenceCommandService(
+            preferenceService, schedulePort);
         contentRepository = mock(BilibiliContentRepository.class);
         BilibiliProperties properties = new BilibiliProperties();
+        BilibiliCatalogCommandService catalogCommands = new BilibiliCatalogCommandService(
+            subscriptionService, recommendationService, historyService, contentSource,
+            properties, pendingSearchResults);
+        BilibiliUpdateQueryService updateQueries = new BilibiliUpdateQueryService(
+            contentRepository, contentSource, historyService, preferenceService);
         handler = new BilibiliCommandHandler(
             subscriptionService,
             recommendationService,
             preferenceService,
-            schedulerService,
+            preferenceCommands,
+            catalogCommands,
+            updateQueries,
             new WeChatSessionRegistry(),
-            new ObjectMapper(),
-            contentSource,
-            properties,
-            historyService,
-            pendingSearchResults,
-            ragService,
-            contentRepository);
+            ragService);
     }
 
     @Test
@@ -388,11 +393,11 @@ class BilibiliCommandHandlerTests {
         String reply = handler.handle("user-1", "两小时后推送电影");
 
         assertTrue(reply.contains("一次性任务"));
-        verify(schedulerService).createOrUpdate(
-            org.mockito.ArgumentMatchers.argThat(task ->
-                task.getTaskType() == TaskType.BILIBILI_RECOMMENDATION
-                    && task.getParamsJson().contains("fire_timestamp")
-                    && task.getParamsJson().contains("MOVIE")));
+        verify(schedulePort).scheduleOneTime(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(ContentType.MOVIE),
+            org.mockito.ArgumentMatchers.eq(3),
+            any(Instant.class));
         verify(recommendationService, never()).recommend(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.any(),
