@@ -20,10 +20,10 @@ import java.util.concurrent.TimeUnit;
  * 鉴权 Bearer Key。注意官方规范：业务参数必须平铺在 JSON 顶层
  * （与 api_name / skill_version 同级），不能包在 params 对象里。</p>
  *
- * <p>实现说明：通过 {@code curl.exe} 发起请求。实测微信读书网关按 TLS 指纹
- * 放行 Windows 原生（Schannel）客户端、拒绝 Java（JSSE）客户端
- * （JDK HttpClient 与 HttpURLConnection 均返回 errcode=-1）；
- * curl.exe 为 Windows 系统自带（System32），零新增依赖。</p>
+ * <p>实现说明：通过 {@code curl.exe} 发起请求（Windows 系统自带 System32，零新增依赖）。
+ * 响应约定：成功时响应不含 errcode 字段，失败时才带非 0 errcode
+ * （实测 JDK HttpClient 亦可正常访问，此前"TLS 指纹拒绝 JSSE"的推断有误，
+ * 真正的问题是对成功响应的误判，见 {@link #parseResponse}）。</p>
  */
 @Component
 public class WereadGatewayClient {
@@ -73,6 +73,7 @@ public class WereadGatewayClient {
 
         // body 写入临时文件（无 BOM）再交给 curl：Windows 命令行传 JSON 会剥引号导致格式错误
         Path tempBody = Files.createTempFile("weread", ".json");
+        Path tempOutput = Files.createTempFile("weread-resp", ".json");
         try {
             Files.writeString(tempBody, json, StandardCharsets.UTF_8);
             List<String> command = new ArrayList<>(List.of(
@@ -82,6 +83,9 @@ public class WereadGatewayClient {
                 "-H", "Authorization: Bearer " + properties.getApiKey(),
                 "-d", "@" + tempBody));
             ProcessBuilder builder = new ProcessBuilder(command);
+            // stdout 重定向到文件而非管道：Windows 匿名管道缓冲仅约 4KB，
+            // 响应较大时 curl 写满管道阻塞，waitFor 无法感知退出而误判超时
+            builder.redirectOutput(tempOutput.toFile());
             builder.redirectErrorStream(true);
             Process process = builder.start();
             boolean finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -90,8 +94,7 @@ public class WereadGatewayClient {
                 throw new IllegalStateException("微信读书网关请求超时（>"
                     + TIMEOUT_SECONDS + "s）");
             }
-            String output = new String(process.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
+            String output = Files.readString(tempOutput, StandardCharsets.UTF_8);
             if (output.isBlank() || output.contains("\"errcode\":-1")
                 || output.contains("\"errcode\": -1")) {
                 System.err.println("[WEREAD] curl exit=" + process.exitValue()
@@ -100,6 +103,7 @@ public class WereadGatewayClient {
             return parseResponse(output);
         } finally {
             Files.deleteIfExists(tempBody);
+            Files.deleteIfExists(tempOutput);
         }
     }
 
@@ -119,7 +123,8 @@ public class WereadGatewayClient {
             throw new IllegalStateException("微信读书网关无响应");
         }
         JsonNode root = objectMapper.readTree(output);
-        int errcode = root.path("errcode").asInt(-1);
+        // 网关约定：成功响应不含 errcode 字段，缺失视为成功；失败响应才带非 0 errcode
+        int errcode = root.path("errcode").asInt(0);
         if (errcode != 0) {
             throw new IllegalStateException("微信读书接口失败："
                 + root.path("errmsg").asText("errcode=" + errcode));

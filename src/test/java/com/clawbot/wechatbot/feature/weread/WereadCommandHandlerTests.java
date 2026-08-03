@@ -10,6 +10,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -90,17 +91,9 @@ class WereadCommandHandlerTests {
     }
 
     @Test
-    void searchCommandExtractsKeywordAndShowsResults() throws Exception {
-        when(gateway.call(eq("/store/search"), any())).thenReturn(json(
-            "{\"results\":[{\"books\":[{\"bookInfo\":{"
-                + "\"title\":\"三体全集（全三册）\",\"author\":\"刘慈欣\","
-                + "\"deepLink\":\"https://weread.qq.com/book-detail?type=1\"}}]}]}"));
-
+    void searchInstructionReturnsNotOpenPrompt() throws Exception {
         String reply = handler.handle("搜一下 三体");
-
-        verify(gateway).call(eq("/store/search"), any());
-        assertTrue(reply.contains("三体全集"), "应显示搜索结果书名");
-        assertTrue(reply.contains("刘慈欣"), "应显示作者");
+        assertTrue(reply.contains("搜索功能暂未开放"), "搜索应提示暂未开放");
     }
 
     @Test
@@ -115,7 +108,19 @@ class WereadCommandHandlerTests {
 
         verify(gateway).call(eq("/book/recommend"), any());
         assertTrue(reply.contains("科学脱单指南"), "应显示推荐书名");
-        assertTrue(reply.contains("心理-亲密关系"), "应显示分类");
+        assertTrue(reply.contains("https://weread.qq.com/book-detail"), "应显示链接");
+    }
+
+    @Test
+    void recommendCommandPassesReasonToGateway() throws Exception {
+        when(gateway.call(eq("/book/recommend"), any())).thenReturn(json(
+            "{\"books\":[{\"title\":\"心理学与生活\",\"deepLink\":\"https://weread.qq.com/book-detail\"}]}"));
+
+        String reply = handler.handle("推荐几本心理学的书");
+
+        verify(gateway).call(eq("/book/recommend"), argThat(params ->
+            "心理学的".equals(params.get("reason"))));
+        assertTrue(reply.contains("心理学与生活"), "应显示推荐书名");
     }
 
     @Test

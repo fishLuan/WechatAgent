@@ -36,14 +36,10 @@ public final class WereadCommandHandler {
             return formatReadData(modeOf(text));
         }
         if (containsAny(text, "搜", "找", "查")) {
-            String keyword = extractKeyword(text);
-            if (keyword == null || keyword.isBlank()) {
-                return "❌ 没听懂要搜什么书，试试：搜一下 三体";
-            }
-            return formatSearch(keyword);
+            return "🔍 搜索功能暂未开放，可以试试：书架 / 推荐书 / 读了多少 / 划线笔记";
         }
         if (containsAny(text, "推荐") && containsAny(text, "书", "读")) {
-            return formatRecommend();
+            return formatRecommend(text);
         }
         return "❌ 未识别的微信读书指令。试试：书架 / 读了多少 / 划线笔记 / 搜一下 三体 / 推荐书";
     }
@@ -62,6 +58,8 @@ public final class WereadCommandHandler {
                 String author = text(book, "author", "");
                 if (!author.isBlank()) out.append(" - ").append(author);
                 if (book.path("finishReading").asInt(0) == 1) out.append("（已读完）");
+                String deepLink = text(book, "deepLink", "");
+                if (!deepLink.isBlank()) out.append(" ").append(deepLink);
                 out.append('\n');
             }
         }
@@ -156,44 +154,16 @@ public final class WereadCommandHandler {
         return out.toString().trim();
     }
 
-    // ---- 搜索 ----
-
-    private String formatSearch(String keyword) throws Exception {
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("keyword", keyword);
-        params.put("scope", 10);
-        JsonNode root = gateway.call("/store/search", params);
-        StringBuilder out = new StringBuilder("🔍 搜索《")
-            .append(keyword).append("》结果\n");
-        JsonNode results = root.path("results");
-        int count = 0;
-        if (results.isArray()) {
-            for (JsonNode group : results) {
-                JsonNode books = group.path("books");
-                if (!books.isArray()) continue;
-                for (JsonNode item : books) {
-                    if (count >= 5) break;
-                    JsonNode info = item.path("bookInfo");
-                    if (info.isMissingNode()) info = item;
-                    count++;
-                    out.append(count).append(". ").append(text(info, "title", "未知"));
-                    String author = text(info, "author", "");
-                    if (!author.isBlank()) out.append(" - ").append(author);
-                    String deepLink = text(info, "deepLink", "");
-                    if (!deepLink.isBlank()) out.append("\n   ").append(deepLink);
-                    out.append('\n');
-                }
-            }
-        }
-        if (count == 0) out.append("没有找到相关书籍");
-        return out.toString().trim();
-    }
-
     // ---- 推荐 ----
 
-    private String formatRecommend() throws Exception {
-        JsonNode root = gateway.call("/book/recommend", Map.of());
-        StringBuilder out = new StringBuilder("🎯 为你推荐\n");
+    private String formatRecommend(String input) throws Exception {
+        Map<String, Object> params = new LinkedHashMap<>();
+        String reason = extractReason(input);
+        if (!reason.isBlank()) params.put("reason", reason);
+        JsonNode root = gateway.call("/book/recommend", params);
+        StringBuilder out = new StringBuilder("🎯 为你推荐");
+        if (!reason.isBlank()) out.append("（").append(reason).append("）");
+        out.append('\n');
         JsonNode books = root.path("books");
         int count = 0;
         if (books.isArray()) {
@@ -201,14 +171,13 @@ public final class WereadCommandHandler {
                 if (count >= 3) break;
                 count++;
                 out.append(count).append(". ").append(text(book, "title", "未知"));
-                String author = text(book, "author", "");
-                String category = text(book, "category", "");
-                if (!author.isBlank()) out.append(" - ").append(author);
-                if (!category.isBlank()) out.append("（").append(category).append("）");
                 String intro = text(book, "intro", "");
-                if (!intro.isBlank()) out.append("\n   ").append(truncate(intro, 60));
+                if (!intro.isBlank()) out.append(" ").append(truncate(intro, 60));
                 String deepLink = text(book, "deepLink", "");
-                if (!deepLink.isBlank()) out.append("\n   ").append(deepLink);
+                if (!deepLink.isBlank()) {
+                    // 链接与文本同行，避免手机端换行压缩导致链接错位/丢失
+                    out.append(" ").append(deepLink);
+                }
                 out.append('\n');
             }
         }
@@ -233,12 +202,13 @@ public final class WereadCommandHandler {
         return "weekly";
     }
 
-    /** 搜索关键词提取：去掉命令前缀词后取剩余文本。 */
-    private static String extractKeyword(String text) {
+    /** 推荐描述提取：去掉命令词后取剩余文本（如"推荐几本心理学的书"→"心理学的"）。 */
+    private static String extractReason(String text) {
         String cleaned = text
-            .replaceAll("^(?:帮我|请|我想|我要)?\\s*", "")
-            .replaceAll("(?:搜一下|搜索|搜搜|找一下|找找|帮我找|查一下|查查|查|找|搜)", "")
-            .replaceAll("(?:有没有|有什么|那本|这本书|书)", "")
+            .replaceAll("^(?:帮我|请|我想|我要|给我|来)?\\s*", "")
+            .replaceAll("(?:推荐|介绍|有没有|几本|一本|什么|哪些|一些|帮|找|搜|查)", "")
+            .replaceAll("(?:书|读|看|想|要)", "")
+            .replaceAll("\\s+", " ")
             .trim();
         return cleaned;
     }
