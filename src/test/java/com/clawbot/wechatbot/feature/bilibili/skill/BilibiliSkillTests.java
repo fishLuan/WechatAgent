@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.feature.bilibili.skill;
 
-import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliCommandHandler;
+import com.clawbot.wechatbot.feature.bilibili.agent.BilibiliAgentResult;
+import com.clawbot.wechatbot.feature.bilibili.agent.BilibiliSubAgent;
 import com.clawbot.wechatbot.skills.SkillDefinition;
 import com.clawbot.wechatbot.skills.SkillRequest;
 import com.clawbot.wechatbot.skills.SkillResult;
@@ -21,21 +22,22 @@ class BilibiliSkillTests {
 
     @Test
     void delegatesInstructionToExistingBilibiliWorkflow() {
-        BilibiliCommandHandler commands = mock(BilibiliCommandHandler.class);
-        when(commands.handle("user-1", "订阅牧神记")).thenReturn("订阅成功");
-        SkillResult result = new BilibiliSkill(commands).execute(
+        BilibiliSubAgent subAgent = mock(BilibiliSubAgent.class);
+        when(subAgent.execute("user-1", "订阅牧神记"))
+            .thenReturn(new BilibiliAgentResult(true, "订阅成功", List.of()));
+        SkillResult result = new BilibiliSkill(subAgent).execute(
             DEFINITION,
             new SkillRequest("user-1", "订阅牧神记", "", "", ""));
         assertTrue(result.success());
-        verify(commands).handle("user-1", "订阅牧神记");
+        verify(subAgent).execute("user-1", "订阅牧神记");
     }
 
     @Test
     void rejectsUnknownBilibiliInstruction() {
-        BilibiliCommandHandler commands = mock(BilibiliCommandHandler.class);
-        when(commands.handle("user-1", "模糊操作"))
-            .thenReturn("[UNHANDLED-BILIBILI-UNKNOWN]");
-        SkillResult result = new BilibiliSkill(commands).execute(
+        BilibiliSubAgent subAgent = mock(BilibiliSubAgent.class);
+        when(subAgent.execute("user-1", "模糊操作"))
+            .thenReturn(BilibiliAgentResult.failure("无法识别B站领域操作"));
+        SkillResult result = new BilibiliSkill(subAgent).execute(
             DEFINITION,
             new SkillRequest("user-1", "模糊操作", "", "", ""));
         assertFalse(result.success());

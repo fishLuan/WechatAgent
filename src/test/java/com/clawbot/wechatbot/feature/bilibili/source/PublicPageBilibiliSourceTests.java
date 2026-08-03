@@ -1,7 +1,9 @@
 package com.clawbot.wechatbot.feature.bilibili.source;
 
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
+import com.clawbot.wechatbot.feature.bilibili.model.BilibiliCrawlState;
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliCrawlStateRepository;
 import com.clawbot.wechatbot.feature.bilibili.source.client.BilibiliHttpClient;
 import com.clawbot.wechatbot.feature.bilibili.source.parser.BilibiliPageParser;
 import com.clawbot.wechatbot.feature.bilibili.source.parser.BilibiliUrlParser;
@@ -11,10 +13,15 @@ import org.junit.jupiter.api.Test;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class PublicPageBilibiliSourceTests {
 
@@ -207,6 +214,48 @@ class PublicPageBilibiliSourceTests {
             () -> source.resolveUrl("https://www.bilibili.com/bangumi/play/ep691680"));
 
         assertEquals("该 B 站内容不存在或已下架", error.getMessage());
+    }
+
+    @Test
+    void rejectsExpiredSearchSessionInsteadOfReturningNoResults() {
+        PublicPageBilibiliSource source = new PublicPageBilibiliSource(
+            new StubBilibiliHttpClient(
+                "{\"errcode\":-14,\"errmsg\":\"session timeout\"}"),
+            new BilibiliUrlParser(),
+            new BilibiliPageParser(), new ObjectMapper());
+
+        IllegalStateException error = assertThrows(
+            IllegalStateException.class,
+            () -> source.searchByTitle("魁拔", 5));
+
+        assertTrue(error.getMessage().contains("访问限制"));
+    }
+
+    @Test
+    void continuesCandidatePagingFromPersistentCursor() throws Exception {
+        String json = """
+            {"code":0,"data":{"list":[{
+              "media_id":835,"season_id":835,"season_type":1,
+              "title":"测试番剧","score":"9.6",
+              "link":"https://www.bilibili.com/bangumi/play/ss835"
+            }]}}
+            """;
+        BilibiliCrawlStateRepository states =
+            mock(BilibiliCrawlStateRepository.class);
+        when(states.findById(ContentType.BANGUMI.name()))
+            .thenReturn(Optional.of(
+                new BilibiliCrawlState(ContentType.BANGUMI, 7)));
+        when(states.save(any(BilibiliCrawlState.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        StubBilibiliHttpClient http = new StubBilibiliHttpClient(json);
+        PublicPageBilibiliSource source = new PublicPageBilibiliSource(
+            http, new BilibiliUrlParser(), new BilibiliPageParser(),
+            new ObjectMapper(), states);
+
+        source.findCandidates(ContentType.BANGUMI, 3);
+
+        assertTrue(http.lastTextUrl().contains("page=7"));
+        verify(states).save(any(BilibiliCrawlState.class));
     }
 
     private static class StubBilibiliHttpClient extends BilibiliHttpClient {

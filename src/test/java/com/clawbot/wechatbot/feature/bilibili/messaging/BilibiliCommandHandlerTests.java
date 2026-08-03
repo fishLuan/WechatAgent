@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.feature.bilibili.application.BilibiliCatalogCommandService;
+import com.clawbot.wechatbot.feature.bilibili.application.BilibiliTitleSearchService;
 import com.clawbot.wechatbot.feature.bilibili.application.BilibiliUpdateQueryService;
 import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
@@ -62,9 +63,11 @@ class BilibiliCommandHandlerTests {
             preferenceService, schedulePort);
         contentRepository = mock(BilibiliContentRepository.class);
         BilibiliProperties properties = new BilibiliProperties();
+        BilibiliTitleSearchService titleSearch = new BilibiliTitleSearchService(
+            contentRepository, contentSource, properties);
         BilibiliCatalogCommandService catalogCommands = new BilibiliCatalogCommandService(
-            subscriptionService, recommendationService, historyService, contentSource,
-            properties, pendingSearchResults);
+            subscriptionService, recommendationService, historyService, titleSearch,
+            pendingSearchResults);
         BilibiliUpdateQueryService updateQueries = new BilibiliUpdateQueryService(
             contentRepository, contentSource, historyService, preferenceService);
         handler = new BilibiliCommandHandler(

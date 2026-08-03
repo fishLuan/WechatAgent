@@ -22,8 +22,8 @@ public final class BilibiliSubscriptionScheduler {
     }
 
     @Scheduled(
-        fixedDelayString = "${clawbot.bilibili.check-interval-minutes}",
-        initialDelayString = "${clawbot.bilibili.check-interval-minutes}",
+        fixedDelayString = "${clawbot.bilibili.subscription-check-interval-minutes}",
+        initialDelayString = "${clawbot.bilibili.subscription-check-interval-minutes}",
         timeUnit = TimeUnit.MINUTES
     )
     public void scheduledCheck() {

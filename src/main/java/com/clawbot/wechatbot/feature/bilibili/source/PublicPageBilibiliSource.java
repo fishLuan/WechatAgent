@@ -1,7 +1,9 @@
 package com.clawbot.wechatbot.feature.bilibili.source;
 
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
+import com.clawbot.wechatbot.feature.bilibili.model.BilibiliCrawlState;
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliCrawlStateRepository;
 import com.clawbot.wechatbot.feature.bilibili.source.client.BilibiliHttpClient;
 import com.clawbot.wechatbot.feature.bilibili.source.dto.BilibiliContentDto;
 import com.clawbot.wechatbot.feature.bilibili.source.parser.BilibiliPageParser;
@@ -49,12 +51,18 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
     private final BilibiliPageParser pageParser;
     private final ObjectMapper objectMapper;
     private final BilibiliContentMapper contentMapper;
+    private final BilibiliCrawlStateRepository crawlStates;
     private final Map<ContentType, Integer> nextPgcIndexPage =
         new EnumMap<>(ContentType.class);
 
     @Autowired
-    public PublicPageBilibiliSource(BilibiliHttpClient httpClient, ObjectMapper objectMapper) {
-        this(httpClient, new BilibiliUrlParser(), new BilibiliPageParser(), objectMapper);
+    public PublicPageBilibiliSource(
+        BilibiliHttpClient httpClient,
+        ObjectMapper objectMapper,
+        BilibiliCrawlStateRepository crawlStates
+    ) {
+        this(httpClient, new BilibiliUrlParser(), new BilibiliPageParser(),
+            objectMapper, crawlStates);
     }
 
     PublicPageBilibiliSource(
@@ -63,11 +71,22 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         BilibiliPageParser pageParser,
         ObjectMapper objectMapper
     ) {
+        this(httpClient, urlParser, pageParser, objectMapper, null);
+    }
+
+    PublicPageBilibiliSource(
+        BilibiliHttpClient httpClient,
+        BilibiliUrlParser urlParser,
+        BilibiliPageParser pageParser,
+        ObjectMapper objectMapper,
+        BilibiliCrawlStateRepository crawlStates
+    ) {
         this.httpClient = httpClient;
         this.urlParser = urlParser;
         this.pageParser = pageParser;
         this.objectMapper = objectMapper;
         this.contentMapper = new BilibiliContentMapper();
+        this.crawlStates = crawlStates;
     }
 
     @Override
@@ -151,6 +170,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         List<BilibiliContent> contents = new ArrayList<>();
         String body = httpClient.getAnonymousSearchText(url);
         if (body == null || body.isBlank()) return List.of();
+        ensureSupportedResponse(body);
         for (BilibiliContentDto dto : pageParser.parseSearchMediaJson(body, "")) {
             BilibiliContent content = contentMapper.toContent(dto);
             if (content.getContentType() == contentType) contents.add(content);
@@ -187,6 +207,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
             limit);
         String body = httpClient.getAnonymousSearchText(url);
         if (body == null || body.isBlank()) return;
+        ensureSupportedResponse(body);
         for (BilibiliContentDto dto
             : pageParser.parseSearchMediaJson(body, "")) {
             BilibiliContent content = contentMapper.toContent(dto);
@@ -230,6 +251,16 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
     }
 
     private synchronized int nextPgcIndexPage(ContentType contentType) {
+        if (crawlStates != null) {
+            try {
+                return crawlStates.findById(contentType.name())
+                    .map(BilibiliCrawlState::getNextPage)
+                    .orElse(1);
+            } catch (Exception error) {
+                System.err.println("[BILIBILI] 读取候选池翻页状态失败，使用内存游标："
+                    + error.getMessage());
+            }
+        }
         return nextPgcIndexPage.getOrDefault(contentType, 1);
     }
 
@@ -238,6 +269,19 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         boolean reset
     ) {
         int current = nextPgcIndexPage.getOrDefault(contentType, 1);
+        if (crawlStates != null) {
+            try {
+                current = crawlStates.findById(contentType.name())
+                    .map(BilibiliCrawlState::getNextPage)
+                    .orElse(current);
+                crawlStates.save(new BilibiliCrawlState(
+                    contentType, reset ? 1 : current + 1));
+                return;
+            } catch (Exception error) {
+                System.err.println("[BILIBILI] 保存候选池翻页状态失败，使用内存游标："
+                    + error.getMessage());
+            }
+        }
         nextPgcIndexPage.put(contentType, reset ? 1 : current + 1);
     }
 
@@ -645,7 +689,10 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         }
         if (body.contains("\"code\":-412")
                 || body.contains("\"code\":-352")
-                || body.contains("\"code\":-403")) {
+                || body.contains("\"code\":-403")
+                || body.contains("\"errcode\":-14")
+                || body.toLowerCase().contains("session timeout")
+                || body.matches("(?is).*<title>\s*出错啦!\s*-\s*aba\\.bilibili\\.com\s*</title>.*")) {
             throw new IllegalStateException("B 站公开接口触发访问限制，请稍后再试");
         }
     }
