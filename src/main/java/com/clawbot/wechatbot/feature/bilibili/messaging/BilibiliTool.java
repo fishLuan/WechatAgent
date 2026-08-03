@@ -49,8 +49,9 @@ public final class BilibiliTool implements FunctionTool {
         ObjectNode function = root.putObject("function");
         function.put("name", TOOL_NAME);
         function.put("description",
-            "管理B站动漫、电影和剧集的推荐、追更、搜索、标记及每日推送设置。"
-                + "不要传user_id，系统会绑定当前微信用户。");
+            "管理B站动漫、电影和剧集的【立即】推荐、追更、搜索、标记操作。"
+                + "不要传user_id，系统会绑定当前微信用户。"
+                + "【重要】本工具只处理现在/马上/立即的即时操作；如果用户提到具体时间（如『11点推送』『每天几点推送』『明天推送』）要求定时推送，必须改用 scheduler_manage 工具创建定时任务（task_type=BILIBILI_PUSH），绝对不要使用本工具的 set_push_time、set_recommend_count、set_min_rating、enable_push 等推送设置 action——那些只会修改默认偏好，不会创建控制台可见的定时任务。");
         ObjectNode parameters = function.putObject("parameters");
         parameters.put("type", "object");
         ObjectNode properties = parameters.putObject("properties");
@@ -63,10 +64,7 @@ public final class BilibiliTool implements FunctionTool {
             "search_by_title", "list_subscriptions", "check_updates",
             "mark_want", "mark_watched", "mark_disliked",
             "mark_want_by_title", "mark_watched_by_title",
-            "mark_disliked_by_title", "set_push_time",
-            "set_min_rating", "set_recommend_count",
-            "enable_push", "disable_push",
-            "exclude_push_days", "restore_push_days",
+            "mark_disliked_by_title",
             "today_updates_anime", "today_updates_series"
         }) values.add(value);
         properties.putObject("content_type")

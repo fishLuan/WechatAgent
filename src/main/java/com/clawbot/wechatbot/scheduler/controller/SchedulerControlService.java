@@ -139,7 +139,7 @@ public class SchedulerControlService implements SmartLifecycle {
                 Query.query(Criteria.where("enabled").is(true)), ScheduledSubscription.class);
         int skippedOneTime = 0;
         for (ScheduledSubscription sub : enabledSubs) {
-            // 单次提醒：过滤掉「已经发过」或「触发时间已过期」的，自动置 disabled
+            // 单次任务：过滤掉「已经发过」或「触发时间已过期」的，自动置 disabled
             if (isOneTime(sub)) {
                 boolean skip = false;
                 try {
@@ -170,6 +170,21 @@ public class SchedulerControlService implements SmartLifecycle {
     @Override public void stop() { running = false; }
     @Override public boolean isRunning() { return running; }
     @Override public int getPhase() { return 8; }
+
+    /** 单次任务：一次性提醒，或 paramsJson 带 fire_timestamp（含一次性B站推送） */
+    private boolean isOneTime(ScheduledSubscription sub) {
+        if (sub.getTaskType() == TaskType.ONE_TIME_REMINDER) return true;
+        try {
+            if (sub.getParamsJson() != null && !sub.getParamsJson().isBlank()) {
+                com.fasterxml.jackson.databind.JsonNode p = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readTree(sub.getParamsJson());
+                if (p != null && p.isObject()) {
+                    return p.path("fire_timestamp").asLong(0L) > 0L;
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
 
     public ScheduledSubscription createOrUpdate(ScheduledSubscription subscription) {
         if (subscription.getCreatedAt() == null) subscription.setCreatedAt(System.currentTimeMillis());
@@ -244,17 +259,6 @@ public class SchedulerControlService implements SmartLifecycle {
         }
     }
 
-    private boolean isOneTime(ScheduledSubscription subscription) {
-        if (subscription.getTaskType() == TaskType.ONE_TIME_REMINDER) return true;
-        try {
-            com.fasterxml.jackson.databind.JsonNode params =
-                new com.fasterxml.jackson.databind.ObjectMapper()
-                    .readTree(subscription.getParamsJson());
-            return params.path("fire_timestamp").asLong(0L) > 0L;
-        } catch (Exception ignored) {
-            return false;
-        }
-    }
 
     /** 把 Cron 表达式转成用户能看懂的文字描述（目前只支持「每天 HH:mm」格式，其他直接返回原 Cron） */
     public static String cronToTimeDesc(String cron) {

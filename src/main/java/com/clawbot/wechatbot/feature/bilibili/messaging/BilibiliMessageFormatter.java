@@ -170,6 +170,11 @@ public final class BilibiliMessageFormatter {
 
     public static String formatTodayUpdates(ContentType contentType, int totalUpdated,
                                              List<BilibiliContent> items) {
+        return formatUpdates(contentType, "今天", totalUpdated, items);
+    }
+
+    public static String formatUpdates(ContentType contentType, String rangeName,
+                                       int totalUpdated, List<BilibiliContent> items) {
         String typeNameStr = typeName(contentType);
         String icon = switch (contentType) {
             case BANGUMI -> "🎐";
@@ -178,8 +183,9 @@ public final class BilibiliMessageFormatter {
             case UPLOADER -> "🧑‍💻";
         };
         StringBuilder sb = new StringBuilder();
-        sb.append("📺 **今日B站").append(typeNameStr).append("更新** 📺\n\n");
-        sb.append("今天共有 ").append(totalUpdated).append(" 部").append(typeNameStr).append("更新");
+        sb.append("📺 **B站").append(rangeName).append(typeNameStr).append("更新** 📺\n\n");
+        sb.append(rangeName).append("共有 ").append(totalUpdated).append(" 部")
+            .append(typeNameStr).append("更新");
         if (items == null || items.isEmpty()) {
             sb.append("，但没有符合你偏好的～试试降低最低评分？");
             return sb.toString();
