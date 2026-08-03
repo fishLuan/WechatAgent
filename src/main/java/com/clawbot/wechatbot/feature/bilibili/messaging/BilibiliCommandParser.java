@@ -2,10 +2,6 @@ package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 
-import java.time.LocalTime;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -124,22 +120,9 @@ public final class BilibiliCommandParser {
         ".*(智能推荐|为什么推荐|为啥推荐|类似|相似|适合我|按我的偏好|我适合|有没有好看的|最近看什么|订阅.*更新).*");
     private static final Pattern WEEKDAY = Pattern.compile(
         "(?:周|星期)([一二三四五六日天])");
-    private static final Pattern ARABIC_TIME = Pattern.compile(
-        "(?:每天|每日)?.*?((?:[01]?\\d|2[0-3])[:：][0-5]\\d)");
     private static final Pattern RATING = Pattern.compile(
         "(10(?:\\.0)?|\\d(?:\\.\\d)?)\\s*分(?:以上|起)?");
     private static final Pattern COUNT = Pattern.compile("(\\d{1,2})\\s*(?:部|个)");
-    private static final Pattern CHINESE_TIME = Pattern.compile(
-        "(凌晨|早上|上午|中午|下午|晚上)?\\s*"
-            + "([0-9]{1,2}|[零〇一二两三四五六七八九十]{1,3})[点时]"
-            + "(?:(半)|([0-9]{1,2}|[零〇一二两三四五六七八九十]{1,3})分?)?");
-    private static final Pattern PERIOD_COLON_TIME = Pattern.compile(
-        "(凌晨|早上|上午|中午|下午|晚上)\\s*([0-9]{1,2})[:：]([0-5][0-9])");
-    private static final Pattern QUARTER_TIME = Pattern.compile(
-        "(凌晨|早上|上午|中午|下午|晚上)?\\s*"
-            + "([0-9]{1,2}|[零〇一二两三四五六七八九十]{1,3})[点时](一刻|三刻|整)");
-    private static final Pattern RELATIVE_TIME = Pattern.compile(
-        "([0-9]{1,4}|[零〇一二两三四五六七八九十百]{1,5})(小时|分钟)后");
 
     public static ParsedCommand parse(String input) {
         if (input == null || input.isBlank()) return ParsedCommand.unknown();
@@ -406,7 +389,8 @@ public final class BilibiliCommandParser {
         if (!(text.contains("推送") || text.contains("推荐"))) return null;
         ContentType type = inferType(text);
         if (type == null) return null;
-        ScheduleValue schedule = parseSchedule(text);
+        BilibiliScheduleExpressionParser.ScheduleValue schedule =
+            BilibiliScheduleExpressionParser.parse(text);
         if (schedule == null) return null;
 
         Double rating = null;
@@ -424,84 +408,6 @@ public final class BilibiliCommandParser {
             CmdType.CONFIGURE_DAILY_RECOMMENDATION,
             null, null, type, null, schedule.weekdays(),
             schedule.value(), true, null, schedule.kind(), rating, count);
-    }
-
-    private static ScheduleValue parseSchedule(String text) {
-        Matcher relative = RELATIVE_TIME.matcher(text);
-        if (relative.find()) {
-            int amount = chineseNumber(relative.group(1));
-            if (amount < 1) return null;
-            LocalDateTime fireAt = LocalDateTime.now(ZoneId.of("Asia/Shanghai"));
-            fireAt = "小时".equals(relative.group(2))
-                ? fireAt.plusHours(amount) : fireAt.plusMinutes(amount);
-            return new ScheduleValue(
-                "ONCE", String.valueOf(fireAt.atZone(
-                    ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli()), null);
-        }
-
-        LocalTime time = extractTime(text);
-        if (time == null) return null;
-        if (text.contains("明天") || text.contains("后天")) {
-            int days = text.contains("后天") ? 2 : 1;
-            LocalDateTime fireAt = LocalDate.now(ZoneId.of("Asia/Shanghai"))
-                .plusDays(days).atTime(time);
-            return new ScheduleValue(
-                "ONCE", String.valueOf(fireAt.atZone(
-                    ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli()), null);
-        }
-
-        if (text.contains("每周") || text.contains("每星期")
-            || text.contains("每个星期")) {
-            Set<String> days = new LinkedHashSet<>();
-            Matcher weekday = WEEKDAY.matcher(text);
-            while (weekday.find()) days.add(dayName(weekday.group(1)));
-            if (days.isEmpty()) return null;
-            return new ScheduleValue(
-                "WEEKLY", time.toString(), String.join(",", days));
-        }
-        return new ScheduleValue("DAILY", time.toString(), null);
-    }
-
-    private static LocalTime extractTime(String text) {
-        Matcher periodColon = PERIOD_COLON_TIME.matcher(text);
-        if (periodColon.find()) {
-            int hour = Integer.parseInt(periodColon.group(2));
-            int minute = Integer.parseInt(periodColon.group(3));
-            hour = adjustHour(periodColon.group(1), hour);
-            return hour > 23 ? null : LocalTime.of(hour, minute);
-        }
-        Matcher quarter = QUARTER_TIME.matcher(text);
-        if (quarter.find()) {
-            int hour = adjustHour(quarter.group(1), chineseNumber(quarter.group(2)));
-            int minute = switch (quarter.group(3)) {
-                case "一刻" -> 15;
-                case "三刻" -> 45;
-                default -> 0;
-            };
-            return hour > 23 ? null : LocalTime.of(hour, minute);
-        }
-        Matcher arabic = ARABIC_TIME.matcher(text);
-        if (arabic.find()) return LocalTime.parse(normalizeTime(arabic.group(1)));
-        Matcher chinese = CHINESE_TIME.matcher(text);
-        if (!chinese.find()) return null;
-        int hour = chineseNumber(chinese.group(2));
-        int minute = chinese.group(3) != null
-            ? 30
-            : chinese.group(4) == null ? 0 : chineseNumber(chinese.group(4));
-        String period = chinese.group(1);
-        hour = adjustHour(period, hour);
-        if (hour > 23 || minute > 59) return null;
-        return LocalTime.of(hour, minute);
-    }
-
-    private static int adjustHour(String period, int hour) {
-        if (("下午".equals(period) || "晚上".equals(period)) && hour < 12) hour += 12;
-        if ("中午".equals(period) && hour < 11) hour += 12;
-        if ("凌晨".equals(period) && hour == 12) hour = 0;
-        return hour;
-    }
-
-    private record ScheduleValue(String kind, String value, String weekdays) {
     }
 
     private static int chineseNumber(String value) {
@@ -525,11 +431,8 @@ public final class BilibiliCommandParser {
     private static boolean looksLikeTimedPush(String text) {
         if (!(text.contains("推送") || text.contains("推荐"))) return false;
         if (inferType(text) == null) return false;
-        return text.matches(".*(?:[0-9]{1,2}\\s*[点时]|[0-9]{1,2}[:：][0-9]{1,2}).*")
-            || CHINESE_TIME.matcher(text).find()
-            || RELATIVE_TIME.matcher(text).find()
-            || text.contains("明天") || text.contains("后天")
-            || text.contains("每周") || text.contains("每星期");
+        return BilibiliScheduleExpressionParser.looksLikeTimedPush(
+            text, inferType(text) != null);
     }
 
     private static int parseIndex(String value) {

@@ -1,4 +1,4 @@
-package com.clawbot.wechatbot.feature.voice.skill;
+package com.clawbot.wechatbot.feature.voice;
 
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
 import com.clawbot.wechatbot.skills.SkillDefinition;

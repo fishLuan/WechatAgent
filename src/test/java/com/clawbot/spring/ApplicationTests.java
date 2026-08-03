@@ -79,12 +79,13 @@ class ApplicationTests {
     @Test
     void contextLoads() {
         assertEquals(13, toolRegistry.size());
-        assertEquals(5, handlers.size());
+        assertEquals(4, handlers.size());
         assertEquals(5, agentTaskHandlers.size());
-        assertEquals(3, skillRegistry.size());
+        assertEquals(4, skillRegistry.size());
         assertTrue(skillRegistry.contains("bilibili"));
         assertTrue(skillRegistry.contains("document-generation"));
         assertTrue(skillRegistry.contains("voice-reply"));
+        assertTrue(skillRegistry.contains("excel-operation"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name").contains("convert_currency"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name")
             .contains("calculate_bazi_fortune"));

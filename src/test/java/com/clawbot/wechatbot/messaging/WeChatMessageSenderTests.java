@@ -9,11 +9,23 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class WeChatMessageSenderTests {
+
+    @Test
+    void reportsPerUserReadinessFromCurrentProcessBinding() {
+        WeChatClientRegistry registry = mock(WeChatClientRegistry.class);
+        when(registry.hasActiveUserBinding("user-1")).thenReturn(true);
+        WeChatMessageSender sender = new WeChatMessageSender(
+            registry, mock(NotificationService.class));
+
+        assertTrue(sender.isReadyFor("user-1"));
+        assertFalse(sender.isReadyFor("user-2"));
+    }
 
     @Test
     void doesNotSplitEmojiSurrogatePairAcrossTextMessages() throws Exception {

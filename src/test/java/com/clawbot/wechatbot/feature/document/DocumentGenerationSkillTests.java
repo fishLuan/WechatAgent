@@ -1,4 +1,4 @@
-package com.clawbot.wechatbot.feature.document.skill;
+package com.clawbot.wechatbot.feature.document;
 
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.skills.SkillDefinition;

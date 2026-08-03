@@ -24,6 +24,6 @@ public final class WeChatOutboundGatewayImpl implements WeChatOutboundGateway {
     public boolean isAvailable(String wechatUserId) {
         return wechatUserId != null
             && !wechatUserId.isBlank()
-            && sender.isReady();
+            && sender.isReadyFor(wechatUserId.trim());
     }
 }

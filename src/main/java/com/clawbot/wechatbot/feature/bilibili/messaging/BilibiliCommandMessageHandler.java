@@ -29,7 +29,7 @@ public final class BilibiliCommandMessageHandler implements MessageHandler {
 
     @Override
     public boolean canHandle(WeixinMessage message) {
-        String text = BilibiliLinkMessageHandler.extractText(message).trim();
+        String text = WeChatMessageTextExtractor.extract(message).trim();
         if (text.isEmpty()) return false;
         // 定时/预约推送请求（含时间词+推送）交给通用 Agent（走 scheduler_manage 创建定时任务），本处理器不拦
         if (looksLikeScheduledPush(text)) return false;
@@ -51,7 +51,7 @@ public final class BilibiliCommandMessageHandler implements MessageHandler {
     public void handle(ILinkClient client, WeixinMessage message) {
         if (message == null) return;
         String userId = message.getFrom_user_id();
-        String text = BilibiliLinkMessageHandler.extractText(message).trim();
+        String text = WeChatMessageTextExtractor.extract(message).trim();
         if (userId == null || userId.isBlank() || text.isEmpty()) return;
 
         BilibiliCommandParser.ParsedCommand parsed =

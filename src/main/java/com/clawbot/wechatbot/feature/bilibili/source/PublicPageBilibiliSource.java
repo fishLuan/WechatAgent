@@ -4,7 +4,6 @@ import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 import com.clawbot.wechatbot.feature.bilibili.source.client.BilibiliHttpClient;
 import com.clawbot.wechatbot.feature.bilibili.source.dto.BilibiliContentDto;
-import com.clawbot.wechatbot.feature.bilibili.source.dto.BilibiliEpisodeDto;
 import com.clawbot.wechatbot.feature.bilibili.source.parser.BilibiliPageParser;
 import com.clawbot.wechatbot.feature.bilibili.source.parser.BilibiliUrlParser;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -49,6 +48,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
     private final BilibiliUrlParser urlParser;
     private final BilibiliPageParser pageParser;
     private final ObjectMapper objectMapper;
+    private final BilibiliContentMapper contentMapper;
     private final Map<ContentType, Integer> nextPgcIndexPage =
         new EnumMap<>(ContentType.class);
 
@@ -67,6 +67,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         this.urlParser = urlParser;
         this.pageParser = pageParser;
         this.objectMapper = objectMapper;
+        this.contentMapper = new BilibiliContentMapper();
     }
 
     @Override
@@ -93,7 +94,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
                 "动态链接暂不支持作品订阅或推荐");
             default -> Optional.empty();
         };
-        return dto.map(this::toContent)
+        return dto.map(contentMapper::toContent)
             .orElseThrow(() -> new IllegalStateException("未能获取 B 站作品信息"));
     }
 
@@ -108,10 +109,10 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
             || contentType == ContentType.SERIES) {
             return fetchMedia(
                 String.format(PGC_BY_MEDIA, contentId.trim()), "")
-                .map(this::toContent);
+                .map(contentMapper::toContent);
         }
         if (contentType == ContentType.UPLOADER) {
-            return fetchUploader(String.format(UPLOADER_BY_MID, contentId), "").map(this::toContent);
+            return fetchUploader(String.format(UPLOADER_BY_MID, contentId), "").map(contentMapper::toContent);
         }
         return Optional.empty();
     }
@@ -128,7 +129,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         }
         return fetchPgc(
             String.format(PGC_BY_SEASON, seasonId.trim()), "")
-            .map(this::toContent);
+            .map(contentMapper::toContent);
     }
 
     @Override
@@ -151,7 +152,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         String body = httpClient.getAnonymousSearchText(url);
         if (body == null || body.isBlank()) return List.of();
         for (BilibiliContentDto dto : pageParser.parseSearchMediaJson(body, "")) {
-            BilibiliContent content = toContent(dto);
+            BilibiliContent content = contentMapper.toContent(dto);
             if (content.getContentType() == contentType) contents.add(content);
             if (contents.size() >= limit) break;
         }
@@ -188,7 +189,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         if (body == null || body.isBlank()) return;
         for (BilibiliContentDto dto
             : pageParser.parseSearchMediaJson(body, "")) {
-            BilibiliContent content = toContent(dto);
+            BilibiliContent content = contentMapper.toContent(dto);
             String key =
                 content.getContentType() + ":" + content.getContentId();
             target.putIfAbsent(key, content);
@@ -220,7 +221,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         ensureSupportedResponse(body);
         List<BilibiliContent> contents = new ArrayList<>();
         for (BilibiliContentDto dto : pageParser.parsePgcIndexJson(body, contentType)) {
-            BilibiliContent content = toContent(dto);
+            BilibiliContent content = contentMapper.toContent(dto);
             if (content.getContentType() == contentType) contents.add(content);
             if (contents.size() >= limit) break;
         }
@@ -663,28 +664,4 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         return bilibiliUrl;
     }
 
-    private BilibiliContent toContent(BilibiliContentDto dto) {
-        BilibiliContent content = new BilibiliContent(
-            dto.getContentType(), dto.getContentId(), dto.getTitle());
-        content.setSeasonId(dto.getSeasonId());
-        content.setDescription(dto.getDescription());
-        content.setGenres(dto.getGenres());
-        content.setRating(dto.getRating());
-        content.setViewCount(dto.getViewCount());
-        content.setCoverUrl(dto.getCoverUrl());
-        content.setPageUrl(dto.getPageUrl());
-        BilibiliEpisodeDto latest = dto.getLatestEpisode();
-        if (latest != null) {
-            content.setLatestEpisodeId(latest.episodeId());
-            content.setLatestEpisodeTitle(latest.title());
-            content.setLatestEpisodeNumber(latest.episodeNumber());
-            content.setLatestEpisodePubTime(latest.pubTime());
-        }
-        if (dto.getLatestEpisodePubTime() != null) {
-            content.setLatestEpisodePubTime(dto.getLatestEpisodePubTime());
-        }
-        content.setFinished(dto.isFinished());
-        content.setLastFetchedAt(Instant.now());
-        return content;
-    }
 }
