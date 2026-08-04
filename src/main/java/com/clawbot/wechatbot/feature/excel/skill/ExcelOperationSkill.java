@@ -103,6 +103,14 @@ public final class ExcelOperationSkill implements SkillExecutor {
                 "没有可用的表格数据，请提供首行为表头、每行一条的表格内容。");
         }
         ExcelTable table = excelService.loadOrCreate(userId, resolveTitle(text));
+        // 防静默覆盖：已有非空数据时，指令需显式包含「覆盖」才允许替换
+        if (hasData(table) && !text.contains("覆盖")) {
+            return SkillResult.failure(
+                "你已经有一张 " + table.getHeaders().size() + "列×"
+                    + table.getRows().size() + "行 的表格，直接生成会覆盖原数据。"
+                    + "如确认要替换，请在指令中加上「覆盖」二字，"
+                    + "例如：生成覆盖表格：姓名,年龄。");
+        }
         table.setHeaders(parsed.headers());
         table.setRows(parsed.rows());
         excelService.save(table);
@@ -179,6 +187,11 @@ public final class ExcelOperationSkill implements SkillExecutor {
         }
     }
 
+    /** 表格是否已有非空数据（表头和至少一行数据都齐全才视为有数据）。 */
+    private boolean hasData(ExcelTable table) {
+        return !table.getHeaders().isEmpty() && !table.getRows().isEmpty();
+    }
+
     private SkillResult failureRowRange(ExcelTable table) {
         return SkillResult.failure("行号超出范围，当前共 " + table.getRows().size() + " 行。");
     }
@@ -214,7 +227,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
 
     private String resolveTitle(String text) {
         String normalized = text
-            .replaceAll("生成|创建|制作|新建|做一个|表格|Excel|excel|请|帮我", "")
+            .replaceAll("生成|创建|制作|新建|做一个|覆盖|表格|Excel|excel|请|帮我", "")
             .replaceAll("[:：].*$", "")
             .trim();
         if (normalized.isBlank()) return "我的表格";

@@ -133,4 +133,30 @@ class ExcelServiceTests {
             assertTrue(workbook.getNumberOfSheets() >= 1);
         }
     }
+
+    @Test
+    void keepsEmptyCellsInRow() {
+        ExcelService.ParsedTable table = ExcelService.parseTableText(
+            "姓名,年龄,城市\n张三,,北京");
+        assertEquals(3, table.headers().size());
+        assertEquals(1, table.rows().size());
+        assertEquals(List.of("张三", "", "北京"), table.rows().get(0));
+    }
+
+    @Test
+    void keepsTrailingEmptyCells() {
+        ExcelService.ParsedTable table = ExcelService.parseTableText(
+            "姓名,年龄,城市\n张三,25,");
+        assertEquals(3, table.rows().get(0).size());
+        assertEquals(List.of("张三", "25", ""), table.rows().get(0));
+    }
+
+    @Test
+    void splitRowDataKeepsEmptyCells() {
+        ExcelTable table = new ExcelTable("user-1", "测试表");
+        table.setHeaders(List.of("姓名", "年龄", "城市"));
+        assertEquals(List.of("王五", "", "广州"),
+            ExcelService.splitRowData("王五,,广州", table));
+    }
 }
+

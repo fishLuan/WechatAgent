@@ -102,14 +102,13 @@ public class ExcelService {
         return ",";
     }
 
+    /** 拆分单元格并保留空单元格（"张三,,北京"需解析为三列，空位不能丢弃导致列位错位）。 */
     private static List<String> splitLine(String line, String delimiter) {
-        String[] parts = line.split(java.util.regex.Pattern.quote(delimiter));
+        // 负 limit 让 split 保留末尾的空字符串（如 "张三,25," 应拆出 3 个单元格）
+        String[] parts = line.split(java.util.regex.Pattern.quote(delimiter), -1);
         List<String> cells = new ArrayList<>(parts.length);
         for (String part : parts) {
-            String cell = part.trim();
-            if (!cell.isEmpty()) {
-                cells.add(cell);
-            }
+            cells.add(part.trim());
         }
         return cells;
     }
