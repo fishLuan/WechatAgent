@@ -25,7 +25,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
     private static final Pattern SUM_PREFIX = Pattern.compile(
         "^(?:合计|统计)\\s*(.+?)(?:的)?(?:金额|总和|合计|数值|值)?$");
     private static final Pattern ROW_DATA_AFTER_MARK = Pattern.compile(
-        "(?:为|改成|改为|数据(?:是|为)?|内容(?:是|为)?|[:：])\\s*(.+)$");
+        "(?:为|改成|改为|数据(?:是|为)?|内容(?:是|为)?|[:：])\\s*([\\s\\S]+)$");
     private static final Pattern ADD_PREFIX = Pattern.compile(
         "^(?:添加|增加|加入|新增|加)\\s*(?:一行|一条|1行|1条)?\\s*[:：]?\\s*(.+)$");
     private static final Pattern UPDATE_PREFIX = Pattern.compile(
@@ -106,10 +106,10 @@ public final class ExcelOperationSkill implements SkillExecutor {
         // 防静默覆盖：已有非空数据时，指令需显式包含「覆盖」才允许替换
         if (hasData(table) && !text.contains("覆盖")) {
             return SkillResult.failure(
-                "你已经有一张 " + table.getHeaders().size() + "列×"
-                    + table.getRows().size() + "行 的表格，直接生成会覆盖原数据。"
-                    + "如确认要替换，请在指令中加上「覆盖」二字，"
-                    + "例如：生成覆盖表格：姓名,年龄。");
+                "❌ 你已经有一张 " + table.getHeaders().size() + "列×"
+                    + table.getRows().size() + "行 的表格，直接生成会覆盖原数据，已拦截。"
+                    + "确认要替换，请重新发送并在指令中带上「覆盖」二字，例如：\n"
+                    + "生成覆盖表格：姓名,城市\n张三,北京\n李四,上海");
         }
         table.setHeaders(parsed.headers());
         table.setRows(parsed.rows());

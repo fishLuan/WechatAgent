@@ -41,6 +41,41 @@ class ExcelOperationSkillTests {
     }
 
     @Test
+    void blockedMessageShowsCorrectOverwriteExample() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.loadOrCreate(eq("user-1"), anyString()))
+            .thenReturn(existingTable());
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "生成表格：姓名,城市", "", "", ""));
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("生成覆盖表格"));
+        assertTrue(result.text().contains("张三,北京"));
+        verify(excelService, never()).save(any());
+    }
+
+    @Test
+    void overwriteWithMultiLineDataAfterColonKeepsAllRows() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1",
+                "生成覆盖表格：姓名,城市\n张三,北京\n李四,上海", "", "", ""));
+
+        assertTrue(result.success());
+        assertEquals(List.of("姓名", "城市"), table.getHeaders());
+        assertEquals(List.of(List.of("张三", "北京"), List.of("李四", "上海")),
+            table.getRows());
+        verify(excelService).save(table);
+    }
+
+    @Test
     void overwritesExistingTableWhenInstructionContainsCover() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();
