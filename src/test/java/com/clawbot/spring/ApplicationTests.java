@@ -79,7 +79,7 @@ class ApplicationTests {
     @Test
     void contextLoads() {
         assertEquals(13, toolRegistry.size());
-        assertEquals(5, handlers.size());
+        assertEquals(6, handlers.size());
         assertEquals(5, agentTaskHandlers.size());
         assertEquals(4, skillRegistry.size());
         assertTrue(skillRegistry.contains("bilibili"));
