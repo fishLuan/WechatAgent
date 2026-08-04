@@ -118,6 +118,9 @@ public final class BilibiliCommandParser {
         "^(?:推荐|找|来点|有没有)\\s*(?:几部|一些)?\\s*(?:类似|像)\\s*(?:《(.+?)》|(.+?))\\s*(?:的)?\\s*(动漫|番剧|电影|剧集|电视剧|番)?\\s*$");
     private static final Pattern RAG_INTENT = Pattern.compile(
         ".*(智能推荐|为什么推荐|为啥推荐|类似|相似|适合我|按我的偏好|我适合|有没有好看的|最近看什么|订阅.*更新).*");
+    private static final Pattern RAG_DISCOVERY = Pattern.compile(
+        "^(?:我)?(?:想看|想找|来点|找点|有没有|推荐我|给我推荐)"
+            + ".*(?:动漫|番剧|电影|剧集|电视剧|番)(?:推荐|看看)?$");
     private static final Pattern WEEKDAY = Pattern.compile(
         "(?:周|星期)([一二三四五六日天])");
     private static final Pattern RATING = Pattern.compile(
@@ -353,7 +356,7 @@ public final class BilibiliCommandParser {
                 CmdType.RAG_SIMILAR, null, null, typeOfNullable(similar.group(3)),
                 null, null, null, null, cleanTitle(title), null, null, null);
         }
-        if (RAG_INTENT.matcher(text).matches()) {
+        if (RAG_INTENT.matcher(text).matches() || RAG_DISCOVERY.matcher(text).matches()) {
             return new ParsedCommand(
                 CmdType.RAG_QA, null, null, inferType(text), null, null, null,
                 null, text, null, null, null);

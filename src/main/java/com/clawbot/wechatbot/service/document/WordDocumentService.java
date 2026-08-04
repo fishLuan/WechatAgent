@@ -1,26 +1,28 @@
 package com.clawbot.wechatbot.service.document;
 
 import com.clawbot.wechatbot.service.support.DocumentTextSanitizer;
+import org.apache.poi.hwpf.HWPFDocument;
+import org.apache.poi.hwpf.extractor.WordExtractor;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.apache.poi.xwpf.usermodel.XWPFRun;
+import org.apache.poi.xwpf.extractor.XWPFWordExtractor;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
 
 /** Word 文本提取和 DOCX 生成。 */
 public class WordDocumentService {
     public String extractText(byte[] fileBytes, String fileName) throws Exception {
         if (fileName.toLowerCase().endsWith(".doc")) {
-            return new String(fileBytes, StandardCharsets.UTF_8);
-        }
-        try (XWPFDocument document = new XWPFDocument(new ByteArrayInputStream(fileBytes))) {
-            StringBuilder result = new StringBuilder();
-            for (XWPFParagraph paragraph : document.getParagraphs()) {
-                result.append(paragraph.getText()).append('\n');
+            try (HWPFDocument document = new HWPFDocument(new ByteArrayInputStream(fileBytes));
+                 WordExtractor extractor = new WordExtractor(document)) {
+                return extractor.getText();
             }
-            return result.toString();
+        }
+        try (XWPFDocument document = new XWPFDocument(new ByteArrayInputStream(fileBytes));
+             XWPFWordExtractor extractor = new XWPFWordExtractor(document)) {
+            return extractor.getText();
         }
     }
 

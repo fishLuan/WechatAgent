@@ -1,8 +1,11 @@
 package com.clawbot.wechatbot;
 
 import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.base.PlanningBypassMessageHandler;
 import com.clawbot.wechatbot.base.PlannedMessageHandler;
 import com.clawbot.wechatbot.config.BotConfig;
+import com.clawbot.wechatbot.feature.document.messaging.PendingWordDocumentInstructionStore;
+import com.clawbot.wechatbot.feature.document.messaging.WordDocumentCommandParser;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.messaging.MessageDispatchCoordinator;
 import com.clawbot.wechatbot.messaging.WeChatClientRegistry;
@@ -16,6 +19,7 @@ import com.github.wechat.ilink.sdk.core.config.ConfigLoader;
 import com.github.wechat.ilink.sdk.core.config.ILinkConfig;
 import com.github.wechat.ilink.sdk.core.listener.OnLoginListener;
 import com.github.wechat.ilink.sdk.core.login.LoginContext;
+import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.SmartLifecycle;
@@ -27,9 +31,10 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -46,21 +51,21 @@ public class WeChatBot implements SmartLifecycle {
     private final WeChatClientRegistry clientRegistry;
     private final ConversationMemoryService memoryService;
     private final MultiTaskPlanningGate planningGate;
+    private final PendingWordDocumentInstructionStore pendingWordInstructions;
     private final MessageDispatchCoordinator messageDispatcher;
     private final Environment environment;
-    private final List<BotSession> sessions = new CopyOnWriteArrayList<>();
+    private final BotSession session = new BotSession();
     private final String routeNamespace = "clawbot-" + UUID.randomUUID();
     private final AtomicBoolean consoleOpened = new AtomicBoolean(false);
 
     private volatile boolean running;
-    private int maxSessions;
-    private int nextSessionIndex = 1;
 
     public WeChatBot(BotConfig config, List<MessageHandler> handlers,
                      NotificationService notifications,
                      WeChatClientRegistry clientRegistry,
                      ConversationMemoryService memoryService,
                      MultiTaskPlanningGate planningGate,
+                     PendingWordDocumentInstructionStore pendingWordInstructions,
                      MessageDispatchCoordinator messageDispatcher,
                      Environment environment) {
         this.config = config;
@@ -70,6 +75,7 @@ public class WeChatBot implements SmartLifecycle {
         this.clientRegistry = clientRegistry;
         this.memoryService = memoryService;
         this.planningGate = planningGate;
+        this.pendingWordInstructions = pendingWordInstructions;
         this.messageDispatcher = messageDispatcher;
         this.environment = environment;
     }
@@ -82,8 +88,7 @@ public class WeChatBot implements SmartLifecycle {
         printConfigurationWarnings();
         printRegisteredHandlers();
 
-        maxSessions = Math.max(1, config.getMaxSessions());
-        startNextLoginSession();
+        session.start();
     }
 
     /**
@@ -115,8 +120,9 @@ public class WeChatBot implements SmartLifecycle {
 
     private void runBot(BotSession session) {
         try {
-            System.out.println(session.prefix() + " [1/3] Building client...");            ILinkClient builtClient = ILinkClient.builder()
-                .config(createSessionConfig(session))
+            System.out.println(session.prefix() + " [1/3] Building client...");
+            ILinkClient builtClient = ILinkClient.builder()
+                .config(createSessionConfig())
                 .onLogin(new OnLoginListener() {
                     @Override
                     public void onLoginSuccess(LoginContext ctx) {
@@ -128,13 +134,11 @@ public class WeChatBot implements SmartLifecycle {
                         System.out.println();
                         notifications.notifyLoginSuccess(ctx.getBotId(), ctx.getUserId());
                         openConsoleLater();
-                        startNextLoginSession();
                     }
 
                     @Override
                     public void onLoginFailure(Throwable th) {
-                        System.err.println(session.prefix() + " [ERROR] 登录失败: " + th.getMessage());
-                        notifications.notifyError("微信登录/" + session.name(), th);
+                        session.lastLoginFailure = th;
                     }
                 })
                 .onMessage(messages -> routeMessages(session.client, messages))
@@ -142,21 +146,7 @@ public class WeChatBot implements SmartLifecycle {
             session.client = builtClient;
             clientRegistry.registerClient(builtClient);
 
-            System.out.println(session.prefix() + " [2/3] Getting QR code...");
-            String qrContent = builtClient.executeLogin();
-            notifications.notifyLoginRequired(qrContent);
-            System.out.println();
-
-            System.out.println(session.prefix() + " [3/3] Displaying QR code...");
-            QrCodeDisplay.display(qrContent,
-                "qrcode-" + session.index + "-" + System.currentTimeMillis() + ".html",
-                "微信扫码登录 #" + session.index);
-            System.out.println(session.prefix() + " [INFO] 请用微信扫码，等待登录...");
-            System.out.println();
-
-            while (running && !builtClient.isLoggedIn()) {
-                Thread.sleep(1000);
-            }
+            loginWithQrRefresh(session, builtClient);
             if (!running) return;
 
             System.out.println(session.prefix() + " [INFO] 机器人运行中，按 Ctrl+C 退出");
@@ -226,6 +216,8 @@ public class WeChatBot implements SmartLifecycle {
             return;
         }
         clientRegistry.bindUser(from, currentClient);
+        recordRecentTextMessage(from, message);
+        if (routeWithoutPlanning(currentClient, message)) return;
         Optional<TaskPlan> planningResult =
             planningGate.planDetailed(message);
         if (planningResult.filter(TaskPlan::limitExceeded).isPresent()) {
@@ -243,7 +235,8 @@ public class WeChatBot implements SmartLifecycle {
         Optional<List<AgentTask>> plannedTasks =
             planningResult.map(TaskPlan::tasks);
         boolean requiresUnifiedRoute =
-            planningGate.hasSupportedAttachment(message);
+            planningGate.hasSupportedAttachment(message)
+                && !hasEditableWordAttachment(message);
         if (plannedTasks.filter(tasks ->
                 tasks.size() > 1 || requiresUnifiedRoute).isPresent()
             && routePlannedMessage(
@@ -316,6 +309,103 @@ public class WeChatBot implements SmartLifecycle {
         }
     }
 
+    private boolean hasEditableWordAttachment(WeixinMessage message) {
+        if (message == null || message.getItem_list() == null) return false;
+        for (MessageItem item : message.getItem_list()) {
+            if (item.getFile_item() == null) continue;
+            String fileName = item.getFile_item().getFile_name();
+            if (fileName != null
+                && fileName.toLowerCase(Locale.ROOT).endsWith(".docx")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void recordRecentTextMessage(String userId, WeixinMessage message) {
+        if (hasEditableWordAttachment(message)) return;
+        String text = extractText(message);
+        if (text == null || text.isBlank()) return;
+        String pendingInstruction =
+            WordDocumentCommandParser.extractPendingFileInstruction(text);
+        if (pendingInstruction != null) {
+            pendingWordInstructions.put(userId, pendingInstruction);
+        }
+    }
+
+    private boolean routeWithoutPlanning(
+        ILinkClient currentClient,
+        WeixinMessage message
+    ) {
+        for (MessageHandler handler : handlers) {
+            if (!(handler instanceof PlanningBypassMessageHandler bypass)
+                || !bypass.canBypassPlanning(message)) {
+                continue;
+            }
+            try {
+                handler.handle(currentClient, message);
+            } catch (Exception error) {
+                notifications.notifyError(
+                    "消息处理器/" + handler.getClass().getSimpleName(), error);
+                System.err.println("[ERROR] 消息处理失败: " + safeMessage(error));
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private void loginWithQrRefresh(BotSession session, ILinkClient client)
+        throws InterruptedException {
+        int attempt = 0;
+        while (running && !client.isLoggedIn()) {
+            attempt++;
+            session.lastLoginFailure = null;
+            try {
+                System.out.println(session.prefix() + " [2/3] Getting QR code... attempt=" + attempt);
+                String qrContent = client.executeLogin();
+                notifications.notifyLoginRequired(qrContent);
+                System.out.println();
+                System.out.println(session.prefix() + " [3/3] Displaying QR code...");
+                QrCodeDisplay.display(qrContent,
+                    "qrcode-login-" + System.currentTimeMillis() + ".html",
+                    "微信扫码登录");
+                System.out.println(session.prefix() + " [INFO] 请用微信扫码，等待登录...");
+                System.out.println();
+                client.getLoginFuture().get();
+            } catch (ExecutionException error) {
+                if (!running) return;
+                Throwable cause = session.lastLoginFailure != null
+                    ? session.lastLoginFailure
+                    : error.getCause();
+                if (cause == null) cause = error;
+                String reason = safeMessage(cause);
+                long retryDelayMillis = Math.min(10_000L, 1_500L * attempt);
+                System.err.println(session.prefix() + " [WARN] 二维码登录失败或已过期："
+                    + reason + "；" + retryDelayMillis + "ms 后自动刷新");
+                notifications.notifyError("微信登录", cause);
+                Thread.sleep(retryDelayMillis);
+            } catch (RuntimeException error) {
+                if (!running) return;
+                long retryDelayMillis = Math.min(10_000L, 1_500L * attempt);
+                System.err.println(session.prefix() + " [WARN] 获取二维码失败："
+                    + safeMessage(error) + "；" + retryDelayMillis + "ms 后重试");
+                notifications.notifyError("微信登录", error);
+                Thread.sleep(retryDelayMillis);
+            }
+        }
+    }
+
+    private String extractText(WeixinMessage message) {
+        if (message == null || message.getItem_list() == null) return null;
+        StringBuilder text = new StringBuilder();
+        for (MessageItem item : message.getItem_list()) {
+            if (item.getType() == 1 && item.getText_item() != null) {
+                text.append(item.getText_item().getText());
+            }
+        }
+        return text.toString().trim();
+    }
+
     private boolean isDuplicateMessage(String userId, Long messageId) {
         if (messageId == null || userId == null || userId.isBlank()) {
             return false;
@@ -334,10 +424,7 @@ public class WeChatBot implements SmartLifecycle {
     public synchronized void stop() {
         running = false;
         messageDispatcher.close();
-        for (BotSession session : sessions) {
-            session.stop();
-        }
-        sessions.clear();
+        session.stop();
         clientRegistry.clear();
     }
 
@@ -403,19 +490,7 @@ public class WeChatBot implements SmartLifecycle {
         System.out.println();
     }
 
-    private synchronized void startNextLoginSession() {
-        if (!running || nextSessionIndex > maxSessions) return;
-
-        BotSession session = new BotSession(nextSessionIndex++);
-        sessions.add(session);
-        session.start();
-
-        if (session.index > 1) {
-            System.out.println(session.prefix() + " [INFO] 上一个账号已登录，正在生成新的扫码登录二维码");
-        }
-    }
-
-    private ILinkConfig createSessionConfig(BotSession session) {
+    private ILinkConfig createSessionConfig() {
         ILinkConfig defaults = ConfigLoader.loadDefault();
         String configuredRouteTag = defaults.getRouteTag();
         String routeTagPrefix = configuredRouteTag == null || configuredRouteTag.isBlank()
@@ -441,21 +516,17 @@ public class WeChatBot implements SmartLifecycle {
             .queueCapacity(defaults.getQueueCapacity())
             .channelVersion(defaults.getChannelVersion())
             .autoReconnectEnabled(defaults.isAutoReconnectEnabled())
-            .routeTag(routeTagPrefix + "-session-" + session.index)
+            .routeTag(routeTagPrefix + "-session")
             .build();
     }
 
     private final class BotSession {
-        private final int index;
         private volatile ILinkClient client;
+        private volatile Throwable lastLoginFailure;
         private Thread pollingThread;
 
-        private BotSession(int index) {
-            this.index = index;
-        }
-
         private void start() {
-            pollingThread = new Thread(() -> runBot(this), "wechat-bot-polling-" + index);
+            pollingThread = new Thread(() -> runBot(this), "wechat-bot-polling");
             pollingThread.setDaemon(false);
             pollingThread.start();
         }
@@ -480,11 +551,11 @@ public class WeChatBot implements SmartLifecycle {
         }
 
         private String name() {
-            return "session-" + index;
+            return "session";
         }
 
         private String prefix() {
-            return "[SESSION " + index + "]";
+            return "[WECHAT]";
         }
     }
 

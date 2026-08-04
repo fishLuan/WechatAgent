@@ -47,6 +47,9 @@ public class BilibiliRagIndexService {
                 else skipped++;
             } catch (Exception e) {
                 failed++;
+                System.err.println("[BILIBILI-RAG] 索引失败："
+                    + content.getContentType() + ":" + content.getContentId()
+                    + "，原因：" + safeMessage(e));
             }
         }
         return new IndexStats(indexed, skipped, failed);
@@ -73,7 +76,13 @@ public class BilibiliRagIndexService {
             .orElseGet(BilibiliRagVectorDocument::new);
         if (hash.equals(document.getContentHash())) return false;
 
-        List<Double> embedding = embeddingService.embedDocuments(List.of(text)).getFirst();
+        List<List<Double>> embeddings = embeddingService.embedDocuments(List.of(text));
+        if (embeddings.size() != 1) {
+            throw new IllegalStateException(
+                "Embedding 返回数量异常，期望 1，实际 " + embeddings.size());
+        }
+        List<Double> embedding = embeddings.getFirst();
+        validateEmbedding(embedding);
         document.setContentType(content.getContentType());
         document.setContentId(content.getContentId());
         document.setSeasonId(content.getSeasonId());
@@ -92,6 +101,26 @@ public class BilibiliRagIndexService {
     private String hash(String value) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private void validateEmbedding(List<Double> embedding) {
+        if (embedding.size() != embeddingService.dimension()) {
+            throw new IllegalStateException(
+                "Embedding 维度异常，期望 " + embeddingService.dimension()
+                    + "，实际 " + embedding.size());
+        }
+        if (embedding.stream().anyMatch(value -> value == null || !Double.isFinite(value))) {
+            throw new IllegalStateException("Embedding 包含非有限数值");
+        }
+        boolean allZero = embedding.stream().allMatch(value -> value == 0.0d);
+        if (allZero) throw new IllegalStateException("Embedding 不能为全零向量");
+    }
+
+    private String safeMessage(Throwable error) {
+        String message = error.getMessage();
+        return message == null || message.isBlank()
+            ? error.getClass().getSimpleName()
+            : message;
     }
 
     public record IndexStats(int indexed, int skipped, int failed) {

@@ -9,6 +9,7 @@ import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliPreferenceRepos
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliRecommendationHistoryRepository;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliSubscriptionRepository;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliUpdateEventRepository;
+import com.clawbot.wechatbot.handler.DocumentMessageHandler;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
 import com.clawbot.wechatbot.service.agent.AgentTaskHandler;
@@ -79,7 +80,8 @@ class ApplicationTests {
     @Test
     void contextLoads() {
         assertEquals(13, toolRegistry.size());
-        assertEquals(4, handlers.size());
+        assertEquals(5, handlers.size());
+        assertTrue(handlers.stream().anyMatch(DocumentMessageHandler.class::isInstance));
         assertEquals(5, agentTaskHandlers.size());
         assertEquals(4, skillRegistry.size());
         assertTrue(skillRegistry.contains("bilibili"));

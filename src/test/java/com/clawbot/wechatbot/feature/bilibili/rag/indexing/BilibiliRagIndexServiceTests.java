@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -92,12 +93,31 @@ class BilibiliRagIndexServiceTests {
         verify(repository, never()).save(any());
     }
 
+    @Test
+    void rejectsEmbeddingWithUnexpectedDimension() throws Exception {
+        BilibiliProperties properties = new BilibiliProperties();
+        properties.getRag().getVector().setEnabled(true);
+        EmbeddingService embeddingService = embeddingService();
+        when(embeddingService.embedDocuments(any()))
+            .thenReturn(List.of(List.of(0.1, 0.2, 0.3)));
+        BilibiliRagIndexService service = new BilibiliRagIndexService(
+            properties,
+            embeddingService,
+            new BilibiliRagDocumentTextBuilder(),
+            mock(BilibiliContentRepository.class),
+            mock(BilibiliRagVectorRepository.class));
+
+        assertThrows(IllegalStateException.class, () -> service.index(
+            new BilibiliContent(ContentType.BANGUMI, "media-1", "测试作品")));
+    }
+
     private EmbeddingService embeddingService() throws Exception {
         EmbeddingService service = mock(EmbeddingService.class);
         when(service.isConfigured()).thenReturn(true);
         when(service.model()).thenReturn("qwen3.7-text-embedding");
         when(service.dimension()).thenReturn(1024);
-        when(service.embedDocuments(any())).thenReturn(List.of(List.of(0.1, 0.2, 0.3)));
+        when(service.embedDocuments(any())).thenReturn(List.of(
+            java.util.Collections.nCopies(1024, 0.1)));
         return service;
     }
 

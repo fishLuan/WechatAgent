@@ -2,6 +2,8 @@ package com.clawbot.wechatbot.config;
 
 import com.clawbot.wechatbot.base.MessageHandler;
 import com.clawbot.wechatbot.handler.DocumentMessageHandler;
+import com.clawbot.wechatbot.feature.document.application.WordDocumentCommandService;
+import com.clawbot.wechatbot.feature.document.messaging.PendingWordDocumentInstructionStore;
 import com.clawbot.wechatbot.handler.ImageMessageHandler;
 import com.clawbot.wechatbot.handler.TextMessageHandler;
 import com.clawbot.wechatbot.intent.IntentRecognizer;
@@ -62,7 +64,9 @@ public class BotBeanConfiguration {
         return new DeepSeekClient(config.getDeepSeekApiKey(), config.getDeepSeekModel(),
             config.getDeepSeekUrl(), config.getDeepSeekTemperature(),
             config.getDeepSeekMaxTokens(), config.getDeepSeekConnectTimeoutSeconds(),
-            config.getDeepSeekRequestTimeoutSeconds());
+            config.getDeepSeekRequestTimeoutSeconds(),
+            config.getDeepSeekTransientRetries(),
+            config.getDeepSeekCircuitBreakSeconds());
     }
 
     @Bean DashScopeClient dashScopeClient(BotConfig config) {
@@ -113,9 +117,12 @@ public class BotBeanConfiguration {
         return new ImageMessageHandler(service);
     }
     @Bean MessageHandler documentMessageHandler(
-        DeepSeekChatService chat, DocumentService documents
+        DeepSeekChatService chat, DocumentService documents,
+        WordDocumentCommandService wordDocuments,
+        PendingWordDocumentInstructionStore pendingWordInstructions
     ) {
-        return new DocumentMessageHandler(chat, documents);
+        return new DocumentMessageHandler(
+            chat, documents, wordDocuments, pendingWordInstructions);
     }
     @Bean MessageHandler textMessageHandler(
         DeepSeekChatService chat, AgentOrchestrator orchestrator,

@@ -22,6 +22,7 @@ public class BilibiliProperties {
     private int movieRecommendationCount = 3;
     private double movieMinimumRating = 8.0;
     private int searchResultCount = 5;
+    private Rag rag = new Rag();
 
     @PostConstruct
     void validate() {
@@ -35,6 +36,7 @@ public class BilibiliProperties {
         requirePositive(movieRecommendationCount, "movie-recommendation-count");
         requirePositive(searchResultCount, "search-result-count");
         requireRating(movieMinimumRating, "movie-minimum-rating");
+        rag.validate();
         if (defaultPushTime == null) {
             throw invalid("default-push-time", "不能为空");
         }
@@ -99,4 +101,29 @@ public class BilibiliProperties {
     public void setMovieMinimumRating(double value) { this.movieMinimumRating = value; }
     public int getSearchResultCount() { return searchResultCount; }
     public void setSearchResultCount(int value) { this.searchResultCount = value; }
+    public Rag getRag() { return rag; }
+    public void setRag(Rag rag) { this.rag = rag == null ? new Rag() : rag; }
+
+    public static class Rag {
+        private Vector vector = new Vector();
+
+        void validate() {
+            vector.validate();
+        }
+
+        public Vector getVector() { return vector; }
+        public void setVector(Vector vector) {
+            this.vector = vector == null ? new Vector() : vector;
+        }
+    }
+
+    public static class Vector {
+        private boolean enabled;
+
+        void validate() {
+        }
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+    }
 }

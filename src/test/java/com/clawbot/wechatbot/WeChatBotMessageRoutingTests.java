@@ -1,8 +1,10 @@
 package com.clawbot.wechatbot;
 
 import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.base.PlanningBypassMessageHandler;
 import com.clawbot.wechatbot.base.PlannedMessageHandler;
 import com.clawbot.wechatbot.config.BotConfig;
+import com.clawbot.wechatbot.feature.document.messaging.PendingWordDocumentInstructionStore;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.messaging.MessageDispatchCoordinator;
 import com.clawbot.wechatbot.messaging.WeChatClientRegistry;
@@ -199,6 +201,7 @@ class WeChatBotMessageRoutingTests {
             registry,
             memory,
             gate,
+            new PendingWordDocumentInstructionStore(),
             dispatcher,
             mock(Environment.class));
 
@@ -261,8 +264,38 @@ class WeChatBotMessageRoutingTests {
             registry,
             memory,
             gate,
+            new PendingWordDocumentInstructionStore(),
             immediateDispatcher(),
             mock(Environment.class));
+    }
+
+    @Test
+    void deterministicDomainCommandBypassesLlmPlanningEntirely() {
+        PlanningBypassMessageHandler bilibiliHandler =
+            mock(PlanningBypassMessageHandler.class);
+        PlannedMessageHandler plannedHandler =
+            mock(PlannedMessageHandler.class);
+        ConversationMemoryService memory =
+            mock(ConversationMemoryService.class);
+        WeChatClientRegistry registry = mock(WeChatClientRegistry.class);
+        MultiTaskPlanningGate gate = mock(MultiTaskPlanningGate.class);
+        ILinkClient client = mock(ILinkClient.class);
+        WeixinMessage message = message(106L, "想看治愈冒险动漫");
+        when(memory.markMessageProcessed("user-1", 106L)).thenReturn(true);
+        when(bilibiliHandler.priority()).thenReturn(50);
+        when(bilibiliHandler.canBypassPlanning(message)).thenReturn(true);
+        when(plannedHandler.priority()).thenReturn(100);
+        WeChatBot bot = bot(
+            List.of(bilibiliHandler, plannedHandler), registry, memory, gate);
+
+        bot.routeMessages(client, List.of(message));
+
+        verify(bilibiliHandler).handle(client, message);
+        verify(gate, never()).planDetailed(message);
+        verify(plannedHandler, never()).handlePlanned(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyList());
     }
 
     private MessageDispatchCoordinator immediateDispatcher() {
