@@ -104,6 +104,10 @@ public final class ExcelFileMessageHandler implements MessageHandler {
             // 5. 导入为当前用户的表格（上传导入是显式操作，可替换现有表）
             ExcelTable table = excelService.loadOrCreate(from, resolveTitle(fileName));
             boolean replaced = !table.getHeaders().isEmpty() || !table.getRows().isEmpty();
+            if (replaced) {
+                // 替换前快照，保留原数据以便回滚
+                excelService.snapshotVersion(table, "导入替换");
+            }
             table.setHeaders(parsed.headers());
             table.setRows(parsed.rows());
             excelService.save(table);

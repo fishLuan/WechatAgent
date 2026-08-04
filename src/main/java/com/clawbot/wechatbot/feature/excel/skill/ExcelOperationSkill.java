@@ -2,6 +2,7 @@ package com.clawbot.wechatbot.feature.excel.skill;
 
 import com.clawbot.wechatbot.feature.excel.ExcelService;
 import com.clawbot.wechatbot.feature.excel.model.ExcelTable;
+import com.clawbot.wechatbot.feature.excel.model.ExcelTableVersion;
 import com.clawbot.wechatbot.service.agent.AgentAttachment;
 import com.clawbot.wechatbot.skills.SkillDefinition;
 import com.clawbot.wechatbot.skills.SkillExecutor;
@@ -9,6 +10,8 @@ import com.clawbot.wechatbot.skills.SkillRequest;
 import com.clawbot.wechatbot.skills.SkillResult;
 import org.springframework.stereotype.Component;
 
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -31,6 +34,12 @@ public final class ExcelOperationSkill implements SkillExecutor {
         "^(?:添加|增加|加入|新增|加)\\s*(?:一行|一条|1行|1条)?\\s*[:：]?\\s*(.+)$");
     private static final Pattern UPDATE_PREFIX = Pattern.compile(
         "^(?:修改|更新|更改|改|把)\\s*(.+)$");
+    /** 版本历史指令：版本历史/查看版本/历史版本。 */
+    private static final Pattern VERSION_HISTORY_CMD = Pattern.compile(
+        "^(?:请|帮我)?\\s*(?:版本历史|查看版本|历史版本)(?:记录|列表)?\\s*$");
+    /** 版本历史回复中的时间格式。 */
+    private static final DateTimeFormatter VERSION_TIME_FORMAT =
+        DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
     private final ExcelService excelService;
 
@@ -63,35 +72,54 @@ public final class ExcelOperationSkill implements SkillExecutor {
     private SkillResult dispatch(String userId, String text) throws Exception {
         ExcelTable table = excelService.loadOrCreate(userId, "表格");
 
-        // 1. 查询类（直接返回文字，不导出文件）
+        // 1. 回滚/撤销（放最前：避免「撤销删除第2行」这类说法被当成删除再次执行）
+        if (isRollbackCommand(text)) {
+            return rollback(userId, table, text);
+        }
+
+        // 2. 查询类（直接返回文字，不导出文件）
         SkillResult query = tryQuery(text, table);
         if (query != null) return query;
 
-        // 2. 删除行
+        // 3. 删除行
         Matcher rowMatcher = ROW_NUMBER.matcher(text);
         if (isAction(text, "删除", "移除", "去掉", "删掉") && rowMatcher.find()) {
             return deleteRow(userId, table, parseRowNumber(rowMatcher.group(1)), text);
         }
 
-        // 3. 修改行
+        // 4. 修改行
         if (isAction(text, "修改", "更新", "更改", "改") && rowMatcher.find()) {
             return updateRow(userId, table, parseRowNumber(rowMatcher.group(1)), text);
         }
 
-        // 4. 添加行
+        // 5. 添加行
         Matcher addMatcher = ADD_PREFIX.matcher(text);
         if (addMatcher.matches() && !addMatcher.group(1).isBlank()) {
             return addRow(userId, table, addMatcher.group(1));
         }
 
-        // 5. 生成表格（含表格数据的兜底）
+        // 6. 生成表格（含表格数据的兜底）
         if (isAction(text, "生成", "创建", "制作", "新建", "做一个") || containsTableData(text)) {
             return createTable(userId, text);
         }
 
+        // 7. 查看版本历史
+        if (VERSION_HISTORY_CMD.matcher(text).matches()) {
+            return versionHistory(table);
+        }
+
         return SkillResult.failure(
             "无法识别 Excel 操作，支持的指令：生成表格（提供表头和数据）、"
-                + "添加一行、修改第N行、删除第N行、查询某列的最大/最小/合计/平均。");
+                + "添加一行、修改第N行、删除第N行、查询某列的最大/最小/合计/平均、"
+                + "回滚到上一版本、查看版本历史。");
+    }
+
+    /** 回滚指令判定：以「撤销/回滚/恢复」开头（可带「请/帮我」前缀）。 */
+    private static boolean isRollbackCommand(String text) {
+        if (text == null) return false;
+        String trimmed = text.trim().replaceFirst("^(?:请|帮我)\\s*", "");
+        return trimmed.startsWith("撤销") || trimmed.startsWith("回滚")
+            || trimmed.startsWith("恢复");
     }
 
     /* ========== 各操作实现 ========== */
@@ -113,6 +141,10 @@ public final class ExcelOperationSkill implements SkillExecutor {
                     + "确认要替换，请重新发送并在指令中带上「覆盖」二字，例如：\n"
                     + "生成覆盖表格：姓名,城市\n张三,北京\n李四,上海");
         }
+        // 覆盖前快照，保留原数据以便回滚
+        if (hasData(table)) {
+            excelService.snapshotVersion(table, "覆盖生成表格");
+        }
         table.setHeaders(parsed.headers());
         table.setRows(parsed.rows());
         excelService.save(table);
@@ -129,6 +161,8 @@ public final class ExcelOperationSkill implements SkillExecutor {
         if (cells.isEmpty()) {
             return SkillResult.failure("添加的数据行为空。");
         }
+        // 变更前快照，便于回滚
+        excelService.snapshotVersion(table, "添加第" + (table.getRows().size() + 1) + "行");
         table.getRows().add(cells);
         excelService.save(table);
         return attachmentResult("✅ 已添加第 " + table.getRows().size() + " 行。", table);
@@ -146,6 +180,8 @@ public final class ExcelOperationSkill implements SkillExecutor {
             return SkillResult.failure("缺少新数据，格式示例：修改第2行为 张三,25,北京。");
         }
         List<String> cells = ExcelService.splitRowData(newData, table);
+        // 变更前快照，便于回滚
+        excelService.snapshotVersion(table, "修改第" + rowNumber + "行");
         table.getRows().set(index, cells);
         excelService.save(table);
         return attachmentResult("✅ 已修改第 " + rowNumber + " 行。", table);
@@ -158,6 +194,8 @@ public final class ExcelOperationSkill implements SkillExecutor {
         if (index < 0 || index >= table.getRows().size()) {
             return failureRowRange(table);
         }
+        // 变更前快照，便于回滚
+        excelService.snapshotVersion(table, "删除第" + rowNumber + "行");
         List<String> removed = table.getRows().remove(index);
         excelService.save(table);
         return attachmentResult(
@@ -179,6 +217,48 @@ public final class ExcelOperationSkill implements SkillExecutor {
                 excelService.queryColumn(table, sum.group(1).trim(), ExcelService.QueryType.SUM));
         }
         return null;
+    }
+
+    /** 回滚到上一版本：先对当前状态快照（「回滚操作」，回滚可撤销），再恢复最新版本。 */
+    private SkillResult rollback(String userId, ExcelTable table, String text)
+        throws Exception {
+        requireTable(table);
+        if (excelService.versionCount(table) == 0) {
+            return SkillResult.failure(
+                "❌ 没有可回滚的版本。做过「添加/修改/删除/覆盖/导入」操作后"
+                    + "会生成版本记录，可回滚到最近一次操作前。");
+        }
+        // 回滚前先对当前状态快照（「回滚操作」），保留回滚前的数据，便于再次撤销
+        excelService.snapshotVersion(table, ExcelService.ROLLBACK_DESCRIPTION);
+        boolean restored = excelService.restoreLatestVersion(table);
+        if (!restored) {
+            return SkillResult.failure("❌ 没有可回滚的版本。");
+        }
+        excelService.save(table);
+        return attachmentResult("✅ 已回滚到上一版本。", table);
+    }
+
+    /** 查看版本历史：回复版本数量与最近几次操作说明/时间。 */
+    private SkillResult versionHistory(ExcelTable table) {
+        long count = excelService.versionCount(table);
+        if (count == 0) {
+            return SkillResult.success(
+                "📜 还没有版本记录。做过「添加/修改/删除/覆盖/导入」操作后即可回滚。");
+        }
+        List<ExcelTableVersion> recent = excelService.recentVersions(table, 5);
+        StringBuilder reply = new StringBuilder(
+            "📜 共 " + count + " 条版本记录（每表最多保留 20 条）：");
+        for (ExcelTableVersion version : recent) {
+            String description = version.getDescription() == null
+                ? "未知操作" : version.getDescription();
+            reply.append("\n· ").append(description)
+                .append("（").append(VERSION_TIME_FORMAT.format(version.getCreatedAt())).append("）");
+        }
+        if (count > recent.size()) {
+            reply.append("\n……共 ").append(count)
+                .append(" 条，仅展示最近 ").append(recent.size()).append(" 条");
+        }
+        return SkillResult.success(reply.toString());
     }
 
     /* ========== 工具方法 ========== */

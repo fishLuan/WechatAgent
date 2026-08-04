@@ -65,6 +65,8 @@ class ExcelFileMessageHandlerTests {
         assertEquals(List.of("姓名", "年龄"), table.getHeaders());
         assertEquals(2, table.getRows().size());
         assertEquals(List.of("张三", "25"), table.getRows().get(0));
+        // 替换已有表格前先快照，保留原数据以便回滚
+        verify(excelService).snapshotVersion(table, "导入替换");
         verify(excelService).save(table);
         assertLastReplyContains(client, "已导入 2 行数据（2列）");
         assertLastReplyContains(client, "替换");
@@ -85,6 +87,8 @@ class ExcelFileMessageHandlerTests {
 
         assertLastReplyContains(client, "已导入 1 行数据（2列）");
         assertLastReplyNotContains(client, "替换");
+        // 新表导入不产生快照（没有原数据可保留）
+        verify(excelService, never()).snapshotVersion(any(), anyString());
         verify(excelService).save(any());
     }
 

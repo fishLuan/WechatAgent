@@ -1,7 +1,9 @@
 package com.clawbot.wechatbot.feature.excel;
 
 import com.clawbot.wechatbot.feature.excel.model.ExcelTable;
+import com.clawbot.wechatbot.feature.excel.model.ExcelTableVersion;
 import com.clawbot.wechatbot.feature.excel.repository.ExcelTableRepository;
+import com.clawbot.wechatbot.feature.excel.repository.ExcelTableVersionRepository;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.Font;
@@ -12,8 +14,15 @@ import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -25,11 +34,23 @@ public class ExcelService {
     private static final List<String> DELIMITERS = List.of("\t", "|", ",", ";", "，");
     /** POI 列宽上限（字符单位 * 256）。 */
     private static final int MAX_COLUMN_WIDTH = 255 * 256;
+    /** 无歧义日期格式（导出时按日期单元格写入，其他格式一律按文本）。 */
+    private static final List<DateTimeFormatter> DATE_FORMATTERS = List.of(
+        DateTimeFormatter.ofPattern("yyyy-MM-dd"),
+        DateTimeFormatter.ofPattern("yyyy/MM/dd"),
+        DateTimeFormatter.ofPattern("yyyy年M月d日"));
+    /** 版本保留上限：每张表最多 20 条，超出删除最旧的。 */
+    private static final int MAX_VERSIONS = 20;
+    /** 回滚操作快照的固定说明：回滚时跳过刚写入的这一条，避免快照自身成为回滚目标。 */
+    public static final String ROLLBACK_DESCRIPTION = "回滚操作";
 
     private final ExcelTableRepository repository;
+    private final ExcelTableVersionRepository versionRepository;
 
-    public ExcelService(ExcelTableRepository repository) {
+    public ExcelService(ExcelTableRepository repository,
+                        ExcelTableVersionRepository versionRepository) {
         this.repository = repository;
+        this.versionRepository = versionRepository;
     }
 
     /** 解析后的表格结构：表头 + 数据行。 */
@@ -64,6 +85,68 @@ public class ExcelService {
     public ExcelTable save(ExcelTable table) {
         table.setUpdatedAt(Instant.now());
         return repository.save(table);
+    }
+
+    /* ========== 版本快照与回滚 ========== */
+
+    /**
+     * 把表当前状态深拷贝存为一条版本记录；新增后清理超出上限的旧版本。
+     * （headers/rows 经 setHeaders/setRows 防御性复制，不共享引用）
+     */
+    public void snapshotVersion(ExcelTable table, String description) {
+        if (table == null || table.getId() == null || table.getId().isBlank()) {
+            return;
+        }
+        ExcelTableVersion version = new ExcelTableVersion(
+            table.getId(), table.getHeaders(), table.getRows(), description);
+        versionRepository.save(version);
+        // 版本保留上限：按创建时间倒序保留最新 MAX_VERSIONS 条，删除更旧的
+        List<ExcelTableVersion> all =
+            versionRepository.findByTableIdOrderByCreatedAtDesc(table.getId());
+        if (all.size() > MAX_VERSIONS) {
+            versionRepository.deleteAll(all.subList(MAX_VERSIONS, all.size()));
+        }
+    }
+
+    /**
+     * 取该表最新版本恢复到表格对象上；返回是否成功。
+     * 若最新一条是刚写入的「回滚操作」快照则跳过它（回滚目标应是最近一次变更前的状态）；
+     * 恢复后消费该版本（删除），避免下一次回滚到同一状态。
+     */
+    public boolean restoreLatestVersion(ExcelTable table) {
+        if (table == null || table.getId() == null || table.getId().isBlank()) {
+            return false;
+        }
+        List<ExcelTableVersion> versions =
+            versionRepository.findByTableIdOrderByCreatedAtDesc(table.getId());
+        if (versions.isEmpty()) {
+            return false;
+        }
+        ExcelTableVersion latest = versions.get(0);
+        if (ROLLBACK_DESCRIPTION.equals(latest.getDescription()) && versions.size() > 1) {
+            latest = versions.get(1);
+        }
+        table.setHeaders(latest.getHeaders());
+        table.setRows(latest.getRows());
+        versionRepository.delete(latest);
+        return true;
+    }
+
+    /** 某表当前版本数量。 */
+    public long versionCount(ExcelTable table) {
+        if (table == null || table.getId() == null || table.getId().isBlank()) {
+            return 0;
+        }
+        return versionRepository.countByTableId(table.getId());
+    }
+
+    /** 某表最近若干条版本（最新在前），供版本历史回复使用。 */
+    public List<ExcelTableVersion> recentVersions(ExcelTable table, int limit) {
+        if (table == null || table.getId() == null || table.getId().isBlank()) {
+            return List.of();
+        }
+        return versionRepository.findByTableIdOrderByCreatedAtDesc(table.getId())
+            .stream().limit(limit).toList();
     }
 
     /* ========== 文本解析 ========== */
@@ -154,13 +237,15 @@ public class ExcelService {
                 cell.setCellStyle(headerStyle);
             }
 
-            // 数据行
+            // 数据行：按值类型写入（数字/布尔/无歧义日期推断为类型单元格，其余按文本）
+            CellStyle dateStyle = workbook.createCellStyle();
+            dateStyle.setDataFormat(workbook.createDataFormat().getFormat("yyyy-mm-dd"));
             List<List<String>> rows = table.getRows();
             for (int r = 0; r < rows.size(); r++) {
                 Row row = sheet.createRow(r + 1);
                 List<String> cells = rows.get(r);
                 for (int c = 0; c < cells.size(); c++) {
-                    row.createCell(c).setCellValue(cells.get(c));
+                    writeValueCell(row.createCell(c), cells.get(c), dateStyle);
                 }
             }
 
@@ -168,6 +253,75 @@ public class ExcelService {
             workbook.write(out);
             return out.toByteArray();
         }
+    }
+
+    /**
+     * 数据单元格类型推断后写入（存储仍为字符串，仅在导出时推断）：
+     * 空字符串→空单元格；数字（Long/Double 解析 + 往返校验，避免前导零/尾零文本被转数字）；
+     * true/false（忽略大小写）→布尔；无歧义日期（yyyy-MM-dd / yyyy/MM/dd / yyyy年M月d日）→日期；
+     * 其余一律按文本。
+     */
+    private static void writeValueCell(Cell cell, String raw, CellStyle dateStyle) {
+        if (raw == null || raw.isEmpty()) {
+            return; // 空字符串按空单元格处理
+        }
+        Long longValue = parseLongExact(raw);
+        if (longValue != null) {
+            cell.setCellValue(longValue);
+            return;
+        }
+        Double doubleValue = parseDoubleExact(raw);
+        if (doubleValue != null) {
+            cell.setCellValue(doubleValue);
+            return;
+        }
+        if ("true".equalsIgnoreCase(raw) || "false".equalsIgnoreCase(raw)) {
+            cell.setCellValue(Boolean.parseBoolean(raw));
+            return;
+        }
+        LocalDate date = parseUnambiguousDate(raw);
+        if (date != null) {
+            // POI 日期基准为 1900 系统，按系统时区取当日零点避免偏移
+            cell.setCellValue(Date.from(date.atStartOfDay(ZoneId.systemDefault()).toInstant()));
+            cell.setCellStyle(dateStyle);
+            return;
+        }
+        cell.setCellValue(raw);
+    }
+
+    /** 整数解析并往返校验：仅当 Long 转回字符串与原值一致时才视为数字（"007" 保持文本）。 */
+    private static Long parseLongExact(String raw) {
+        String value = raw.trim();
+        try {
+            long parsed = Long.parseLong(value);
+            return Long.toString(parsed).equals(value) ? parsed : null;
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    /** 小数解析并往返校验：仅当 Double 转回字符串与原值一致时才视为数字（"1.50" 保持文本）。 */
+    private static Double parseDoubleExact(String raw) {
+        String value = raw.trim();
+        try {
+            double parsed = Double.parseDouble(value);
+            return Double.toString(parsed).equals(value) ? parsed : null;
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    /** 无歧义日期解析：仅支持三种格式，其余返回 null 保持文本。 */
+    private static LocalDate parseUnambiguousDate(String raw) {
+        String value = raw.trim();
+        for (DateTimeFormatter formatter : DATE_FORMATTERS) {
+            try {
+                return LocalDate.parse(value, formatter);
+            } catch (DateTimeParseException ignored) {
+                // 尝试下一种格式
+            }
+        }
+        return null;
     }
 
     /** 自动列宽：中文字符按 2 个宽度单位估算，避免 POI 原生算法对中文失效。 */
@@ -222,11 +376,18 @@ public class ExcelService {
         }
 
         List<Double> values = new ArrayList<>();
+        BigDecimal sum = BigDecimal.ZERO;
         for (List<String> cells : table.getRows()) {
             if (columnIndex < cells.size()) {
-                Double parsed = parseNumber(cells.get(columnIndex));
+                String cellValue = cells.get(columnIndex);
+                Double parsed = parseNumber(cellValue);
                 if (parsed != null) {
                     values.add(parsed);
+                    // SUM/AVERAGE 用解析后的字符串构造 BigDecimal，避免浮点误差（如 0.1+0.2）
+                    BigDecimal decimal = parseDecimal(cellValue);
+                    if (decimal != null) {
+                        sum = sum.add(decimal);
+                    }
                 }
             }
         }
@@ -237,14 +398,19 @@ public class ExcelService {
         double result = switch (type) {
             case MAX -> values.stream().mapToDouble(Double::doubleValue).max().orElse(0);
             case MIN -> values.stream().mapToDouble(Double::doubleValue).min().orElse(0);
-            case SUM -> values.stream().mapToDouble(Double::doubleValue).sum();
-            case AVERAGE -> values.stream().mapToDouble(Double::doubleValue)
-                .average().orElse(0);
-            default -> values.size();
+            default -> 0;
         };
-        String formatted = type == QueryType.AVERAGE || type == QueryType.SUM
-            ? String.format(Locale.ROOT, "%.2f", result)
-            : String.valueOf(Math.round(result));
+        String formatted;
+        if (type == QueryType.SUM) {
+            formatted = String.format(Locale.ROOT, "%.2f", sum);
+        } else if (type == QueryType.AVERAGE) {
+            formatted = String.format(Locale.ROOT, "%.2f",
+                sum.divide(BigDecimal.valueOf(values.size()), 2, RoundingMode.HALF_UP));
+        } else if (type == QueryType.MAX || type == QueryType.MIN) {
+            formatted = String.valueOf(Math.round(result));
+        } else {
+            formatted = String.valueOf(values.size());
+        }
         return "📊 " + headers.get(columnIndex) + " 列的"
             + type.label() + "：" + formatted + "（基于 " + values.size() + " 个数值）";
     }
@@ -265,14 +431,31 @@ public class ExcelService {
 
     /** 解析数值：兼容 ￥、%、千分位逗号等修饰符。 */
     private static Double parseNumber(String value) {
-        if (value == null || value.isBlank()) return null;
-        String cleaned = value
-            .replace("￥", "").replace("¥", "").replace("%", "")
-            .replace(",", "").replace("，", "").trim();
+        String cleaned = cleanNumberText(value);
+        if (cleaned == null) return null;
         try {
             return Double.parseDouble(cleaned);
         } catch (NumberFormatException ignored) {
             return null;
         }
+    }
+
+    /** 解析为 BigDecimal（SUM/AVERAGE 精确累加用），失败返回 null。 */
+    private static BigDecimal parseDecimal(String value) {
+        String cleaned = cleanNumberText(value);
+        if (cleaned == null) return null;
+        try {
+            return new BigDecimal(cleaned);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    /** 清理数值文本：兼容 ￥、%、千分位逗号等修饰符；空文本返回 null。 */
+    private static String cleanNumberText(String value) {
+        if (value == null || value.isBlank()) return null;
+        return value
+            .replace("￥", "").replace("¥", "").replace("%", "")
+            .replace(",", "").replace("，", "").trim();
     }
 }
