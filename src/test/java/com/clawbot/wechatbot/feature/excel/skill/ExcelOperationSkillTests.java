@@ -488,6 +488,34 @@ class ExcelOperationSkillTests {
         verify(excelService, never()).save(any());
     }
 
+    // ============================
+    // 复合任务端到端：多步串联、汇总文案
+    // ============================
+    @Test
+    void compositeInstructionEndToEnd() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        table.setHeaders(List.of("地区", "销售额"));
+        table.setRows(new ArrayList<>(List.of(
+            List.of("北京", "100"), List.of("北京", "100"), List.of("上海", "200"))));
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "删除重复订单，然后按地区汇总销售额", "", "", ""));
+
+        assertTrue(result.success());
+        // 复合回复：已完成 N 步 + 最后一步文案
+        assertTrue(result.text().contains("已完成 2 步操作"));
+        assertTrue(result.text().contains("最后一步：已生成汇总表"));
+        // 两步均生效：先去重（北京 100 重复一次），再按地区汇总
+        assertEquals(List.of("地区", "销售额(合计)"), table.getHeaders());
+        assertEquals(List.of(List.of("北京", "100.00"), List.of("上海", "200.00")),
+            table.getRows());
+        verify(excelService, atLeastOnce()).save(table);
+    }
+
     /** 兜底文案应包含新增的四种分析类操作说明。 */
     @Test
     void fallbackMessageListsAnalysisOperations() throws Exception {

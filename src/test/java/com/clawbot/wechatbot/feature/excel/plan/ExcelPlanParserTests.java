@@ -3,6 +3,8 @@ package com.clawbot.wechatbot.feature.excel.plan;
 import com.clawbot.wechatbot.feature.excel.ExcelService;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -327,5 +329,105 @@ class ExcelPlanParserTests {
         assertEquals(ExcelOperationType.ADD_ROW, parseSingle("添加一行：张三,25,北京").type());
         assertEquals(ExcelOperationType.CREATE_TABLE, parseSingle("生成表格：姓名,城市").type());
         assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("查看版本历史").type());
+    }
+
+    // ============================
+    // 复合任务：安全切分与线性依赖链
+    // ============================
+    @Test
+    void compositeSplitsDeduplicateThenFillMissing() {
+        ExcelPlan plan = parser.parse("user-1", "删除重复订单，补全空白地区");
+        assertNotNull(plan);
+        assertEquals(2, plan.operations().size());
+        ExcelOperation first = plan.operations().get(0);
+        ExcelOperation second = plan.operations().get(1);
+        assertEquals("1", first.id());
+        assertEquals(ExcelOperationType.DEDUPLICATE, first.type());
+        assertEquals("2", second.id());
+        assertEquals(ExcelOperationType.FILL_MISSING, second.type());
+        assertEquals("地区", second.param("column"));
+        // 线性依赖链：第 2 步依赖第 1 步
+        assertEquals(List.of(), first.dependsOn());
+        assertEquals(List.of("1"), second.dependsOn());
+    }
+
+    /** 整段无法命中单操作（尾部还有「再按销售额倒序」）：切为 分组汇总(含占比) → 排序。 */
+    @Test
+    void compositeGroupSummaryWithRatioThenSort() {
+        ExcelPlan plan = parser.parse("user-1", "按地区汇总销售额并计算占比，再按销售额倒序");
+        assertNotNull(plan);
+        assertEquals(2, plan.operations().size());
+        ExcelOperation first = plan.operations().get(0);
+        assertEquals(ExcelOperationType.GROUP_SUMMARY, first.type());
+        assertEquals("地区", first.param("groupColumn"));
+        assertEquals("销售额", first.param("valueColumn"));
+        assertEquals("true", first.param("includeRatio"));
+        ExcelOperation second = plan.operations().get(1);
+        assertEquals(ExcelOperationType.SORT, second.type());
+        assertEquals("销售额", second.param("column"));
+        assertEquals("DESC", second.param("direction"));
+        assertEquals(List.of("1"), second.dependsOn());
+    }
+
+    @Test
+    void compositeSplitsThreeOperationsInOrder() {
+        ExcelPlan plan = parser.parse("user-1", "删除重复订单，补全空白地区，再按销售额倒序");
+        assertNotNull(plan);
+        assertEquals(3, plan.operations().size());
+        assertEquals(ExcelOperationType.DEDUPLICATE, plan.operations().get(0).type());
+        assertEquals(ExcelOperationType.FILL_MISSING, plan.operations().get(1).type());
+        ExcelOperation sort = plan.operations().get(2);
+        assertEquals(ExcelOperationType.SORT, sort.type());
+        // 线性依赖链依次串联
+        assertEquals(List.of("1"), plan.operations().get(1).dependsOn());
+        assertEquals(List.of("2"), sort.dependsOn());
+    }
+
+    /** 连接词「然后」作切分点：切在连接词末尾，片段尾部的残留标点被清理。 */
+    @Test
+    void compositeWithConnectiveSeparator() {
+        ExcelPlan plan = parser.parse("user-1", "删除重复订单，然后按年龄排序");
+        assertNotNull(plan);
+        assertEquals(2, plan.operations().size());
+        assertEquals(ExcelOperationType.DEDUPLICATE, plan.operations().get(0).type());
+        ExcelOperation sort = plan.operations().get(1);
+        assertEquals(ExcelOperationType.SORT, sort.type());
+        assertEquals("年龄", sort.param("column"));
+        assertEquals("ASC", sort.param("direction"));
+    }
+
+    /** 多行文本是表格数据形态：复合切分直接让位，仍按原路由生成表格。 */
+    @Test
+    void multiLineTextIsNeverSplit() {
+        ExcelPlan plan = parser.parse("user-1", "删除重复订单\n补全空白地区");
+        assertNotNull(plan);
+        assertEquals(1, plan.operations().size());
+        assertEquals(ExcelOperationType.CREATE_TABLE, plan.operations().get(0).type());
+    }
+
+    /** 单操作文本仍产出单操作：复合路由不改变既有分析指令（回归）。 */
+    @Test
+    void singleAnalysisOperationRemainsSingle() {
+        assertEquals(ExcelOperationType.SORT, parseSingle("按销售额倒序").type());
+        assertEquals(ExcelOperationType.DEDUPLICATE, parseSingle("删除重复订单").type());
+        assertEquals(ExcelOperationType.GROUP_SUMMARY, parseSingle("按地区汇总销售额").type());
+        assertEquals(ExcelOperationType.FILL_MISSING, parseSingle("补全空白地区").type());
+    }
+
+    /** 「并」后是占比（非操作开头词）：不切分，仍为单个 GROUP_SUMMARY（含占比）。 */
+    @Test
+    void ratioPhraseIsNotSplitFromGroupSummary() {
+        ExcelOperation op = parseSingle("按地区汇总销售额并计算占比");
+        assertEquals(ExcelOperationType.GROUP_SUMMARY, op.type());
+        assertEquals("true", op.param("includeRatio"));
+    }
+
+    /** 含非分析片段（添加一行）时整个复合让位：仍按原路由命中添加行。 */
+    @Test
+    void compositeWithNonAnalysisFragmentFallsBackToAddRow() {
+        ExcelPlan plan = parser.parse("user-1", "添加一行：张三,25，然后按年龄排序");
+        assertNotNull(plan);
+        assertEquals(1, plan.operations().size());
+        assertEquals(ExcelOperationType.ADD_ROW, plan.operations().get(0).type());
     }
 }

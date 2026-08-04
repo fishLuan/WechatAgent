@@ -147,6 +147,28 @@ class ExcelOperationExecutorTests {
     }
 
     @Test
+    void groupSummaryThenSortCompositeExecutesEndToEnd() throws Exception {
+        ExcelTable table = new ExcelTable("user-1", "测试表");
+        table.setHeaders(List.of("地区", "销售额"));
+        table.setRows(new ArrayList<>(List.of(
+            List.of("华东", "100"), List.of("华北", "50"),
+            List.of("华东", "150"), List.of("华北", "80"))));
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.GROUP_SUMMARY,
+                Map.of("groupColumn", "地区", "valueColumn", "销售额", "aggregate", "SUM")),
+            op(2, ExcelOperationType.SORT,
+                Map.of("column", "销售额", "direction", "DESC"))), table);
+
+        assertTrue(result.success());
+        assertEquals(List.of("地区", "销售额(合计)"), table.getHeaders());
+        // 华东 250、华北 130；降序排序 → 华东在前（模糊列名应命中"销售额(合计)"）
+        assertEquals(List.of("华东", "华北"),
+            table.getRows().stream().map(row -> row.get(0)).toList());
+    }
+
+    @Test
     void createTableOverwritesAndSnapshotsBefore() throws Exception {
         ExcelTable table = existingTable();
         when(excelService.loadOrCreate(anyString(), anyString())).thenReturn(table);
@@ -465,6 +487,64 @@ class ExcelOperationExecutorTests {
 
         assertEquals(List.of(List.of("张三", "未知"), List.of("李四", "北京")),
             table.getRows());
+    }
+
+    // ============================
+    // 复合计划：线性依赖链按序执行、失败即停
+    // ============================
+    @Test
+    void compositePlanExecutesStepsInOrderWithLinearDependency() throws Exception {
+        ExcelTable table = existingTable();
+        table.setHeaders(List.of("姓名", "年龄"));
+        // 行内单元格需可变列表：补全操作会原地修改单元格
+        table.setRows(new ArrayList<>(List.of(
+            new ArrayList<>(List.of("张三", "25")),
+            new ArrayList<>(List.of("李四", "")),
+            new ArrayList<>(List.of("张三", "25")))));
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+
+        // 复合计划：先整行去重（张三,25 重复一次），再补全年龄列空值
+        OperationResult result = executor.execute(plan(
+            new ExcelOperation("1", ExcelOperationType.DEDUPLICATE, Map.of(), List.of()),
+            new ExcelOperation("2", ExcelOperationType.FILL_MISSING,
+                Map.of("column", "年龄", "value", "未知"), List.of("1"))), table);
+
+        assertTrue(result.success());
+        // 两步按序生效：去重剩 2 行，年龄空值补全为「未知」
+        assertEquals(List.of(List.of("张三", "25"), List.of("李四", "未知")),
+            table.getRows());
+        // 返回最后一步（第 2 步）的文案与附件
+        assertEquals("✅ 已补全年龄列 1 个空值。", result.text());
+        assertNotNull(result.attachment());
+        verify(excelService).snapshotVersion(table, "整行去重");
+        verify(excelService).snapshotVersion(table, "补全年龄列");
+        verify(excelService, times(2)).save(table);
+    }
+
+    @Test
+    void compositePlanStopsOnMiddleStepFailure() throws Exception {
+        ExcelTable table = existingTable();
+        table.setHeaders(List.of("姓名", "城市"));
+        // 行内单元格需可变列表：补全操作会原地修改单元格
+        table.setRows(new ArrayList<>(List.of(
+            new ArrayList<>(List.of("张三", "北京")),
+            new ArrayList<>(List.of("李四", "")))));
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+
+        // 第 2 步排序的列不存在 → 失败即停，第 3 步不再执行
+        OperationResult result = executor.execute(plan(
+            new ExcelOperation("1", ExcelOperationType.FILL_MISSING,
+                Map.of("column", "城市", "value", "未知"), List.of()),
+            new ExcelOperation("2", ExcelOperationType.SORT,
+                Map.of("column", "不存在的列", "direction", "ASC"), List.of("1")),
+            new ExcelOperation("3", ExcelOperationType.DEDUPLICATE, Map.of(), List.of("2"))), table);
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("找不到列"));
+        // 第 1 步已生效并保存，第 3 步未执行
+        assertEquals(List.of(List.of("张三", "北京"), List.of("李四", "未知")),
+            table.getRows());
+        verify(excelService, times(1)).save(table);
     }
 
     // ============================

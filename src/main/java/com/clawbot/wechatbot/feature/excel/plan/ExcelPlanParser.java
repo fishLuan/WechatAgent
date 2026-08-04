@@ -2,6 +2,7 @@ package com.clawbot.wechatbot.feature.excel.plan;
 
 import com.clawbot.wechatbot.feature.excel.ExcelService;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +13,8 @@ import java.util.regex.Pattern;
  * 把用户文本解析成结构化 ExcelPlan。
  * 路由逻辑自重构前的 ExcelOperationSkill.dispatch 整体搬入，行为完全一致：
  * 回滚判定优先、查询/删除/修改/添加/生成/版本历史顺序、覆盖保护标记、内容提取规则。
+ * 另新增复合任务路由：带切分点的多条分析指令（如「删除重复订单，补全空白地区」）先于单操作切分为
+ * 线性依赖链；不含切分点的单操作文本行为不变。
  * 解析器只产出计划，不执行任何修改。
  */
 public final class ExcelPlanParser {
@@ -53,6 +56,15 @@ public final class ExcelPlanParser {
         "^(?:请|帮我\\s*)*补全\\s*(?:空白|空的)?\\s*(.+?)\\s*(?:列)?\\s*$");
     private static final Pattern FILL_MISSING_VALUE = Pattern.compile(
         "^(?:请|帮我\\s*)*把\\s*(.+?)\\s*(?:列)?\\s*补全为\\s*(.+?)\\s*$");
+    /** 复合任务切分点：标点分隔符（中文逗号/顿号/分号、半角逗号/分号）或连接词（然后/接着/同时/并且/并/再）。 */
+    private static final Pattern SPLIT_SEPARATOR = Pattern.compile(
+        "[，、；,;]|然后|接着|同时|并且|并|再");
+    /** 复合任务切分判定：分隔符后紧跟分析类操作开头词（按/去重/删除重复/去掉重复/移除重复/清除重复/补全/把/统计/汇总/排序）才切。 */
+    private static final Pattern ANALYSIS_START_WORD = Pattern.compile(
+        "^(?:按|去重|删除重复|去掉重复|移除重复|清除重复|补全|把|统计|汇总|排序)");
+    /** 片段尾部残留分隔符（切分点前的标点/连接词），清理时按长度从长到短尝试。 */
+    private static final List<String> SEPARATOR_TAIL_WORDS = List.of(
+        "然后", "接着", "同时", "并且", "并", "再", "，", "、", "；", ",", ";");
 
     /** 解析用户文本为 ExcelPlan；无法识别时返回 null（由调用方给出兜底提示）。 */
     public ExcelPlan parse(String userId, String text) {
@@ -64,6 +76,12 @@ public final class ExcelPlanParser {
         // 2. 查询类（直接返回文字，不导出文件）
         ExcelOperation query = tryQuery(text);
         if (query != null) return plan(userId, query);
+
+        // 复合任务（多条分析指令串联，如「删除重复订单，补全空白地区」）：先于单操作尝试切分。
+        // 单操作文本不含切分点，仍原样命中单操作（回归不变）；而带切分点的整段文本即便被单操作
+        // 正则懒匹配命中，列名也必然被尾部指令污染，复合切分才是用户本意。
+        ExcelPlan composite = tryComposite(userId, text);
+        if (composite != null) return composite;
 
         // 分析类操作（排序/去重/分组汇总/缺失补全）：放在查询之后、删除行之前
         ExcelOperation analysis = tryAnalysis(text);
@@ -172,6 +190,68 @@ public final class ExcelPlanParser {
             return op("1", ExcelOperationType.DEDUPLICATE, Map.of());
         }
         return null;
+    }
+
+    /**
+     * 复合任务路由：先于单操作尝试，按「分隔符后紧跟分析类操作开头词」安全切分，
+     * 每个片段走既有分析分支（排序/去重/分组汇总/缺失补全），产出线性依赖链（第 i 步依赖第 i-1 步）。
+     * 单操作文本不含切分点，切分不出 ≥2 段时返回 null 交给单操作路由（回归不变）。
+     * 任一条件不满足（含换行的多行文本、任一片段解析不出分析操作、片段数 < 2）→ 返回 null 退回原路由。
+     */
+    private ExcelPlan tryComposite(String userId, String text) {
+        // 多行是表格数据形态，绝不切分
+        if (text.contains("\n")) {
+            return null;
+        }
+        List<String> fragments = splitFragments(text);
+        if (fragments.size() < 2) {
+            return null;
+        }
+        List<ExcelOperation> operations = new ArrayList<>();
+        for (int i = 0; i < fragments.size(); i++) {
+            ExcelOperation fragmentOp = tryAnalysis(fragments.get(i));
+            // 任一片段解析不出分析操作（如含「添加」「生成」）→ 整个复合让位，退回原单操作流程
+            if (fragmentOp == null) {
+                return null;
+            }
+            // 线性依赖链：第 i 步依赖前一步（id 按片段顺序 1、2、3…）
+            operations.add(new ExcelOperation(String.valueOf(i + 1), fragmentOp.type(),
+                fragmentOp.params(), i == 0 ? List.of() : List.of(String.valueOf(i))));
+        }
+        return plan(userId, operations.toArray(new ExcelOperation[0]));
+    }
+
+    /** 按切分点切分文本：分隔符后紧跟操作开头词才切（切在分隔符末尾，残留分隔符由 cleanFragment 清理）。 */
+    private static List<String> splitFragments(String text) {
+        List<String> fragments = new ArrayList<>();
+        Matcher matcher = SPLIT_SEPARATOR.matcher(text);
+        int fragmentStart = 0;
+        while (matcher.find()) {
+            String rest = text.substring(matcher.end()).stripLeading();
+            if (ANALYSIS_START_WORD.matcher(rest).find()) {
+                fragments.add(cleanFragment(text.substring(fragmentStart, matcher.end())));
+                fragmentStart = matcher.end();
+            }
+        }
+        fragments.add(cleanFragment(text.substring(fragmentStart)));
+        return fragments;
+    }
+
+    /** 清理切出的片段：去除首尾空白与尾部残留分隔符（标点/连接词可连续出现）。 */
+    private static String cleanFragment(String fragment) {
+        String cleaned = fragment.strip();
+        boolean stripped;
+        do {
+            stripped = false;
+            for (String separator : SEPARATOR_TAIL_WORDS) {
+                if (cleaned.endsWith(separator)) {
+                    cleaned = cleaned.substring(0, cleaned.length() - separator.length()).strip();
+                    stripped = true;
+                    break;
+                }
+            }
+        } while (stripped);
+        return cleaned;
     }
 
     /** 分组汇总路由：aggregate 默认 SUM；含「占比|百分比」时标记 includeRatio=true。 */

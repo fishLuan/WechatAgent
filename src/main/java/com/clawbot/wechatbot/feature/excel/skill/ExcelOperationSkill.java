@@ -97,7 +97,21 @@ public final class ExcelOperationSkill implements SkillExecutor {
         }
         // 3. 执行：按计划顺序执行，遇到失败立即返回失败
         OperationResult result = executor.execute(plan, table);
-        return toSkillResult(result, table);
+        return toSkillResult(compositeSummary(plan, result), table);
+    }
+
+    /** 复合任务（多步计划）成功时的汇总文案：✅ 已完成 N 步操作（最后一步：<最后一步文案>）。；单操作计划保持原样（回归）。 */
+    private static OperationResult compositeSummary(ExcelPlan plan, OperationResult result) {
+        if (!result.success() || plan.operations().size() <= 1) {
+            return result;
+        }
+        String lastStep = result.text();
+        if (lastStep.startsWith("✅ ")) {
+            lastStep = lastStep.substring("✅ ".length());
+        }
+        return OperationResult.success(
+            "✅ 已完成 " + plan.operations().size() + " 步操作（最后一步：" + lastStep + "）。",
+            result.attachment());
     }
 
     /** 把操作结果转成 SkillResult：失败直接返回；成功且带附件时导出 xlsx 附件。 */
