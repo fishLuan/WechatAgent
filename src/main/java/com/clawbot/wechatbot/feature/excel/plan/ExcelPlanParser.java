@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.feature.excel.plan;
 
 import com.clawbot.wechatbot.feature.excel.ExcelService;
+import com.clawbot.wechatbot.feature.excel.model.ExcelRagKnowledge;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -62,6 +63,13 @@ public final class ExcelPlanParser {
     /** 复合任务切分判定：分隔符后紧跟分析类操作开头词（按/去重/删除重复/去掉重复/移除重复/清除重复/补全/把/统计/汇总/排序）才切。 */
     private static final Pattern ANALYSIS_START_WORD = Pattern.compile(
         "^(?:按|去重|删除重复|去掉重复|移除重复|清除重复|补全|把|统计|汇总|排序)");
+    /** 知识管理指令：添加知识（冒号后可带类别词与内容）/ 查看知识(库) / 删除知识 X。 */
+    private static final Pattern KNOWLEDGE_ADD_CMD = Pattern.compile(
+        "^(?:请|帮我\\s*)*添加知识\\s*[:：]?\\s*(.+)$");
+    private static final Pattern KNOWLEDGE_LIST_CMD = Pattern.compile(
+        "^(?:请|帮我\\s*)*查看知识(?:库)?\\s*$");
+    private static final Pattern KNOWLEDGE_DELETE_CMD = Pattern.compile(
+        "^(?:请|帮我\\s*)*删除知识\\s*(.+?)\\s*$");
     /** 片段尾部残留分隔符（切分点前的标点/连接词），清理时按长度从长到短尝试。 */
     private static final List<String> SEPARATOR_TAIL_WORDS = List.of(
         "然后", "接着", "同时", "并且", "并", "再", "，", "、", "；", ",", ";");
@@ -86,6 +94,10 @@ public final class ExcelPlanParser {
         // 分析类操作（排序/去重/分组汇总/缺失补全）：放在查询之后、删除行之前
         ExcelOperation analysis = tryAnalysis(text);
         if (analysis != null) return plan(userId, analysis);
+
+        // 知识管理指令（必须在「添加行」之前判定：「添加知识：…」会命中添加行前缀正则，避免被当成加行）
+        ExcelPlan knowledge = tryKnowledge(userId, text);
+        if (knowledge != null) return knowledge;
 
         // 3. 删除行
         Matcher rowMatcher = ROW_NUMBER.matcher(text);
@@ -235,6 +247,54 @@ public final class ExcelPlanParser {
         }
         fragments.add(cleanFragment(text.substring(fragmentStart)));
         return fragments;
+    }
+
+    /**
+     * 知识管理路由：
+     * 添加知识 → KNOWLEDGE_ADD（category 映射为四类枚举名，非法类别保留原文交给校验器提示；
+     * content 为「触发词→内容」或「触发词=内容」，由 Handler 解析）；
+     * 查看知识(库) → KNOWLEDGE_LIST；删除知识 X → KNOWLEDGE_DELETE。
+     */
+    private ExcelPlan tryKnowledge(String userId, String text) {
+        Matcher add = KNOWLEDGE_ADD_CMD.matcher(text);
+        if (add.matches()) {
+            String body = add.group(1).trim();
+            int split = firstWhitespaceIndex(body);
+            String categoryWord = split < 0 ? body : body.substring(0, split);
+            String content = split < 0 ? "" : body.substring(split + 1).trim();
+            return plan(userId, op("1", ExcelOperationType.KNOWLEDGE_ADD,
+                Map.of("category", knowledgeCategory(categoryWord), "content", content)));
+        }
+        if (KNOWLEDGE_LIST_CMD.matcher(text).matches()) {
+            return plan(userId, op("1", ExcelOperationType.KNOWLEDGE_LIST, Map.of()));
+        }
+        Matcher delete = KNOWLEDGE_DELETE_CMD.matcher(text);
+        if (delete.matches()) {
+            return plan(userId, op("1", ExcelOperationType.KNOWLEDGE_DELETE,
+                Map.of("keyword", delete.group(1).trim())));
+        }
+        return null;
+    }
+
+    /** 知识类别词 → 枚举名；无法识别的类别保留原文，由校验器给出明确提示。 */
+    private static String knowledgeCategory(String word) {
+        return switch (word) {
+            case "字段映射" -> ExcelRagKnowledge.CATEGORY_FIELD_MAPPING;
+            case "业务规则" -> ExcelRagKnowledge.CATEGORY_BUSINESS_RULE;
+            case "操作示例" -> ExcelRagKnowledge.CATEGORY_OPERATION_EXAMPLE;
+            case "模板" -> ExcelRagKnowledge.CATEGORY_TEMPLATE;
+            default -> word;
+        };
+    }
+
+    /** 首个空白字符下标；无空白返回 -1。 */
+    private static int firstWhitespaceIndex(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            if (Character.isWhitespace(text.charAt(i))) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /** 清理切出的片段：去除首尾空白与尾部残留分隔符（标点/连接词可连续出现）。 */

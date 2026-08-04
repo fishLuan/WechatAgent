@@ -1,7 +1,9 @@
 package com.clawbot.wechatbot.feature.excel.plan;
 
 import com.clawbot.wechatbot.feature.excel.ExcelService;
+import com.clawbot.wechatbot.feature.excel.model.ExcelRagKnowledge;
 import com.clawbot.wechatbot.feature.excel.model.ExcelTable;
+import com.clawbot.wechatbot.feature.excel.service.ExcelRagService;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
@@ -16,7 +18,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -28,6 +33,7 @@ import static org.mockito.Mockito.when;
 class ExcelOperationExecutorTests {
 
     private final ExcelService excelService = mock(ExcelService.class);
+    private final ExcelRagService ragService = mock(ExcelRagService.class);
     private final ExcelOperationExecutor executor = new ExcelOperationExecutor(List.of(
         new CreateTableHandler(excelService),
         new AddRowHandler(excelService),
@@ -39,7 +45,10 @@ class ExcelOperationExecutorTests {
         new GroupSummaryHandler(excelService),
         new FillMissingHandler(excelService),
         new RollbackHandler(excelService),
-        new VersionHistoryHandler(excelService)));
+        new VersionHistoryHandler(excelService),
+        new KnowledgeAddHandler(ragService),
+        new KnowledgeListHandler(ragService),
+        new KnowledgeDeleteHandler(ragService)));
 
     private ExcelPlan plan(ExcelOperation... operations) {
         return new ExcelPlan("user-1", List.of(operations));
@@ -91,6 +100,23 @@ class ExcelOperationExecutorTests {
         assertTrue(result.success());
         assertTrue(result.text().contains("年龄列"));
         assertNull(result.attachment());
+        verify(excelService, never()).save(table);
+    }
+
+    /** 添加知识：解析「触发词→标准列名」写入知识库，回复纯文字、不导出附件。 */
+    @Test
+    void knowledgeAddHandlerWritesToRagServiceWithoutAttachment() throws Exception {
+        ExcelTable table = existingTable();
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.KNOWLEDGE_ADD,
+                Map.of("category", "FIELD_MAPPING", "content", "营收→营业收入"))), table);
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已添加知识"));
+        assertTrue(result.text().contains("字段映射"));
+        assertNull(result.attachment());
+        verify(ragService).add(eq("FIELD_MAPPING"), anyList(), eq("营业收入"), isNull(), isNull());
         verify(excelService, never()).save(table);
     }
 

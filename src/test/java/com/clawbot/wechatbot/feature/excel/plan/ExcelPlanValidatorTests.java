@@ -290,6 +290,56 @@ class ExcelPlanValidatorTests {
     }
 
     // ============================
+    // 知识管理指令校验
+    // ============================
+    @Test
+    void knowledgeAddWithUnknownCategoryReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.KNOWLEDGE_ADD,
+            Map.of("category", "随便", "content", "营收→营业收入")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("随便"));
+        assertTrue(error.get().contains("FIELD_MAPPING"));
+    }
+
+    @Test
+    void knowledgeAddWithBlankContentReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.KNOWLEDGE_ADD,
+            Map.of("category", "FIELD_MAPPING", "content", "  ")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("content"));
+    }
+
+    @Test
+    void validKnowledgeAddPasses() {
+        ExcelPlan plan = plan(op(ExcelOperationType.KNOWLEDGE_ADD,
+            Map.of("category", "FIELD_MAPPING", "content", "营收→营业收入")));
+        assertEquals(Optional.empty(), validator.validate(plan, existingTable()));
+    }
+
+    /** 知识管理操作不依赖表格状态：空表也能查看知识。 */
+    @Test
+    void knowledgeListPassesOnEmptyTable() {
+        ExcelPlan plan = plan(op(ExcelOperationType.KNOWLEDGE_LIST, Map.of()));
+        assertEquals(Optional.empty(), validator.validate(plan, new ExcelTable("user-1", "空表")));
+    }
+
+    @Test
+    void knowledgeDeleteWithBlankKeywordReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.KNOWLEDGE_DELETE, Map.of("keyword", "")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("keyword"));
+    }
+
+    @Test
+    void validKnowledgeDeletePasses() {
+        ExcelPlan plan = plan(op(ExcelOperationType.KNOWLEDGE_DELETE, Map.of("keyword", "营收")));
+        assertEquals(Optional.empty(), validator.validate(plan, existingTable()));
+    }
+
+    // ============================
     // 分析操作在空表上要求先生成表格
     // ============================
     @Test

@@ -289,6 +289,66 @@ class ExcelPlanParserTests {
     }
 
     // ============================
+    // 知识管理指令路由
+    // ============================
+    @Test
+    void knowledgeAddFieldMappingRoutesToKnowledgeAdd() {
+        ExcelOperation op = parseSingle("添加知识：字段映射 营收→营业收入");
+        assertEquals(ExcelOperationType.KNOWLEDGE_ADD, op.type());
+        assertEquals("FIELD_MAPPING", op.param("category"));
+        assertEquals("营收→营业收入", op.param("content"));
+    }
+
+    @Test
+    void knowledgeAddBusinessRuleRoutesToKnowledgeAdd() {
+        ExcelOperation op = parseSingle("添加知识：业务规则 毛利润=营业收入-营业成本");
+        assertEquals(ExcelOperationType.KNOWLEDGE_ADD, op.type());
+        assertEquals("BUSINESS_RULE", op.param("category"));
+        assertEquals("毛利润=营业收入-营业成本", op.param("content"));
+    }
+
+    @Test
+    void knowledgeAddWithHelpPrefixAndNoColon() {
+        ExcelOperation op = parseSingle("帮我添加知识 操作示例 趋势→折线图");
+        assertEquals(ExcelOperationType.KNOWLEDGE_ADD, op.type());
+        assertEquals("OPERATION_EXAMPLE", op.param("category"));
+        assertEquals("趋势→折线图", op.param("content"));
+    }
+
+    @Test
+    void knowledgeListPhrasesRouteToKnowledgeList() {
+        assertEquals(ExcelOperationType.KNOWLEDGE_LIST, parseSingle("查看知识").type());
+        assertEquals(ExcelOperationType.KNOWLEDGE_LIST, parseSingle("查看知识库").type());
+        assertEquals(ExcelOperationType.KNOWLEDGE_LIST, parseSingle("请查看知识").type());
+    }
+
+    @Test
+    void knowledgeDeleteRoutesToKnowledgeDelete() {
+        ExcelOperation op = parseSingle("删除知识 营收");
+        assertEquals(ExcelOperationType.KNOWLEDGE_DELETE, op.type());
+        assertEquals("营收", op.param("keyword"));
+    }
+
+    /** 非法类别词保留原文交给校验器提示，不能被当作添加行或识别失败。 */
+    @Test
+    void knowledgeAddWithUnknownCategoryKeepsRawWord() {
+        ExcelOperation op = parseSingle("添加知识：随便 营收→营业收入");
+        assertEquals(ExcelOperationType.KNOWLEDGE_ADD, op.type());
+        assertEquals("随便", op.param("category"));
+        assertEquals("营收→营业收入", op.param("content"));
+    }
+
+    /** 知识路由不应改变既有指令（添加行/删除行/去重/查询）的路由结果。 */
+    @Test
+    void existingRoutesUnchangedByKnowledgeRouting() {
+        assertEquals(ExcelOperationType.ADD_ROW, parseSingle("添加一行：张三,25,北京").type());
+        assertEquals(ExcelOperationType.DELETE_ROW, parseSingle("删除第2行").type());
+        assertEquals(ExcelOperationType.DEDUPLICATE, parseSingle("删除重复订单").type());
+        assertEquals(ExcelOperationType.QUERY, parseSingle("统计人数的多少行").type());
+        assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("查看版本历史").type());
+    }
+
+    // ============================
     // 版本历史与无法识别
     // ============================
     @Test

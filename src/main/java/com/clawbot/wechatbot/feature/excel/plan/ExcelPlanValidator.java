@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.feature.excel.plan;
 
 import com.clawbot.wechatbot.feature.excel.ExcelService;
+import com.clawbot.wechatbot.feature.excel.model.ExcelRagKnowledge;
 import com.clawbot.wechatbot.feature.excel.model.ExcelTable;
 
 import java.util.Map;
@@ -26,7 +27,10 @@ public final class ExcelPlanValidator {
         Map.entry(ExcelOperationType.GROUP_SUMMARY, Set.of("groupColumn", "valueColumn", "aggregate", "includeRatio")),
         Map.entry(ExcelOperationType.FILL_MISSING, Set.of("column", "value")),
         Map.entry(ExcelOperationType.ROLLBACK, Set.of()),
-        Map.entry(ExcelOperationType.VERSION_HISTORY, Set.of()));
+        Map.entry(ExcelOperationType.VERSION_HISTORY, Set.of()),
+        Map.entry(ExcelOperationType.KNOWLEDGE_ADD, Set.of("category", "content")),
+        Map.entry(ExcelOperationType.KNOWLEDGE_LIST, Set.of()),
+        Map.entry(ExcelOperationType.KNOWLEDGE_DELETE, Set.of("keyword")));
 
     /** 每种操作必填的参数 key。 */
     private static final Map<ExcelOperationType, Set<String>> REQUIRED_PARAM_KEYS = Map.ofEntries(
@@ -40,7 +44,10 @@ public final class ExcelPlanValidator {
         Map.entry(ExcelOperationType.GROUP_SUMMARY, Set.of("groupColumn", "aggregate")),
         Map.entry(ExcelOperationType.FILL_MISSING, Set.of("column", "value")),
         Map.entry(ExcelOperationType.ROLLBACK, Set.of()),
-        Map.entry(ExcelOperationType.VERSION_HISTORY, Set.of()));
+        Map.entry(ExcelOperationType.VERSION_HISTORY, Set.of()),
+        Map.entry(ExcelOperationType.KNOWLEDGE_ADD, Set.of("category", "content")),
+        Map.entry(ExcelOperationType.KNOWLEDGE_LIST, Set.of()),
+        Map.entry(ExcelOperationType.KNOWLEDGE_DELETE, Set.of("keyword")));
 
     private final ExcelService excelService;
 
@@ -86,6 +93,9 @@ public final class ExcelPlanValidator {
             case GROUP_SUMMARY -> validateGroupSummary(operation, table);
             case FILL_MISSING -> validateFillMissing(operation, table);
             case VERSION_HISTORY -> Optional.empty();
+            case KNOWLEDGE_ADD -> validateKnowledgeAdd(operation);
+            case KNOWLEDGE_LIST -> Optional.empty();
+            case KNOWLEDGE_DELETE -> validateKnowledgeDelete(operation);
         };
     }
 
@@ -216,6 +226,29 @@ public final class ExcelPlanValidator {
         if (ExcelService.findColumnIndex(table.getHeaders(), column) < 0) {
             return Optional.of("❌ 找不到列「" + column + "」，现有列："
                 + String.join("、", table.getHeaders()));
+        }
+        return Optional.empty();
+    }
+
+    /** 添加知识校验：content 非空（示例见文案）；category 必须是四类之一。 */
+    private Optional<String> validateKnowledgeAdd(ExcelOperation operation) {
+        if (operation.param("content") == null || operation.param("content").isBlank()) {
+            return Optional.of(
+                "非法计划：添加知识操作缺少参数「content」（示例：添加知识：字段映射 营收→营业收入）。");
+        }
+        String category = operation.param("category");
+        if (category == null || !ExcelRagKnowledge.CATEGORIES.contains(category)) {
+            return Optional.of("非法计划：知识类别「" + category + "」无效，应为 "
+                + String.join("、", ExcelRagKnowledge.CATEGORIES) + "。");
+        }
+        return Optional.empty();
+    }
+
+    /** 删除知识校验：keyword 非空。 */
+    private Optional<String> validateKnowledgeDelete(ExcelOperation operation) {
+        if (operation.param("keyword") == null || operation.param("keyword").isBlank()) {
+            return Optional.of(
+                "非法计划：删除知识操作缺少参数「keyword」（示例：删除知识 营收）。");
         }
         return Optional.empty();
     }

@@ -1,8 +1,10 @@
 package com.clawbot.wechatbot.feature.excel.skill;
 
 import com.clawbot.wechatbot.feature.excel.ExcelService;
+import com.clawbot.wechatbot.feature.excel.model.ExcelRagKnowledge;
 import com.clawbot.wechatbot.feature.excel.model.ExcelTable;
 import com.clawbot.wechatbot.feature.excel.model.ExcelTableVersion;
+import com.clawbot.wechatbot.feature.excel.service.ExcelRagService;
 import com.clawbot.wechatbot.skills.SkillDefinition;
 import com.clawbot.wechatbot.skills.SkillRequest;
 import com.clawbot.wechatbot.skills.SkillResult;
@@ -16,8 +18,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -531,5 +535,148 @@ class ExcelOperationSkillTests {
         assertTrue(result.text().contains("去重"));
         assertTrue(result.text().contains("汇总"));
         assertTrue(result.text().contains("补全"));
+    }
+
+    // ============================
+    // 知识管理指令端到端（RAG 版双参数构造器）
+    // ============================
+    @Test
+    void knowledgeAddInstructionEndToEnd() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(existingTable());
+        ExcelRagService ragService = mock(ExcelRagService.class);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, ragService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "添加知识：字段映射 营业额→营业收入", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已添加知识"));
+        assertTrue(result.text().contains("字段映射"));
+        assertTrue(result.text().contains("营业额→营业收入"));
+        // 纯文字回复，不导出附件、不保存表格
+        assertTrue(result.attachments().isEmpty());
+        verify(ragService).add(eq("FIELD_MAPPING"), anyList(), eq("营业收入"), isNull(), isNull());
+        verify(excelService, never()).save(any());
+    }
+
+    @Test
+    void knowledgeListInstructionEndToEnd() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(existingTable());
+        ExcelRagService ragService = mock(ExcelRagService.class);
+        ExcelRagKnowledge rule = new ExcelRagKnowledge("BUSINESS_RULE",
+            List.of("毛利", "毛利润"), null, "毛利润 = 营业收入 - 营业成本", null);
+        when(ragService.list(10)).thenReturn(List.of(rule));
+        when(ragService.count()).thenReturn(1L);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, ragService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "查看知识", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("共 1 条"));
+        assertTrue(result.text().contains("毛利润"));
+        assertTrue(result.attachments().isEmpty());
+    }
+
+    @Test
+    void knowledgeDeleteInstructionEndToEnd() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(existingTable());
+        ExcelRagService ragService = mock(ExcelRagService.class);
+        when(ragService.deleteByKeyword("营收")).thenReturn(true);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, ragService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "删除知识 营收", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已删除"));
+        verify(ragService).deleteByKeyword("营收");
+    }
+
+    @Test
+    void knowledgeDeleteWithoutMatchReturnsFailure() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(existingTable());
+        ExcelRagService ragService = mock(ExcelRagService.class);
+        when(ragService.deleteByKeyword("不存在")).thenReturn(false);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, ragService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "删除知识 不存在", "", "", ""));
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("未找到"));
+    }
+
+    // ============================
+    // 知识库别名解析端到端
+    // ============================
+    /** 表内模糊匹配命中不了的别名（营业额 → 营业收入）：按知识库替换列名并在回复中标注。 */
+    @Test
+    void aliasResolutionEndToEndWithRagService() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        table.setHeaders(List.of("营业收入", "地区"));
+        table.setRows(new ArrayList<>(List.of(List.of("100", "北京"))));
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.queryColumn(eq(table), eq("营业收入"), eq(ExcelService.QueryType.SUM)))
+            .thenReturn("📊 营业收入列的合计：100.00（基于 1 个数值）");
+        ExcelRagService ragService = mock(ExcelRagService.class);
+        when(ragService.resolveColumnAlias("营业额")).thenReturn("营业收入");
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, ragService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "统计营业额", "", "", ""));
+
+        assertTrue(result.success());
+        // 回复含知识库映射标注，且查询按真实列名执行
+        assertTrue(result.text().contains("📚 已按知识库将「营业额」映射为「营业收入」"));
+        assertTrue(result.text().contains("营业收入列的合计"));
+        verify(excelService).queryColumn(eq(table), eq("营业收入"), eq(ExcelService.QueryType.SUM));
+    }
+
+    /** 命中的业务规则在成功回复前加注（知识库标注）。 */
+    @Test
+    void ruleKnowledgeIsAnnotatedOnSuccessReply() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        table.setHeaders(List.of("当前库存", "安全库存"));
+        table.setRows(new ArrayList<>(List.of(List.of("10", "20"))));
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.queryColumn(eq(table), eq("当前库存"), eq(ExcelService.QueryType.MAX)))
+            .thenReturn("📊 当前库存列的最大值：10（基于 1 个数值）");
+        ExcelRagService ragService = mock(ExcelRagService.class);
+        ExcelRagKnowledge rule = new ExcelRagKnowledge("BUSINESS_RULE",
+            List.of("库存", "预警"), null, "库存预警：当前库存小于安全库存时标红", null);
+        when(ragService.findRules(anyString())).thenReturn(List.of(rule));
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, ragService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "查询当前库存的最大值", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("📚 知识库规则：库存预警：当前库存小于安全库存时标红"));
+        assertTrue(result.text().contains("当前库存列的最大值"));
+    }
+
+    /** 单参数构造器（无 RAG）：别名解析跳过，查询仍按原别名执行（回归）。 */
+    @Test
+    void singleArgConstructorWithoutRagKeepsBehaviorUnchanged() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.queryColumn(any(), eq("营业额"), any()))
+            .thenReturn("❌ 找不到列「营业额」，现有列：姓名、年龄");
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "统计营业额", "", "", ""));
+
+        // 无知识库：不解析别名，按原别名执行查询（找不到列是既有行为）
+        assertTrue(result.text().contains("找不到列"));
+        verify(excelService).queryColumn(eq(table), eq("营业额"), eq(ExcelService.QueryType.SUM));
     }
 }
