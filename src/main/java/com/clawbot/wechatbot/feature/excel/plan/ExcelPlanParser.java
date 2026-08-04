@@ -17,6 +17,7 @@ import java.util.regex.Pattern;
  * 另新增复合任务路由：带切分点的多条分析指令（如「删除重复订单，补全空白地区」）先于单操作切分为
  * 线性依赖链；不含切分点的单操作文本行为不变。
  * 另新增工作簿管理路由：新建/列表/选择/重命名/删除/复制表格（多工作簿管理，不需要活动表）。
+ * 另新增操作日志（AUDIT_LIST）与版本对比（VERSION_DIFF）路由。
  * 解析器只产出计划，不执行任何修改。
  */
 public final class ExcelPlanParser {
@@ -36,6 +37,12 @@ public final class ExcelPlanParser {
     /** 版本历史指令：版本历史/查看版本/历史版本/查看版本历史，前缀「请/帮我」可任意组合与重复。 */
     private static final Pattern VERSION_HISTORY_CMD = Pattern.compile(
         "^(?:(?:请|帮我)\\s*)*(?:版本历史|历史版本|查看版本(?:历史)?)(?:记录|列表)?\\s*$");
+    /** 操作日志指令：查看操作日志/操作历史（按用户记录，不需要活动表）。 */
+    private static final Pattern AUDIT_LIST_CMD = Pattern.compile(
+        "^(?:(?:请|帮我)\\s*)*(?:查看操作日志|操作历史)\\s*$");
+    /** 版本对比指令：版本对比/对比上一版(本)（取最新版本快照与当前表对比）。 */
+    private static final Pattern VERSION_DIFF_CMD = Pattern.compile(
+        "^(?:(?:请|帮我)\\s*)*(?:版本对比|对比上一版(?:本)?)\\s*$");
     /** 排序指令：按X排序/按X升序·降序/按X从小到大·从大到小/把表格按X倒序。 */
     private static final Pattern SORT_CMD = Pattern.compile(
         "^(?:请|帮我\\s*)*(?:把表格)?\\s*按\\s*(.+?)\\s*"
@@ -155,6 +162,14 @@ public final class ExcelPlanParser {
         // 7. 查看版本历史
         if (VERSION_HISTORY_CMD.matcher(text).matches()) {
             return plan(userId, op("1", ExcelOperationType.VERSION_HISTORY, Map.of()));
+        }
+
+        // 8. 操作日志 / 版本对比（纯查询类，放在最后避免与既有指令混淆）
+        if (AUDIT_LIST_CMD.matcher(text).matches()) {
+            return plan(userId, op("1", ExcelOperationType.AUDIT_LIST, Map.of()));
+        }
+        if (VERSION_DIFF_CMD.matcher(text).matches()) {
+            return plan(userId, op("1", ExcelOperationType.VERSION_DIFF, Map.of()));
         }
 
         return null;

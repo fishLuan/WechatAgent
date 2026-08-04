@@ -45,6 +45,13 @@ import java.util.Set;
 public class ExcelService {
 
     private static final List<String> DELIMITERS = List.of("\t", "|", ",", ";", "，");
+    /** 表格行数上限：生成/导入/添加行超限一律拒绝（统一提示「表格超出上限」）。 */
+    public static final int MAX_TABLE_ROWS = 5000;
+    /** 表格列数上限：生成/导入超限一律拒绝（统一提示「表格超出上限」）。 */
+    public static final int MAX_TABLE_COLUMNS = 100;
+    /** 表格超出上限的统一中文提示：生成/导入/添加行共用。 */
+    public static final String TABLE_LIMIT_MESSAGE =
+        "表格超出上限（最多 5000 行 / 100 列），请拆分后再试。";
     /** POI 列宽上限（字符单位 * 256）。 */
     private static final int MAX_COLUMN_WIDTH = 255 * 256;
     /** 无歧义日期格式（导出时按日期单元格写入，其他格式一律按文本）。 */
@@ -319,6 +326,51 @@ public class ExcelService {
         }
         return versionRepository.findByTableIdOrderByCreatedAtDesc(table.getId())
             .stream().limit(limit).toList();
+    }
+
+    /**
+     * 版本对比：取该表最新版本快照与当前表对比，输出中文摘要（表头是否有变化 +
+     * 新增/删除/修改行数）。没有版本快照时返回「还没有可对比的版本」。
+     * 行以单元格序列（整行内容）为键做集合差：新增=当前有而版本无，删除=版本有而当前无；
+     * 修改=两表同行号但内容不同的位置数（简化实现，与新增/删除可叠加统计）。
+     */
+    public String diffVersions(ExcelTable table) {
+        if (table == null || table.getId() == null || table.getId().isBlank()) {
+            return "还没有可对比的版本";
+        }
+        List<ExcelTableVersion> versions =
+            versionRepository.findByTableIdOrderByCreatedAtDesc(table.getId());
+        if (versions.isEmpty()) {
+            return "还没有可对比的版本";
+        }
+        ExcelTableVersion latest = versions.get(0);
+        List<List<String>> versionRows = latest.getRows();
+        Set<List<String>> currentKeys = new HashSet<>(table.getRows());
+        Set<List<String>> versionKeys = new HashSet<>(versionRows);
+        int added = 0;
+        for (List<String> row : currentKeys) {
+            if (!versionKeys.contains(row)) {
+                added++;
+            }
+        }
+        int removed = 0;
+        for (List<String> row : versionKeys) {
+            if (!currentKeys.contains(row)) {
+                removed++;
+            }
+        }
+        // 修改：两表同行号但内容不同的位置数（只比较两表都有的行号区间，简化实现）
+        int modified = 0;
+        int compareCount = Math.min(table.getRows().size(), versionRows.size());
+        for (int i = 0; i < compareCount; i++) {
+            if (!table.getRows().get(i).equals(versionRows.get(i))) {
+                modified++;
+            }
+        }
+        boolean headersChanged = !table.getHeaders().equals(latest.getHeaders());
+        return "📊 与上一版本对比：" + (headersChanged ? "表头有变化" : "表头无变化")
+            + "；新增 " + added + " 行 / 删除 " + removed
+            + " 行 / 修改 " + modified + " 行。";
     }
 
     /* ========== 文本解析 ========== */

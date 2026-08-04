@@ -26,6 +26,11 @@ public final class CreateTableHandler implements ExcelOperationHandler {
             return OperationResult.failure(
                 "没有可用的表格数据，请提供首行为表头、每行一条的表格内容。");
         }
+        // 行列数上限：超限直接失败（在快照/落库之前拦截，不产生任何变更）
+        if (parsed.headers().size() > ExcelService.MAX_TABLE_COLUMNS
+            || parsed.rows().size() > ExcelService.MAX_TABLE_ROWS) {
+            return OperationResult.failure(ExcelService.TABLE_LIMIT_MESSAGE);
+        }
         // 直接使用传入的表格实例（skill 已 loadOrCreate），避免二次加载出新的实例
         // 导致调用方读取附件描述时拿到旧表头（0列×0行）
         ExcelTable loaded = table;

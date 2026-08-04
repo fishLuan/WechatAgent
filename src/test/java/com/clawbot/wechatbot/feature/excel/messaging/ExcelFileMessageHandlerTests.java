@@ -48,6 +48,102 @@ class ExcelFileMessageHandlerTests {
         assertFalse(handler.canHandle(xlsxMessage("笔记.txt", "1024")));
     }
 
+    /** xlsm/xls 也被本处理器接收（canHandle 命中），由 handle 给出明确拒绝引导。 */
+    @Test
+    void canHandleXlsmAndXlsFileMessage() {
+        ExcelFileMessageHandler handler = new ExcelFileMessageHandler(excelService);
+        assertTrue(handler.canHandle(xlsxMessage("宏文件.xlsm", "1024")));
+        assertTrue(handler.canHandle(xlsxMessage("DATA.XLSM", "1024")));
+        assertTrue(handler.canHandle(xlsxMessage("旧数据.xls", "1024")));
+        assertTrue(handler.canHandle(xlsxMessage("OLD.XLS", "1024")));
+    }
+
+    // ============================
+    // xlsm / xls 明确拒绝（不下载、不解析）
+    // ============================
+    @Test
+    void handleRejectsXlsmFileWithGuide() throws Exception {
+        ILinkClient client = mock(ILinkClient.class);
+
+        ExcelFileMessageHandler handler = new ExcelFileMessageHandler(excelService);
+        handler.handle(client, xlsxMessage("宏文件.xlsm", "1024"));
+
+        assertLastReplyContains(client, "暂不支持含宏的 xlsm 文件");
+        assertLastReplyContains(client, "另存为 .xlsx");
+        // 拒绝时不下载、不落库
+        verify(client, never()).downloadFileFromMessageItem(any());
+        verify(excelService, never()).save(any());
+    }
+
+    @Test
+    void handleRejectsXlsFileWithGuide() throws Exception {
+        ILinkClient client = mock(ILinkClient.class);
+
+        ExcelFileMessageHandler handler = new ExcelFileMessageHandler(excelService);
+        handler.handle(client, xlsxMessage("旧数据.xls", "1024"));
+
+        assertLastReplyContains(client, "暂不支持旧版 .xls 格式");
+        assertLastReplyContains(client, "另存为 .xlsx");
+        verify(client, never()).downloadFileFromMessageItem(any());
+        verify(excelService, never()).save(any());
+    }
+
+    // ============================
+    // 工作表数量上限 / 行列数上限
+    // ============================
+    @Test
+    void handleRejectsTooManySheets() throws Exception {
+        ILinkClient client = mock(ILinkClient.class);
+        byte[] bytes = xlsxBytesWithSheets(11);
+        when(client.downloadFileFromMessageItem(any(MessageItem.class))).thenReturn(bytes);
+
+        ExcelFileMessageHandler handler = new ExcelFileMessageHandler(excelService);
+        handler.handle(client, xlsxMessage("多表.xlsx", String.valueOf(bytes.length)));
+
+        assertLastReplyContains(client, "过多工作表");
+        assertLastReplyContains(client, "超过 10 个");
+        verify(excelService, never()).save(any());
+        verify(excelService, never()).createWorkbook(anyString(), anyString());
+    }
+
+    @Test
+    void handleRejectsImportOverRowLimit() throws Exception {
+        ILinkClient client = mock(ILinkClient.class);
+        List<List<String>> rows = new java.util.ArrayList<>();
+        for (int i = 0; i <= ExcelService.MAX_TABLE_ROWS; i++) {
+            rows.add(List.of("张" + i, "25"));
+        }
+        byte[] bytes = xlsxBytes(List.of("姓名", "年龄"), rows);
+        when(client.downloadFileFromMessageItem(any(MessageItem.class))).thenReturn(bytes);
+
+        ExcelFileMessageHandler handler = new ExcelFileMessageHandler(excelService);
+        handler.handle(client, xlsxMessage("大表.xlsx", String.valueOf(bytes.length)));
+
+        assertLastReplyContains(client, "表格超出上限");
+        assertLastReplyContains(client, "5000 行");
+        verify(excelService, never()).save(any());
+        verify(excelService, never()).createWorkbook(anyString(), anyString());
+    }
+
+    @Test
+    void handleRejectsImportOverColumnLimit() throws Exception {
+        ILinkClient client = mock(ILinkClient.class);
+        List<String> headers = new java.util.ArrayList<>();
+        for (int i = 0; i <= ExcelService.MAX_TABLE_COLUMNS; i++) {
+            headers.add("列" + i);
+        }
+        byte[] bytes = xlsxBytes(headers, List.of(List.of("张")));
+        when(client.downloadFileFromMessageItem(any(MessageItem.class))).thenReturn(bytes);
+
+        ExcelFileMessageHandler handler = new ExcelFileMessageHandler(excelService);
+        handler.handle(client, xlsxMessage("宽表.xlsx", String.valueOf(bytes.length)));
+
+        assertLastReplyContains(client, "表格超出上限");
+        assertLastReplyContains(client, "100 列");
+        verify(excelService, never()).save(any());
+        verify(excelService, never()).createWorkbook(anyString(), anyString());
+    }
+
     @Test
     void handleImportsWorkbookIntoUserTable() throws Exception {
         ExcelTable table = new ExcelTable("wechat-user", "旧表");
@@ -235,6 +331,19 @@ class ExcelFileMessageHandlerTests {
         item.setFile_item(fileItem);
         message.setItem_list(List.of(item));
         return message;
+    }
+
+    /** 用 POI 生成一份含指定数量工作表的 .xlsx 文件内容（每个工作表只有表头行）。 */
+    private byte[] xlsxBytesWithSheets(int sheetCount) throws IOException {
+        try (XSSFWorkbook workbook = new XSSFWorkbook();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            for (int s = 0; s < sheetCount; s++) {
+                Sheet sheet = workbook.createSheet("Sheet" + (s + 1));
+                sheet.createRow(0).createCell(0).setCellValue("姓名");
+            }
+            workbook.write(out);
+            return out.toByteArray();
+        }
     }
 
     /** 用 POI 生成一份真实的 .xlsx 文件内容。 */

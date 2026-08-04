@@ -1,9 +1,11 @@
 package com.clawbot.wechatbot.feature.excel.skill;
 
 import com.clawbot.wechatbot.feature.excel.ExcelService;
+import com.clawbot.wechatbot.feature.excel.model.ExcelAuditLog;
 import com.clawbot.wechatbot.feature.excel.model.ExcelRagKnowledge;
 import com.clawbot.wechatbot.feature.excel.model.ExcelTable;
 import com.clawbot.wechatbot.feature.excel.model.ExcelTableVersion;
+import com.clawbot.wechatbot.feature.excel.service.ExcelAuditService;
 import com.clawbot.wechatbot.feature.excel.service.ExcelRagService;
 import com.clawbot.wechatbot.skills.SkillDefinition;
 import com.clawbot.wechatbot.skills.SkillRequest;
@@ -20,6 +22,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
@@ -758,5 +761,256 @@ class ExcelOperationSkillTests {
         assertEquals(List.of("姓名", "城市"), active[0].getHeaders());
         assertEquals(List.of(List.of("张三", "北京")), active[0].getRows());
         verify(excelService, atLeastOnce()).save(active[0]);
+    }
+
+    // ============================
+    // 审计日志：成功/失败都记录、操作类型拼接、null 审计不报错
+    // ============================
+    @Test
+    void successfulOperationRecordsAuditLog() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = new ExcelTable("user-1", "空表");
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelAuditService auditService = mock(ExcelAuditService.class);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, null, auditService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "生成表格：姓名,城市", "", "", ""));
+
+        assertTrue(result.success());
+        // 成功也记录：operation 为操作类型名，success=true，detail 为结果文案
+        verify(auditService).record(eq("user-1"), isNull(), eq("CREATE_TABLE"),
+            eq(true), anyString());
+    }
+
+    @Test
+    void failedOperationRecordsAuditLog() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        table.setRows(fullRows(ExcelService.MAX_TABLE_ROWS));
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        ExcelAuditService auditService = mock(ExcelAuditService.class);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, null, auditService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "添加一行：王五,35", "", "", ""));
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("表格超出上限"));
+        // 失败也记录：success=false
+        verify(auditService).record(eq("user-1"), isNull(), eq("ADD_ROW"),
+            eq(false), anyString());
+    }
+
+    @Test
+    void compositeOperationRecordsJoinedAuditOperation() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        table.setHeaders(List.of("地区", "销售额"));
+        table.setRows(new ArrayList<>(List.of(
+            List.of("北京", "100"), List.of("北京", "100"), List.of("上海", "200"))));
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelAuditService auditService = mock(ExcelAuditService.class);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, null, auditService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "删除重复订单，然后按地区汇总销售额", "", "", ""));
+
+        assertTrue(result.success());
+        // 复合计划：操作类型用 + 拼接
+        verify(auditService).record(eq("user-1"), isNull(),
+            eq("DEDUPLICATE+GROUP_SUMMARY"), eq(true), anyString());
+    }
+
+    @Test
+    void exceptionPathStillRecordsAuditFailure() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = new ExcelTable("user-1", "空表");
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        when(excelService.toXlsx(any())).thenThrow(
+            new IllegalArgumentException("❌ 公式存在错误，已取消导出。"));
+        ExcelAuditService auditService = mock(ExcelAuditService.class);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, null, auditService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "生成表格：姓名,数值\n张三,=1/0", "", "", ""));
+
+        assertFalse(result.success());
+        // 异常路径（如公式错误）也必须写入审计，success=false
+        verify(auditService).record(eq("user-1"), isNull(),
+            eq("CREATE_TABLE"), eq(false), contains("公式存在错误"));
+    }
+
+    @Test
+    void nullAuditServiceDoesNotBreakExecution() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = new ExcelTable("user-1", "空表");
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "生成表格：姓名,城市", "", "", ""));
+
+        // 单参数构造器（audit 为 null）：执行正常，不写审计
+        assertTrue(result.success());
+    }
+
+    // ============================
+    // 操作日志指令（AUDIT_LIST）
+    // ============================
+    @Test
+    void auditListInstructionEndToEnd() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelAuditService auditService = mock(ExcelAuditService.class);
+        ExcelAuditLog log = new ExcelAuditLog("user-1", "t1", "SORT", true, "✅ 已按年龄排序。");
+        when(auditService.list("user-1", 10)).thenReturn(List.of(log));
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, null, auditService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "查看操作日志", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("最近 1 条操作记录"));
+        assertTrue(result.text().contains("排序"));
+        assertTrue(result.text().contains("成功"));
+        // 操作日志不需要活动表
+        verify(excelService, never()).getActiveWorkbook(anyString());
+    }
+
+    @Test
+    void auditListWithNoLogsReturnsHint() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelAuditService auditService = mock(ExcelAuditService.class);
+        when(auditService.list("user-1", 10)).thenReturn(List.of());
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, null, auditService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "操作历史", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("还没有操作记录"));
+    }
+
+    @Test
+    void auditListWithoutAuditServiceFailsGracefully() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "查看操作日志", "", "", ""));
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("操作日志服务不可用"));
+    }
+
+    // ============================
+    // 行列数上限
+    // ============================
+    @Test
+    void createTableOverRowLimitRejectedWithoutPersist() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = new ExcelTable("user-1", "空表");
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        StringBuilder instruction = new StringBuilder("生成表格：姓名,年龄\n");
+        for (int i = 0; i <= ExcelService.MAX_TABLE_ROWS; i++) {
+            instruction.append("张").append(i).append(",25\n");
+        }
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", instruction.toString(), "", "", ""));
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("表格超出上限"));
+        // 超限不落库：不保存、不产生版本快照
+        verify(excelService, never()).save(any());
+        verify(excelService, never()).snapshotVersion(any(), anyString());
+    }
+
+    @Test
+    void createTableOverColumnLimitRejectedWithoutPersist() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = new ExcelTable("user-1", "空表");
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        StringBuilder headers = new StringBuilder();
+        for (int i = 0; i <= ExcelService.MAX_TABLE_COLUMNS; i++) {
+            if (i > 0) headers.append(",");
+            headers.append("列").append(i);
+        }
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "生成表格：" + headers + "\n张,1", "", "", ""));
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("表格超出上限"));
+        verify(excelService, never()).save(any());
+        verify(excelService, never()).snapshotVersion(any(), anyString());
+    }
+
+    @Test
+    void addRowAtRowLimitRejectedWithoutPersist() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        table.setRows(fullRows(ExcelService.MAX_TABLE_ROWS));
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "添加一行：王五,35", "", "", ""));
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("表格超出上限"));
+        // 超限不落库、不产生版本快照
+        verify(excelService, never()).save(any());
+        verify(excelService, never()).snapshotVersion(any(), anyString());
+    }
+
+    // ============================
+    // 版本对比（VERSION_DIFF）
+    // ============================
+    @Test
+    void versionDiffInstructionEndToEnd() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        when(excelService.diffVersions(table)).thenReturn(
+            "📊 与上一版本对比：表头无变化；新增 1 行 / 删除 0 行 / 修改 0 行。");
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "版本对比", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("与上一版本对比"));
+        assertTrue(result.text().contains("新增 1 行"));
+        verify(excelService).diffVersions(table);
+    }
+
+    @Test
+    void versionDiffWithoutVersionsReturnsHint() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        when(excelService.diffVersions(table)).thenReturn("还没有可对比的版本");
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "对比上一版", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("还没有可对比的版本"));
+    }
+
+    /** 生成指定行数的行数据（姓名,年龄）。 */
+    private static List<List<String>> fullRows(int count) {
+        List<List<String>> rows = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            rows.add(List.of("姓名" + i, "25"));
+        }
+        return rows;
     }
 }

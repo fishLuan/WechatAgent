@@ -31,6 +31,9 @@ import com.clawbot.wechatbot.feature.excel.plan.WorkbookDeleteHandler;
 import com.clawbot.wechatbot.feature.excel.plan.WorkbookListHandler;
 import com.clawbot.wechatbot.feature.excel.plan.WorkbookRenameHandler;
 import com.clawbot.wechatbot.feature.excel.plan.WorkbookSelectHandler;
+import com.clawbot.wechatbot.feature.excel.plan.AuditListHandler;
+import com.clawbot.wechatbot.feature.excel.plan.VersionDiffHandler;
+import com.clawbot.wechatbot.feature.excel.service.ExcelAuditService;
 import com.clawbot.wechatbot.feature.excel.service.ExcelRagService;
 import com.clawbot.wechatbot.service.agent.AgentAttachment;
 import com.clawbot.wechatbot.skills.SkillDefinition;
@@ -58,35 +61,45 @@ public final class ExcelOperationSkill implements SkillExecutor {
         "无法识别 Excel 操作，支持的指令：生成表格（提供表头和数据）、"
             + "添加一行、修改第N行、删除第N行、按某列排序、按某列去重、"
             + "按某列汇总某列、补全某列空值、查询某列的最大/最小/合计/平均、"
-            + "回滚到上一版本、查看版本历史、新建表格、查看表格列表、选择表格、"
-            + "重命名表格、删除表格、复制表格、添加知识、查看知识、删除知识。";
-    /** 工作簿管理类操作：不需要活动表，直接校验执行。 */
+            + "回滚到上一版本、查看版本历史、对比上一版、新建表格、查看表格列表、选择表格、"
+            + "重命名表格、删除表格、复制表格、添加知识、查看知识、删除知识、查看操作日志。";
+    /** 工作簿管理类操作（及操作日志）：不需要活动表，直接校验执行。 */
     private static final Set<ExcelOperationType> WORKBOOK_TYPES = Set.of(
         ExcelOperationType.WORKBOOK_CREATE,
         ExcelOperationType.WORKBOOK_LIST,
         ExcelOperationType.WORKBOOK_SELECT,
         ExcelOperationType.WORKBOOK_RENAME,
         ExcelOperationType.WORKBOOK_DELETE,
-        ExcelOperationType.WORKBOOK_COPY);
+        ExcelOperationType.WORKBOOK_COPY,
+        ExcelOperationType.AUDIT_LIST);
 
     private final ExcelService excelService;
     /** 知识库服务（可空：单参数构造器场景下为 null，别名解析与知识标注跳过，行为不变）。 */
     private final ExcelRagService excelRagService;
+    /** 操作审计服务（可空：单/双参数构造器场景下为 null，审计记录跳过，行为不变）。 */
+    private final ExcelAuditService excelAuditService;
     private final ExcelPlanParser planParser;
     private final ExcelPlanValidator planValidator;
     private final ExcelOperationExecutor executor;
     private final KnowledgeAliasResolver knowledgeAliasResolver;
 
-    /** 测试/旧场景构造器：不注入知识库（RAG 为 null 时解析器跳过）。 */
+    /** 测试/旧场景构造器：不注入知识库与审计（RAG/audit 为 null 时对应能力跳过）。 */
     public ExcelOperationSkill(ExcelService excelService) {
-        this(excelService, null);
+        this(excelService, null, null);
     }
 
-    /** Spring 装配：注入知识库服务，计划执行前做列别名解析与知识标注。 */
-    @Autowired
+    /** 测试/旧场景构造器：注入知识库但不注入审计（audit 为 null 时审计记录跳过）。 */
     public ExcelOperationSkill(ExcelService excelService, ExcelRagService excelRagService) {
+        this(excelService, excelRagService, null);
+    }
+
+    /** Spring 装配：注入知识库与审计服务，计划执行前做列别名解析与知识标注，执行后写审计日志。 */
+    @Autowired
+    public ExcelOperationSkill(ExcelService excelService, ExcelRagService excelRagService,
+                               ExcelAuditService excelAuditService) {
         this.excelService = excelService;
         this.excelRagService = excelRagService;
+        this.excelAuditService = excelAuditService;
         this.planParser = new ExcelPlanParser();
         this.planValidator = new ExcelPlanValidator(excelService);
         this.knowledgeAliasResolver = new KnowledgeAliasResolver(excelRagService);
@@ -110,7 +123,9 @@ public final class ExcelOperationSkill implements SkillExecutor {
             new WorkbookCopyHandler(excelService),
             new KnowledgeAddHandler(excelRagService),
             new KnowledgeListHandler(excelRagService),
-            new KnowledgeDeleteHandler(excelRagService)));
+            new KnowledgeDeleteHandler(excelRagService),
+            new AuditListHandler(excelAuditService),
+            new VersionDiffHandler(excelService)));
     }
 
     @Override
@@ -158,13 +173,35 @@ public final class ExcelOperationSkill implements SkillExecutor {
         if (validationError.isPresent()) {
             return SkillResult.failure(validationError.get());
         }
-        // 5. 执行：按计划顺序执行，遇到失败立即返回失败
-        OperationResult result = executor.execute(resolved.plan(), table);
+        // 5. 执行：按计划顺序执行，遇到失败立即返回失败；异常（如公式错误取消导出）也写入审计
+        OperationResult result;
+        try {
+            result = executor.execute(resolved.plan(), table);
+        } catch (Exception error) {
+            recordAudit(userId, resolved.plan(), table, OperationResult.failure(
+                error.getMessage() == null ? error.toString() : error.getMessage()));
+            throw error;
+        }
         if (result.success()) {
             result = compositeSummary(resolved.plan(), result);
             result = annotateKnowledge(result, text, resolved.notes());
         }
+        // 6. 审计：无论成败记录本次操作（operation 为各操作类型名拼接，detail 为结果文案）
+        recordAudit(userId, resolved.plan(), table, result);
         return toSkillResult(result, table);
+    }
+
+    /** 审计记录：计划中各操作类型名用 + 拼接（如 SORT+GROUP_SUMMARY）；无审计服务时跳过。 */
+    private void recordAudit(String userId, ExcelPlan plan, ExcelTable table,
+                             OperationResult result) {
+        if (excelAuditService == null) {
+            return;
+        }
+        String operation = plan.operations().stream()
+            .map(op -> op.type().name())
+            .collect(java.util.stream.Collectors.joining("+"));
+        excelAuditService.record(userId, table == null ? null : table.getId(),
+            operation, result.success(), result.text());
     }
 
     /** 计划是否全部由工作簿管理类操作组成（工作簿管理指令只会产出单操作计划，此为统一判定）。 */

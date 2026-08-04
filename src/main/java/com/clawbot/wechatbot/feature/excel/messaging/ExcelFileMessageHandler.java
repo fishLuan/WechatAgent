@@ -21,7 +21,8 @@ import java.util.List;
 
 /**
  * Excel 文件消息处理器：
- *   接收用户发来的 .xlsx 文件 → 大小/魔数校验 → POI 解析 → 导入到当前活动表（无则新建）
+ *   接收用户发来的 .xlsx/.xlsm/.xls 文件 → 大小/魔数校验 → POI 解析 → 导入到当前活动表（无则新建）；
+ *   .xlsm（含宏）与旧版 .xls 明确拒绝并引导另存为 .xlsx
  *
  * 优先级：高于 DocumentMessageHandler(30)，xlsx 文件先到这里处理，不会走文档总结。
  */
@@ -32,6 +33,8 @@ public final class ExcelFileMessageHandler implements MessageHandler {
     private static final long MAX_FILE_SIZE_BYTES = 10L * 1024 * 1024;
     /** xlsx 本质是 ZIP 容器，文件头魔数为 PK\x03\x04，用于拒绝伪装扩展名的文件。 */
     private static final byte[] ZIP_MAGIC = {'P', 'K', 0x03, 0x04};
+    /** 工作表数量上限：超过拒绝导入（只导入第一张，避免多表文件造成误解）。 */
+    private static final int MAX_SHEETS = 10;
     /** 优先级：小于 DocumentMessageHandler(30)，保证 xlsx 文件消息先被本处理器接收。 */
     private static final int PRIORITY = 25;
 
@@ -46,7 +49,7 @@ public final class ExcelFileMessageHandler implements MessageHandler {
         if (msg == null || msg.getItem_list() == null) return false;
         for (MessageItem item : msg.getItem_list()) {
             FileItem fileItem = item.getFile_item();
-            if (fileItem != null && isXlsx(fileItem.getFile_name())) {
+            if (fileItem != null && isExcelFile(fileItem.getFile_name())) {
                 return true;
             }
         }
@@ -61,7 +64,20 @@ public final class ExcelFileMessageHandler implements MessageHandler {
         String fileName = fileItem == null ? null : fileItem.getFile_name();
         if (fileName == null || fileName.isBlank()) return;
 
-        // 1. 大小校验：优先用消息里携带的 len 字段（字节），超限直接拒绝
+        // 1. 格式校验：xlsm（含宏）与旧版 xls 明确拒绝，引导另存为 .xlsx（不下载、不解析）
+        String lowerName = fileName.toLowerCase();
+        if (lowerName.endsWith(".xlsm")) {
+            safeSendText(client, from,
+                "❌ 暂不支持含宏的 xlsm 文件，请在 Excel 中另存为 .xlsx 后重试");
+            return;
+        }
+        if (lowerName.endsWith(".xls")) {
+            safeSendText(client, from,
+                "❌ 暂不支持旧版 .xls 格式，请另存为 .xlsx 后重试");
+            return;
+        }
+
+        // 2. 大小校验：优先用消息里携带的 len 字段（字节），超限直接拒绝
         Long declaredSize = parseSize(fileItem.getLen());
         if (declaredSize != null && declaredSize > MAX_FILE_SIZE_BYTES) {
             safeSendText(client, from,
@@ -72,7 +88,7 @@ public final class ExcelFileMessageHandler implements MessageHandler {
         safeSendText(client, from, "📄 收到 Excel 文件：" + fileName + "，正在导入...");
 
         try {
-            // 2. 从消息下载文件
+            // 3. 从消息下载文件
             MessageItem msgItem = findFileMessageItem(msg);
             byte[] fileBytes = (msgItem != null)
                 ? client.downloadFileFromMessageItem(msgItem) : null;
@@ -80,7 +96,7 @@ public final class ExcelFileMessageHandler implements MessageHandler {
                 safeSendText(client, from, "文件下载失败，请稍后重试。");
                 return;
             }
-            // 3. 下载后兜底校验大小，并校验 ZIP 魔数（拒绝伪装扩展名的文件）
+            // 4. 下载后兜底校验大小，并校验 ZIP 魔数（拒绝伪装扩展名的文件）
             if (fileBytes.length > MAX_FILE_SIZE_BYTES) {
                 safeSendText(client, from,
                     "❌ 文件「" + fileName + "」超过 10MB 上限，无法导入。");
@@ -93,15 +109,27 @@ public final class ExcelFileMessageHandler implements MessageHandler {
                 return;
             }
 
-            // 4. 解析第一个工作表：第一行为表头，其余为数据行
-            ParsedExcel parsed = parseWorkbook(fileBytes);
+            // 5. 解析第一个工作表：第一行为表头，其余为数据行；工作表数量超限时明确拒绝
+            ParsedExcel parsed;
+            try {
+                parsed = parseWorkbook(fileBytes);
+            } catch (TooManySheetsException e) {
+                safeSendText(client, from, e.getMessage());
+                return;
+            }
             if (parsed.headers().isEmpty()
                 || parsed.headers().stream().allMatch(String::isBlank)) {
                 safeSendText(client, from, "❌ 工作表为空或没有表头行，无法导入。");
                 return;
             }
+            // 6. 行列数上限：超限直接拒绝（不落库，引导拆分后重试）
+            if (parsed.headers().size() > ExcelService.MAX_TABLE_COLUMNS
+                || parsed.rows().size() > ExcelService.MAX_TABLE_ROWS) {
+                safeSendText(client, from, "❌ " + ExcelService.TABLE_LIMIT_MESSAGE);
+                return;
+            }
 
-            // 5. 导入到当前活动表（上传导入是显式操作，可替换现有表）；
+            // 7. 导入到当前活动表（上传导入是显式操作，可替换现有表）；
             //    没有活动表时以文件名新建一张并设为活动表
             ExcelTable table = excelService.getActiveWorkbook(from);
             if (table == null) {
@@ -137,9 +165,21 @@ public final class ExcelFileMessageHandler implements MessageHandler {
     private record ParsedExcel(List<String> headers, List<List<String>> rows) {
     }
 
+    /** 工作表数量超限异常：携带对用户的明确提示文案，由 handle 单独捕获回复。 */
+    private static final class TooManySheetsException extends RuntimeException {
+        TooManySheetsException(String message) {
+            super(message);
+        }
+    }
+
     /** 取第一个工作表：第一行为表头，其余为数据行；跳过全空行，列数与表头对齐。 */
     private static ParsedExcel parseWorkbook(byte[] fileBytes) throws IOException {
         try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(fileBytes))) {
+            // 工作表数量上限：超过 10 个拒绝导入（只导入第一张，多表文件引导精简）
+            if (workbook.getNumberOfSheets() > MAX_SHEETS) {
+                throw new TooManySheetsException(
+                    "❌ 文件包含过多工作表（超过 10 个），请精简后重试");
+            }
             Sheet sheet = workbook.getSheetAt(0);
             DataFormatter formatter = new DataFormatter();
 
@@ -196,15 +236,19 @@ public final class ExcelFileMessageHandler implements MessageHandler {
         return base.isBlank() ? "导入的表格" : base;
     }
 
-    private static boolean isXlsx(String fileName) {
-        return fileName != null && fileName.toLowerCase().endsWith(".xlsx");
+    /** 是否 Excel 文件（大小写不敏感）：xlsx 正常导入，xlsm/xls 由 handle 明确拒绝。 */
+    private static boolean isExcelFile(String fileName) {
+        if (fileName == null) return false;
+        String lower = fileName.toLowerCase();
+        return lower.endsWith(".xlsx") || lower.endsWith(".xlsm")
+            || lower.endsWith(".xls");
     }
 
     private static FileItem findFileItem(WeixinMessage msg) {
         if (msg.getItem_list() == null) return null;
         for (MessageItem item : msg.getItem_list()) {
             FileItem fileItem = item.getFile_item();
-            if (fileItem != null && isXlsx(fileItem.getFile_name())) {
+            if (fileItem != null && isExcelFile(fileItem.getFile_name())) {
                 return fileItem;
             }
         }
@@ -215,7 +259,7 @@ public final class ExcelFileMessageHandler implements MessageHandler {
         if (msg.getItem_list() == null) return null;
         for (MessageItem item : msg.getItem_list()) {
             FileItem fileItem = item.getFile_item();
-            if (fileItem != null && isXlsx(fileItem.getFile_name())) {
+            if (fileItem != null && isExcelFile(fileItem.getFile_name())) {
                 return item;
             }
         }

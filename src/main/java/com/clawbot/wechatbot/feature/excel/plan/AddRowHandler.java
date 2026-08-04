@@ -23,6 +23,10 @@ public final class AddRowHandler implements ExcelOperationHandler {
     public OperationResult handle(String userId, ExcelOperation operation, ExcelTable table)
         throws Exception {
         OperationChecks.requireTable(table);
+        // 行数上限：已满 5000 行时再添加一行将超限（在快照之前拦截，不产生任何变更）
+        if (table.getRows().size() >= ExcelService.MAX_TABLE_ROWS) {
+            return OperationResult.failure(ExcelService.TABLE_LIMIT_MESSAGE);
+        }
         List<String> cells = ExcelService.splitRowData(operation.param("cells"), table);
         if (cells.isEmpty()) {
             return OperationResult.failure("添加的数据行为空。");

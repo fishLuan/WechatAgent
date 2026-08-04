@@ -395,6 +395,88 @@ class ExcelServiceTests {
     }
 
     // ============================
+    // 版本对比（diffVersions）
+    // ============================
+    @Test
+    void diffVersionsWithoutVersionsReturnsHint() {
+        FakeVersionRepository fake = new FakeVersionRepository();
+        ExcelService service = versionedService(fake);
+        ExcelTable table = new ExcelTable("user-1", "表");
+        table.setId("t1");
+        table.setHeaders(List.of("姓名"));
+        table.setRows(List.of(List.of("张三")));
+
+        assertTrue(service.diffVersions(table).contains("还没有可对比的版本"));
+    }
+
+    @Test
+    void diffVersionsReportsAddedRows() {
+        FakeVersionRepository fake = new FakeVersionRepository();
+        ExcelService service = versionedService(fake);
+        ExcelTable table = new ExcelTable("user-1", "表");
+        table.setId("t1");
+        table.setHeaders(List.of("姓名"));
+        table.setRows(List.of(List.of("张三")));
+        service.snapshotVersion(table, "初始");
+
+        // 当前表新增一行：集合差 → 新增 1 行，其余 0
+        table.setRows(List.of(List.of("张三"), List.of("李四")));
+        String diff = service.diffVersions(table);
+
+        assertTrue(diff.contains("表头无变化"));
+        assertTrue(diff.contains("新增 1 行"));
+        assertTrue(diff.contains("删除 0 行"));
+        assertTrue(diff.contains("修改 0 行"));
+    }
+
+    @Test
+    void diffVersionsReportsRemovedRows() {
+        FakeVersionRepository fake = new FakeVersionRepository();
+        ExcelService service = versionedService(fake);
+        ExcelTable table = new ExcelTable("user-1", "表");
+        table.setId("t1");
+        table.setHeaders(List.of("姓名"));
+        table.setRows(List.of(List.of("张三"), List.of("李四")));
+        service.snapshotVersion(table, "初始");
+
+        // 当前表删除一行：集合差 → 删除 1 行
+        table.setRows(List.of(List.of("张三")));
+        String diff = service.diffVersions(table);
+
+        assertTrue(diff.contains("新增 0 行"));
+        assertTrue(diff.contains("删除 1 行"));
+    }
+
+    @Test
+    void diffVersionsReportsModifiedRowsAndHeaderChange() {
+        FakeVersionRepository fake = new FakeVersionRepository();
+        ExcelService service = versionedService(fake);
+        ExcelTable table = new ExcelTable("user-1", "表");
+        table.setId("t1");
+        table.setHeaders(List.of("姓名", "年龄"));
+        table.setRows(List.of(List.of("张三", "25"), List.of("李四", "30")));
+        service.snapshotVersion(table, "初始");
+
+        // 当前表同行号内容不同（第二行被修改），表头也变化 → 修改 1 行 + 表头有变化
+        table.setHeaders(List.of("姓名", "年龄(周岁)"));
+        table.setRows(List.of(List.of("张三", "25"), List.of("李四", "31")));
+        String diff = service.diffVersions(table);
+
+        assertTrue(diff.contains("表头有变化"));
+        assertTrue(diff.contains("新增 1 行"));
+        assertTrue(diff.contains("删除 1 行"));
+        assertTrue(diff.contains("修改 1 行"));
+    }
+
+    @Test
+    void diffVersionsWithNullTableReturnsHint() {
+        FakeVersionRepository fake = new FakeVersionRepository();
+        ExcelService service = versionedService(fake);
+
+        assertTrue(service.diffVersions(null).contains("还没有可对比的版本"));
+    }
+
+    // ============================
     // 7. 公式单元格（导出时识别；非法公式保持文本；求值错误取消导出）
     // ============================
     @Test

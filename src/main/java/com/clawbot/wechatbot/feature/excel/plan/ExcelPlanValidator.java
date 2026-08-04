@@ -36,7 +36,9 @@ public final class ExcelPlanValidator {
         Map.entry(ExcelOperationType.WORKBOOK_COPY, Set.of("name")),
         Map.entry(ExcelOperationType.KNOWLEDGE_ADD, Set.of("category", "content")),
         Map.entry(ExcelOperationType.KNOWLEDGE_LIST, Set.of()),
-        Map.entry(ExcelOperationType.KNOWLEDGE_DELETE, Set.of("keyword")));
+        Map.entry(ExcelOperationType.KNOWLEDGE_DELETE, Set.of("keyword")),
+        Map.entry(ExcelOperationType.AUDIT_LIST, Set.of()),
+        Map.entry(ExcelOperationType.VERSION_DIFF, Set.of()));
 
     /** 每种操作必填的参数 key。 */
     private static final Map<ExcelOperationType, Set<String>> REQUIRED_PARAM_KEYS = Map.ofEntries(
@@ -59,7 +61,9 @@ public final class ExcelPlanValidator {
         Map.entry(ExcelOperationType.WORKBOOK_COPY, Set.of("name")),
         Map.entry(ExcelOperationType.KNOWLEDGE_ADD, Set.of("category", "content")),
         Map.entry(ExcelOperationType.KNOWLEDGE_LIST, Set.of()),
-        Map.entry(ExcelOperationType.KNOWLEDGE_DELETE, Set.of("keyword")));
+        Map.entry(ExcelOperationType.KNOWLEDGE_DELETE, Set.of("keyword")),
+        Map.entry(ExcelOperationType.AUDIT_LIST, Set.of()),
+        Map.entry(ExcelOperationType.VERSION_DIFF, Set.of()));
 
     private final ExcelService excelService;
 
@@ -104,7 +108,7 @@ public final class ExcelPlanValidator {
             case DEDUPLICATE -> validateDeduplicate(operation, table);
             case GROUP_SUMMARY -> validateGroupSummary(operation, table);
             case FILL_MISSING -> validateFillMissing(operation, table);
-            case VERSION_HISTORY -> Optional.empty();
+            case VERSION_HISTORY, AUDIT_LIST, VERSION_DIFF -> Optional.empty();
             case WORKBOOK_CREATE, WORKBOOK_LIST, WORKBOOK_SELECT, WORKBOOK_RENAME,
                 WORKBOOK_DELETE, WORKBOOK_COPY -> Optional.empty();
             case KNOWLEDGE_ADD -> validateKnowledgeAdd(operation);

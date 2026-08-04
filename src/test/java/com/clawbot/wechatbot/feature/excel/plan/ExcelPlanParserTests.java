@@ -571,4 +571,32 @@ class ExcelPlanParserTests {
         assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("查看版本历史").type());
         assertEquals(ExcelOperationType.ROLLBACK, parseSingle("撤销").type());
     }
+
+    // ============================
+    // 操作日志 / 版本对比路由
+    // ============================
+    @Test
+    void auditListCommandsRouteToAuditList() {
+        assertEquals(ExcelOperationType.AUDIT_LIST, parseSingle("查看操作日志").type());
+        assertEquals(ExcelOperationType.AUDIT_LIST, parseSingle("操作历史").type());
+        assertEquals(ExcelOperationType.AUDIT_LIST, parseSingle("请查看操作日志").type());
+        assertEquals(ExcelOperationType.AUDIT_LIST, parseSingle("帮我查看操作日志").type());
+    }
+
+    @Test
+    void versionDiffCommandsRouteToVersionDiff() {
+        assertEquals(ExcelOperationType.VERSION_DIFF, parseSingle("版本对比").type());
+        assertEquals(ExcelOperationType.VERSION_DIFF, parseSingle("对比上一版").type());
+        assertEquals(ExcelOperationType.VERSION_DIFF, parseSingle("对比上一版本").type());
+        assertEquals(ExcelOperationType.VERSION_DIFF, parseSingle("请对比上一版").type());
+    }
+
+    /** 新路由不应改变既有指令的路由结果（版本历史/操作日志/生成互不混淆）。 */
+    @Test
+    void existingRoutesUnchangedByAuditAndDiffRouting() {
+        assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("查看版本历史").type());
+        assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("版本历史").type());
+        assertEquals(ExcelOperationType.ROLLBACK, parseSingle("恢复").type());
+        assertEquals(ExcelOperationType.CREATE_TABLE, parseSingle("生成表格：姓名,城市").type());
+    }
 }

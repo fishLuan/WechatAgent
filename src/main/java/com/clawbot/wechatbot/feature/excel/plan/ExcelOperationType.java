@@ -1,6 +1,6 @@
 package com.clawbot.wechatbot.feature.excel.plan;
 
-/** 表格操作类型：与指令路由的二十类操作一一对应（含知识管理指令与工作簿管理指令）。 */
+/** 表格操作类型：与指令路由的二十二类操作一一对应（含知识管理指令、工作簿管理指令与操作日志/版本对比）。 */
 public enum ExcelOperationType {
     CREATE_TABLE("生成表格"),
     ADD_ROW("添加行"),
@@ -21,7 +21,9 @@ public enum ExcelOperationType {
     WORKBOOK_COPY("复制工作簿"),
     KNOWLEDGE_ADD("添加知识"),
     KNOWLEDGE_LIST("查看知识"),
-    KNOWLEDGE_DELETE("删除知识");
+    KNOWLEDGE_DELETE("删除知识"),
+    AUDIT_LIST("操作日志"),
+    VERSION_DIFF("版本对比");
 
     private final String label;
 
