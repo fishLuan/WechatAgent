@@ -112,7 +112,7 @@ class ExcelOperationExecutorTests {
     void rollbackHandlerFailureStopsExecution() throws Exception {
         ExcelTable table = existingTable();
         when(excelService.versionCount(table)).thenReturn(1L);
-        when(excelService.restoreLatestVersion(table)).thenReturn(false);
+        when(excelService.restoreLatestVersion(table)).thenReturn(null);
 
         OperationResult result = executor.execute(plan(
             op(1, ExcelOperationType.ROLLBACK, Map.of())), table);

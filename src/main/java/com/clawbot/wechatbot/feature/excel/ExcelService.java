@@ -131,18 +131,18 @@ public class ExcelService {
     }
 
     /**
-     * 取该表最新版本恢复到表格对象上；返回是否成功。
+     * 取该表最新版本恢复到表格对象上；返回被恢复的版本（调用方在导出并保存成功后 consumeVersion 消费）。
      * 若最新一条是刚写入的「回滚操作」快照则跳过它（回滚目标应是最近一次变更前的状态）；
-     * 恢复后消费该版本（删除），避免下一次回滚到同一状态。
+     * 恢复不删除版本：导出失败时版本保留、表格不落库，重试仍可回到同一目标。
      */
-    public boolean restoreLatestVersion(ExcelTable table) {
+    public ExcelTableVersion restoreLatestVersion(ExcelTable table) {
         if (table == null || table.getId() == null || table.getId().isBlank()) {
-            return false;
+            return null;
         }
         List<ExcelTableVersion> versions =
             versionRepository.findByTableIdOrderByCreatedAtDesc(table.getId());
         if (versions.isEmpty()) {
-            return false;
+            return null;
         }
         ExcelTableVersion latest = versions.get(0);
         if (ROLLBACK_DESCRIPTION.equals(latest.getDescription()) && versions.size() > 1) {
@@ -150,8 +150,15 @@ public class ExcelService {
         }
         table.setHeaders(latest.getHeaders());
         table.setRows(latest.getRows());
-        versionRepository.delete(latest);
-        return true;
+        return latest;
+    }
+
+    /** 消费一条已成功恢复的版本记录（回滚导出并保存成功后删除，避免下一次回滚到同一状态）。 */
+    public void consumeVersion(ExcelTableVersion version) {
+        if (version == null || version.getId() == null) {
+            return;
+        }
+        versionRepository.delete(version);
     }
 
     /** 某表当前版本数量。 */

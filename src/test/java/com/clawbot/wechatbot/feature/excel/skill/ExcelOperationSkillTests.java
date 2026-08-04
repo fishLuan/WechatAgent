@@ -212,7 +212,9 @@ class ExcelOperationSkillTests {
         ExcelTable table = existingTable();
         when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
         when(excelService.versionCount(table)).thenReturn(1L);
-        when(excelService.restoreLatestVersion(table)).thenReturn(true);
+        ExcelTableVersion restored = new ExcelTableVersion(
+            "t1", List.of("姓名"), List.of(), "添加第1行");
+        when(excelService.restoreLatestVersion(table)).thenReturn(restored);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -225,6 +227,7 @@ class ExcelOperationSkillTests {
         verify(excelService).snapshotVersion(table, ExcelService.ROLLBACK_DESCRIPTION);
         verify(excelService).restoreLatestVersion(table);
         verify(excelService).save(table);
+        verify(excelService).consumeVersion(restored);
     }
 
     @Test
@@ -233,7 +236,9 @@ class ExcelOperationSkillTests {
         ExcelTable table = existingTable();
         when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
         when(excelService.versionCount(table)).thenReturn(1L);
-        when(excelService.restoreLatestVersion(table)).thenReturn(true);
+        ExcelTableVersion restored = new ExcelTableVersion(
+            "t1", List.of("姓名"), List.of(), "添加第1行");
+        when(excelService.restoreLatestVersion(table)).thenReturn(restored);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -244,6 +249,7 @@ class ExcelOperationSkillTests {
         assertTrue(skill.execute(definition,
             new SkillRequest("user-1", "恢复", "", "", "")).success());
         verify(excelService, atLeastOnce()).snapshotVersion(table, ExcelService.ROLLBACK_DESCRIPTION);
+        verify(excelService, atLeastOnce()).consumeVersion(restored);
     }
 
     @Test
@@ -252,7 +258,9 @@ class ExcelOperationSkillTests {
         ExcelTable table = existingTable();
         when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
         when(excelService.versionCount(table)).thenReturn(1L);
-        when(excelService.restoreLatestVersion(table)).thenReturn(true);
+        ExcelTableVersion restored = new ExcelTableVersion(
+            "t1", List.of("姓名"), List.of(), "添加第1行");
+        when(excelService.restoreLatestVersion(table)).thenReturn(restored);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -263,6 +271,28 @@ class ExcelOperationSkillTests {
         // 「撤销…」必须走回滚，而不是真的删除第2行
         verify(excelService).restoreLatestVersion(table);
         assertEquals(1, table.getRows().size());
+    }
+
+    @Test
+    void rollbackExportFailureDoesNotConsumeVersion() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.versionCount(table)).thenReturn(1L);
+        ExcelTableVersion restored = new ExcelTableVersion(
+            "t1", List.of("姓名"), List.of(), "添加第1行");
+        when(excelService.restoreLatestVersion(table)).thenReturn(restored);
+        when(excelService.toXlsx(any())).thenThrow(
+            new IllegalArgumentException("❌ 公式存在错误，已取消导出。"));
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "回滚", "", "", ""));
+
+        assertFalse(result.success());
+        // 导出失败：不落库、不消费版本，重试仍可回到同一目标
+        verify(excelService, never()).save(any());
+        verify(excelService, never()).consumeVersion(any());
     }
 
     @Test

@@ -294,9 +294,12 @@ class ExcelServiceTests {
         service.snapshotVersion(table, "添加第1行");
         table.setRows(List.of(List.of("张三", "25"), List.of("李四", "30")));
 
-        assertTrue(service.restoreLatestVersion(table));
+        ExcelTableVersion restored = service.restoreLatestVersion(table);
+        assertNotNull(restored);
         assertEquals(List.of(List.of("张三", "25")), table.getRows());
-        // 恢复后该版本被消费，避免下一次回滚到同一状态
+        // 恢复后版本仍在，由调用方在导出并保存成功后 consumeVersion 消费
+        assertEquals(1, service.versionCount(table));
+        service.consumeVersion(restored);
         assertEquals(0, service.versionCount(table));
     }
 
@@ -307,7 +310,7 @@ class ExcelServiceTests {
         ExcelTable table = new ExcelTable("user-1", "表");
         table.setId("t1");
 
-        assertFalse(service.restoreLatestVersion(table));
+        assertNull(service.restoreLatestVersion(table));
     }
 
     @Test
@@ -325,12 +328,49 @@ class ExcelServiceTests {
         // 回滚流程：先快照当前状态（「回滚操作」），再恢复最新版本
         service.snapshotVersion(table, ExcelService.ROLLBACK_DESCRIPTION);
 
-        assertTrue(service.restoreLatestVersion(table));
+        ExcelTableVersion restored = service.restoreLatestVersion(table);
+        assertNotNull(restored);
         assertEquals(List.of(List.of("张三")), table.getRows());
-        // 回滚快照仍保留，用于再次撤销回滚
+        // 恢复的变更前快照在消费前仍保留；回滚快照保留用于再次撤销
+        assertEquals(2, service.versionCount(table));
+        service.consumeVersion(restored);
         assertEquals(1, service.versionCount(table));
         assertEquals(ExcelService.ROLLBACK_DESCRIPTION,
             service.recentVersions(table, 5).get(0).getDescription());
+    }
+
+    @Test
+    void rollbackRoundTripAlternatesStates() {
+        FakeVersionRepository fake = new FakeVersionRepository();
+        ExcelService service = versionedService(fake);
+        ExcelTable table = new ExcelTable("user-1", "表");
+        table.setId("t1");
+
+        // 两张变更前快照 + 三个递增状态
+        table.setHeaders(List.of("姓名"));
+        table.setRows(List.of(List.of("张三")));
+        service.snapshotVersion(table, "初始");
+        table.setRows(List.of(List.of("张三"), List.of("李四")));
+        service.snapshotVersion(table, "添加第2行");
+        table.setRows(List.of(List.of("张三"), List.of("李四"), List.of("王五")));
+
+        // 第一次回滚：回到两行
+        service.snapshotVersion(table, ExcelService.ROLLBACK_DESCRIPTION);
+        ExcelTableVersion restored = service.restoreLatestVersion(table);
+        service.consumeVersion(restored);
+        assertEquals(2, table.getRows().size());
+
+        // 第二次回滚：撤销回滚，回到三行
+        service.snapshotVersion(table, ExcelService.ROLLBACK_DESCRIPTION);
+        restored = service.restoreLatestVersion(table);
+        service.consumeVersion(restored);
+        assertEquals(3, table.getRows().size());
+
+        // 第三次回滚：再次回到两行，交替稳定
+        service.snapshotVersion(table, ExcelService.ROLLBACK_DESCRIPTION);
+        restored = service.restoreLatestVersion(table);
+        service.consumeVersion(restored);
+        assertEquals(2, table.getRows().size());
     }
 
     @Test
@@ -652,4 +692,3 @@ class ExcelServiceTests {
         }
     }
 }
-

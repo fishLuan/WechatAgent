@@ -2,6 +2,7 @@ package com.clawbot.wechatbot.feature.excel.plan;
 
 import com.clawbot.wechatbot.feature.excel.ExcelService;
 import com.clawbot.wechatbot.feature.excel.model.ExcelTable;
+import com.clawbot.wechatbot.feature.excel.model.ExcelTableVersion;
 
 /**
  * 回滚操作：先对当前状态快照（「回滚操作」，回滚可撤销），再恢复最新版本。
@@ -31,13 +32,14 @@ public final class RollbackHandler implements ExcelOperationHandler {
         }
         // 回滚前先对当前状态快照（「回滚操作」），保留回滚前的数据，便于再次撤销
         excelService.snapshotVersion(table, ExcelService.ROLLBACK_DESCRIPTION);
-        boolean restored = excelService.restoreLatestVersion(table);
-        if (!restored) {
+        ExcelTableVersion restored = excelService.restoreLatestVersion(table);
+        if (restored == null) {
             return OperationResult.failure("❌ 没有可回滚的版本。");
         }
-        // 先导出再保存：导出失败（如公式错误）时不落库，避免把坏状态写回
+        // 先导出再保存：导出失败（如公式错误）时不落库、不消费版本，重试仍可回到同一目标
         byte[] bytes = excelService.toXlsx(table);
         excelService.save(table);
+        excelService.consumeVersion(restored);
         return OperationResult.success("✅ 已回滚到上一版本。", bytes);
     }
 }
