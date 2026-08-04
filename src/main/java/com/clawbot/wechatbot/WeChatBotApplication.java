@@ -14,3 +14,4 @@ public class WeChatBotApplication {
         application.run(args);
     }
 }
+
