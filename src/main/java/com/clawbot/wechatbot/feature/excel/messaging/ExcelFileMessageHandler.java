@@ -112,8 +112,12 @@ public final class ExcelFileMessageHandler implements MessageHandler {
             table.setRows(parsed.rows());
             excelService.save(table);
 
+            // 表头预览：全部表头用顿号连接；表头为空时省略该行
+            String headerPreview = parsed.headers().isEmpty()
+                ? "" : "，表头：" + String.join("、", parsed.headers());
             String reply = "✅ 已导入 " + parsed.rows().size() + " 行数据（"
                 + parsed.headers().size() + "列）：" + fileName
+                + headerPreview
                 + (replaced ? "，并已替换你原来的表格。"
                     : "，可直接用「添加/修改/查询」继续操作。");
             safeSendText(client, from, reply);

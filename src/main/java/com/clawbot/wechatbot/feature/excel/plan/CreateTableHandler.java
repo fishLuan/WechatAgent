@@ -33,6 +33,12 @@ public final class CreateTableHandler implements ExcelOperationHandler {
         if (OperationChecks.hasData(loaded)) {
             excelService.snapshotVersion(loaded, "覆盖生成表格");
         }
+        // 首次创建（表格还没有数据）时应用指令里的标题（如「生成销售表」）；覆盖已有数据时保留原标题
+        String title = operation.param("title");
+        if (!OperationChecks.hasData(loaded)
+            && title != null && !title.isBlank() && !"表格".equals(title)) {
+            loaded.setTitle(title);
+        }
         loaded.setHeaders(parsed.headers());
         loaded.setRows(parsed.rows());
         // 先导出再保存：导出失败（如公式错误）时不落库，避免留下无法导出的坏表格

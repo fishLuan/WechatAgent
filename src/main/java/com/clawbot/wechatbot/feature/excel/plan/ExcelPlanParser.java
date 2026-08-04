@@ -28,9 +28,9 @@ public final class ExcelPlanParser {
         "为|改成|改为|数据(?:是|为)?|内容(?:是|为)?|[:：]");
     private static final Pattern ADD_PREFIX = Pattern.compile(
         "^(?:添加|增加|加入|新增|加)\\s*(?:一行|一条|1行|1条)?\\s*[:：]?\\s*(.+)$");
-    /** 版本历史指令：版本历史/查看版本/历史版本。 */
+    /** 版本历史指令：版本历史/查看版本/历史版本/查看版本历史，前缀「请/帮我」可任意组合与重复。 */
     private static final Pattern VERSION_HISTORY_CMD = Pattern.compile(
-        "^(?:请|帮我)?\\s*(?:版本历史|查看版本|历史版本)(?:记录|列表)?\\s*$");
+        "^(?:(?:请|帮我)\\s*)*(?:版本历史|历史版本|查看版本(?:历史)?)(?:记录|列表)?\\s*$");
 
     /** 解析用户文本为 ExcelPlan；无法识别时返回 null（由调用方给出兜底提示）。 */
     public ExcelPlan parse(String userId, String text) {
@@ -120,7 +120,8 @@ public final class ExcelPlanParser {
     /** 回滚指令判定：以「撤销/回滚/恢复」开头（可带「请/帮我」前缀）。 */
     private static boolean isRollbackCommand(String text) {
         if (text == null) return false;
-        String trimmed = text.trim().replaceFirst("^(?:请|帮我)\\s*", "");
+        // 前缀可重复组合（"请帮我回滚"剥掉"请帮我"两层）
+        String trimmed = text.trim().replaceFirst("^(?:(?:请|帮我)\\s*)*", "");
         return trimmed.startsWith("撤销") || trimmed.startsWith("回滚")
             || trimmed.startsWith("恢复");
     }
@@ -161,7 +162,8 @@ public final class ExcelPlanParser {
     }
 
     private static String resolveTitle(String text) {
-        String normalized = text
+        // 只取第一行做标题裁剪，避免多行指令把后续数据带进标题
+        String normalized = firstLine(text)
             .replaceAll("生成|创建|制作|新建|做一个|覆盖|表格|Excel|excel|请|帮我", "")
             .replaceAll("[:：].*$", "")
             .trim();

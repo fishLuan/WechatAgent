@@ -9,6 +9,12 @@ import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliPreferenceRepos
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliRecommendationHistoryRepository;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliSubscriptionRepository;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliUpdateEventRepository;
+import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliCommandMessageHandler;
+import com.clawbot.wechatbot.feature.excel.messaging.ExcelFileMessageHandler;
+import com.clawbot.wechatbot.feature.excel.messaging.ExcelScreenshotMessageHandler;
+import com.clawbot.wechatbot.handler.DocumentMessageHandler;
+import com.clawbot.wechatbot.handler.ImageMessageHandler;
+import com.clawbot.wechatbot.handler.TextMessageHandler;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
 import com.clawbot.wechatbot.service.agent.AgentTaskHandler;
@@ -79,13 +85,19 @@ class ApplicationTests {
     @Test
     void contextLoads() {
         assertEquals(13, toolRegistry.size());
-        assertEquals(6, handlers.size());
         assertEquals(5, agentTaskHandlers.size());
         assertEquals(4, skillRegistry.size());
         assertTrue(skillRegistry.contains("bilibili"));
         assertTrue(skillRegistry.contains("document-generation"));
         assertTrue(skillRegistry.contains("voice-reply"));
         assertTrue(skillRegistry.contains("excel-operation"));
+        // 处理器集合断言：不硬编码数量，改为断言关键处理器存在（新增组件不再破坏本测试）
+        assertTrue(handlers.stream().anyMatch(h -> h instanceof TextMessageHandler));
+        assertTrue(handlers.stream().anyMatch(h -> h instanceof ImageMessageHandler));
+        assertTrue(handlers.stream().anyMatch(h -> h instanceof DocumentMessageHandler));
+        assertTrue(handlers.stream().anyMatch(h -> h instanceof ExcelFileMessageHandler));
+        assertTrue(handlers.stream().anyMatch(h -> h instanceof ExcelScreenshotMessageHandler));
+        assertTrue(handlers.stream().anyMatch(h -> h instanceof BilibiliCommandMessageHandler));
         assertTrue(toolRegistry.definitions().findValuesAsText("name").contains("convert_currency"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name")
             .contains("calculate_bazi_fortune"));

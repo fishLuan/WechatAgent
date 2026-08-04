@@ -160,6 +160,17 @@ class ExcelPlanParserTests {
         assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("帮我查看版本").type());
     }
 
+    /** 前缀「请/帮我」任意组合与重复均可识别，且「查看版本历史」连读也可识别。 */
+    @Test
+    void versionHistoryWithCombinedHelpPrefixes() {
+        assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("请帮我查看版本历史").type());
+        assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("查看版本历史").type());
+        assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("帮我 版本历史").type());
+        assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("请帮我 查看版本").type());
+        assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("请请帮我帮我版本历史").type());
+        assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("帮我查看版本历史记录").type());
+    }
+
     @Test
     void unrecognizedTextReturnsNull() {
         assertNull(parser.parse("user-1", "你好"));

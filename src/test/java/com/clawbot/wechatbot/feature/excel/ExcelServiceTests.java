@@ -507,6 +507,18 @@ class ExcelServiceTests {
     }
 
     @Test
+    void formulaErrorMessageSuggestsRangeFunctionForm() {
+        ExcelTable table = new ExcelTable("user-1", "公式表");
+        table.setHeaders(List.of("数值"));
+        table.setRows(List.of(List.of("=1/0")));
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+            () -> service.toXlsx(table));
+        // 错误码为 #DIV/0! 时同样给出区域写法的正确示例
+        assertTrue(error.getMessage().contains("=SUM(A1:B2)"));
+        assertTrue(error.getMessage().contains("请写成"));
+    }
+
+    @Test
     void formulaReferencingEmptyCellsIsNotAnError() throws Exception {
         ExcelTable table = new ExcelTable("user-1", "公式表");
         table.setHeaders(List.of("甲", "乙", "合计"));

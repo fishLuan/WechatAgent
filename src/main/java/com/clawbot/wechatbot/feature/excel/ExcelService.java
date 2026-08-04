@@ -289,7 +289,8 @@ public class ExcelService {
                 throw new IllegalArgumentException(
                     "❌ 公式存在错误，已取消导出：单元格 " + errorCell.getAddress().formatAsString()
                         + " 为 " + FormulaError.forInt(errorCell.getErrorCellValue()).getString()
-                        + "。请检查公式后重试。");
+                        + "。请检查公式后重试。"
+                        + "如公式使用了区域，请写成 =SUM(A1:B2) 这类函数形式。");
             }
 
             workbook.write(out);

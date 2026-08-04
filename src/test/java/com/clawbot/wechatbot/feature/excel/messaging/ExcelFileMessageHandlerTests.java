@@ -93,6 +93,69 @@ class ExcelFileMessageHandlerTests {
     }
 
     @Test
+    void importReplyIncludesHeaderPreview() throws Exception {
+        when(excelService.loadOrCreate(anyString(), anyString()))
+            .thenReturn(new ExcelTable("wechat-user", "新表"));
+
+        ILinkClient client = mock(ILinkClient.class);
+        byte[] bytes = xlsxBytes(List.of("姓名", "年龄", "城市"),
+            List.of(List.of("张三", "25", "北京")));
+        when(client.downloadFileFromMessageItem(any(MessageItem.class))).thenReturn(bytes);
+
+        ExcelFileMessageHandler handler = new ExcelFileMessageHandler(excelService);
+        handler.handle(client, xlsxMessage("员工表.xlsx", String.valueOf(bytes.length)));
+
+        // 表头预览：全部表头用顿号连接，原「已导入…」文案保留
+        assertLastReplyContains(client, "表头：姓名、年龄、城市");
+        assertLastReplyContains(client, "已导入 1 行数据（3列）");
+    }
+
+    @Test
+    void replaceImportReplyAlsoIncludesHeaderPreview() throws Exception {
+        ExcelTable table = new ExcelTable("wechat-user", "旧表");
+        table.setHeaders(List.of("旧列"));
+        table.setRows(List.of(List.of("旧数据")));
+        when(excelService.loadOrCreate(anyString(), anyString())).thenReturn(table);
+
+        ILinkClient client = mock(ILinkClient.class);
+        byte[] bytes = xlsxBytes(List.of("姓名", "年龄"),
+            List.of(List.of("张三", "25")));
+        when(client.downloadFileFromMessageItem(any(MessageItem.class))).thenReturn(bytes);
+
+        ExcelFileMessageHandler handler = new ExcelFileMessageHandler(excelService);
+        handler.handle(client, xlsxMessage("员工表.xlsx", String.valueOf(bytes.length)));
+
+        assertLastReplyContains(client, "表头：姓名、年龄");
+        assertLastReplyContains(client, "替换");
+    }
+
+    /** 端到端回归：POI 生成的真实 xlsx 字节走完下载→解析→落表→回复全链路，不 mock 解析结果。 */
+    @Test
+    void endToEndImportWithRealXlsxBytesLandsTableAndPreview() throws Exception {
+        ExcelTable table = new ExcelTable("wechat-user", "旧表");
+        table.setHeaders(List.of("旧列"));
+        table.setRows(List.of(List.of("旧数据")));
+        when(excelService.loadOrCreate(anyString(), anyString())).thenReturn(table);
+
+        ILinkClient client = mock(ILinkClient.class);
+        byte[] bytes = xlsxBytes(List.of("姓名", "年龄"),
+            List.of(List.of("张三", "25"), List.of("李四", "30")));
+        when(client.downloadFileFromMessageItem(any(MessageItem.class))).thenReturn(bytes);
+
+        ExcelFileMessageHandler handler = new ExcelFileMessageHandler(excelService);
+        handler.handle(client, xlsxMessage("员工表.xlsx", String.valueOf(bytes.length)));
+
+        // 真实字节解析出的表头与行数正确落表
+        assertEquals(List.of("姓名", "年龄"), table.getHeaders());
+        assertEquals(2, table.getRows().size());
+        assertEquals(List.of("李四", "30"), table.getRows().get(1));
+        // 回复同时包含导入统计与表头预览
+        assertLastReplyContains(client, "已导入 2 行数据（2列）");
+        assertLastReplyContains(client, "表头：姓名、年龄");
+        assertLastReplyContains(client, "替换");
+    }
+
+    @Test
     void handleRejectsOversizedFile() throws Exception {
         when(excelService.loadOrCreate(anyString(), anyString()))
             .thenReturn(new ExcelTable("wechat-user", "旧表"));

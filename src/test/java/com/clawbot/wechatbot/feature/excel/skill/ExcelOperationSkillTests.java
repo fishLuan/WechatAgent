@@ -177,6 +177,43 @@ class ExcelOperationSkillTests {
         verify(excelService).save(table);
     }
 
+    // ============================
+    // 标题：首次创建应用指令标题，覆盖已有数据时保留原标题
+    // ============================
+    @Test
+    void createTableAppliesInstructionTitleOnFirstCreate() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = new ExcelTable("user-1", "空表");
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "生成销售表：姓名,城市", "", "", ""));
+
+        assertTrue(result.success());
+        // 首次创建（还没有数据）时，指令里的「销售表」成为表格标题
+        assertEquals("销售表", table.getTitle());
+        verify(excelService).save(table);
+    }
+
+    @Test
+    void overwriteKeepsOriginalTitle() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();   // 标题「旧表」且已有数据
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "生成覆盖表格：姓名,城市", "", "", ""));
+
+        assertTrue(result.success());
+        // 覆盖已有数据时保留原标题，不被指令里的默认标题顶掉
+        assertEquals("旧表", table.getTitle());
+        assertEquals(List.of("姓名", "城市"), table.getHeaders());
+    }
+
     /** 已有非空数据的表格。 */
     private ExcelTable existingTable() {
         ExcelTable table = new ExcelTable("user-1", "旧表");
@@ -250,6 +287,28 @@ class ExcelOperationSkillTests {
             new SkillRequest("user-1", "恢复", "", "", "")).success());
         verify(excelService, atLeastOnce()).snapshotVersion(table, ExcelService.ROLLBACK_DESCRIPTION);
         verify(excelService, atLeastOnce()).consumeVersion(restored);
+
+        assertTrue(skill.execute(definition,
+            new SkillRequest("user-1", "请帮我回滚", "", "", "")).success());
+        verify(excelService, atLeastOnce()).restoreLatestVersion(table);
+    }
+
+    @Test
+    void createTableMultiLineInstructionUsesCleanTitle() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = new ExcelTable("user-1", "空表");
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1",
+                "生成销售表：姓名,城市\n张三,北京", "", "", ""));
+
+        assertTrue(result.success());
+        assertEquals("销售表", table.getTitle());
+        assertEquals(List.of("姓名", "城市"), table.getHeaders());
+        assertEquals(List.of(List.of("张三", "北京")), table.getRows());
     }
 
     @Test
