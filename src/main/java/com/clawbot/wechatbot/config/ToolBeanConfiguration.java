@@ -7,6 +7,7 @@ import com.clawbot.wechatbot.tools.bazitool.BaziFortuneTool;
 import com.clawbot.wechatbot.tools.calculatezodiacinfotool.CalculateZodiacInfoTool;
 import com.clawbot.wechatbot.tools.currenttimetool.CurrentTimeTool;
 import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
+import com.clawbot.wechatbot.tools.getrouteweathertool.GetRouteWeatherTool;
 import com.clawbot.wechatbot.tools.idcardtool.IdCardTool;
 import com.clawbot.wechatbot.tools.pathplantool.PathPlanTool;
 import com.clawbot.wechatbot.tools.searchWeatherTool.AmapWeatherTool;
@@ -35,6 +36,13 @@ public class ToolBeanConfiguration {
         return new AmapWeatherTool(
             config.getAmapWeatherApiKey(), config.getAmapWeatherEndpoint(),
             config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds());
+    }
+
+    @Bean
+    GetRouteWeatherTool getRouteWeatherTool(PathPlanTool pathPlanTool,
+                                            AmapWeatherTool amapWeatherTool,
+                                            ObjectMapper mapper) {
+        return new GetRouteWeatherTool(pathPlanTool, amapWeatherTool, mapper);
     }
 
     @Bean
