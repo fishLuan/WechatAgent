@@ -28,6 +28,12 @@ public final class ExcelPlanValidator {
         Map.entry(ExcelOperationType.FILL_MISSING, Set.of("column", "value")),
         Map.entry(ExcelOperationType.ROLLBACK, Set.of()),
         Map.entry(ExcelOperationType.VERSION_HISTORY, Set.of()),
+        Map.entry(ExcelOperationType.WORKBOOK_CREATE, Set.of("title")),
+        Map.entry(ExcelOperationType.WORKBOOK_LIST, Set.of()),
+        Map.entry(ExcelOperationType.WORKBOOK_SELECT, Set.of("name")),
+        Map.entry(ExcelOperationType.WORKBOOK_RENAME, Set.of("name", "newTitle")),
+        Map.entry(ExcelOperationType.WORKBOOK_DELETE, Set.of("name")),
+        Map.entry(ExcelOperationType.WORKBOOK_COPY, Set.of("name")),
         Map.entry(ExcelOperationType.KNOWLEDGE_ADD, Set.of("category", "content")),
         Map.entry(ExcelOperationType.KNOWLEDGE_LIST, Set.of()),
         Map.entry(ExcelOperationType.KNOWLEDGE_DELETE, Set.of("keyword")));
@@ -45,6 +51,12 @@ public final class ExcelPlanValidator {
         Map.entry(ExcelOperationType.FILL_MISSING, Set.of("column", "value")),
         Map.entry(ExcelOperationType.ROLLBACK, Set.of()),
         Map.entry(ExcelOperationType.VERSION_HISTORY, Set.of()),
+        Map.entry(ExcelOperationType.WORKBOOK_CREATE, Set.of("title")),
+        Map.entry(ExcelOperationType.WORKBOOK_LIST, Set.of()),
+        Map.entry(ExcelOperationType.WORKBOOK_SELECT, Set.of("name")),
+        Map.entry(ExcelOperationType.WORKBOOK_RENAME, Set.of("name", "newTitle")),
+        Map.entry(ExcelOperationType.WORKBOOK_DELETE, Set.of("name")),
+        Map.entry(ExcelOperationType.WORKBOOK_COPY, Set.of("name")),
         Map.entry(ExcelOperationType.KNOWLEDGE_ADD, Set.of("category", "content")),
         Map.entry(ExcelOperationType.KNOWLEDGE_LIST, Set.of()),
         Map.entry(ExcelOperationType.KNOWLEDGE_DELETE, Set.of("keyword")));
@@ -93,6 +105,8 @@ public final class ExcelPlanValidator {
             case GROUP_SUMMARY -> validateGroupSummary(operation, table);
             case FILL_MISSING -> validateFillMissing(operation, table);
             case VERSION_HISTORY -> Optional.empty();
+            case WORKBOOK_CREATE, WORKBOOK_LIST, WORKBOOK_SELECT, WORKBOOK_RENAME,
+                WORKBOOK_DELETE, WORKBOOK_COPY -> Optional.empty();
             case KNOWLEDGE_ADD -> validateKnowledgeAdd(operation);
             case KNOWLEDGE_LIST -> Optional.empty();
             case KNOWLEDGE_DELETE -> validateKnowledgeDelete(operation);

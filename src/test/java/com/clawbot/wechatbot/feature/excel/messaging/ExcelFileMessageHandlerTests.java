@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -52,7 +53,7 @@ class ExcelFileMessageHandlerTests {
         ExcelTable table = new ExcelTable("wechat-user", "旧表");
         table.setHeaders(List.of("旧列"));
         table.setRows(List.of(List.of("旧数据")));
-        when(excelService.loadOrCreate(anyString(), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(anyString())).thenReturn(table);
 
         ILinkClient client = mock(ILinkClient.class);
         byte[] bytes = xlsxBytes(List.of("姓名", "年龄"),
@@ -74,7 +75,7 @@ class ExcelFileMessageHandlerTests {
 
     @Test
     void handleReportsImportedRowCountOnFreshTable() throws Exception {
-        when(excelService.loadOrCreate(anyString(), anyString()))
+        when(excelService.createWorkbook(anyString(), anyString()))
             .thenReturn(new ExcelTable("wechat-user", "新表"));
 
         ILinkClient client = mock(ILinkClient.class);
@@ -94,7 +95,7 @@ class ExcelFileMessageHandlerTests {
 
     @Test
     void importReplyIncludesHeaderPreview() throws Exception {
-        when(excelService.loadOrCreate(anyString(), anyString()))
+        when(excelService.createWorkbook(anyString(), anyString()))
             .thenReturn(new ExcelTable("wechat-user", "新表"));
 
         ILinkClient client = mock(ILinkClient.class);
@@ -115,7 +116,7 @@ class ExcelFileMessageHandlerTests {
         ExcelTable table = new ExcelTable("wechat-user", "旧表");
         table.setHeaders(List.of("旧列"));
         table.setRows(List.of(List.of("旧数据")));
-        when(excelService.loadOrCreate(anyString(), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(anyString())).thenReturn(table);
 
         ILinkClient client = mock(ILinkClient.class);
         byte[] bytes = xlsxBytes(List.of("姓名", "年龄"),
@@ -135,7 +136,7 @@ class ExcelFileMessageHandlerTests {
         ExcelTable table = new ExcelTable("wechat-user", "旧表");
         table.setHeaders(List.of("旧列"));
         table.setRows(List.of(List.of("旧数据")));
-        when(excelService.loadOrCreate(anyString(), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(anyString())).thenReturn(table);
 
         ILinkClient client = mock(ILinkClient.class);
         byte[] bytes = xlsxBytes(List.of("姓名", "年龄"),
@@ -157,8 +158,6 @@ class ExcelFileMessageHandlerTests {
 
     @Test
     void handleRejectsOversizedFile() throws Exception {
-        when(excelService.loadOrCreate(anyString(), anyString()))
-            .thenReturn(new ExcelTable("wechat-user", "旧表"));
         ILinkClient client = mock(ILinkClient.class);
 
         ExcelFileMessageHandler handler = new ExcelFileMessageHandler(excelService);
@@ -171,8 +170,6 @@ class ExcelFileMessageHandlerTests {
 
     @Test
     void handleRejectsFakeXlsxFile() throws Exception {
-        when(excelService.loadOrCreate(anyString(), anyString()))
-            .thenReturn(new ExcelTable("wechat-user", "旧表"));
         ILinkClient client = mock(ILinkClient.class);
         when(client.downloadFileFromMessageItem(any(MessageItem.class)))
             .thenReturn("这不是一个zip文件".getBytes());
@@ -182,6 +179,30 @@ class ExcelFileMessageHandlerTests {
 
         assertLastReplyContains(client, "不是有效的 xlsx");
         verify(excelService, never()).save(any());
+    }
+
+    /** 没有活动表时：以文件名新建一张表并导入（多工作簿语义）。 */
+    @Test
+    void handleCreatesNewWorkbookWhenNoActiveTable() throws Exception {
+        ExcelTable table = new ExcelTable("wechat-user", "员工表");
+        when(excelService.createWorkbook(eq("wechat-user"), eq("员工表"))).thenReturn(table);
+
+        ILinkClient client = mock(ILinkClient.class);
+        byte[] bytes = xlsxBytes(List.of("姓名", "年龄"),
+            List.of(List.of("张三", "25")));
+        when(client.downloadFileFromMessageItem(any(MessageItem.class))).thenReturn(bytes);
+
+        ExcelFileMessageHandler handler = new ExcelFileMessageHandler(excelService);
+        handler.handle(client, xlsxMessage("员工表.xlsx", String.valueOf(bytes.length)));
+
+        // 新建的表成为导入目标：数据落表，且不产生替换快照
+        assertEquals(List.of("姓名", "年龄"), table.getHeaders());
+        assertEquals(1, table.getRows().size());
+        verify(excelService).createWorkbook("wechat-user", "员工表");
+        verify(excelService, never()).snapshotVersion(any(), anyString());
+        verify(excelService).save(table);
+        assertLastReplyContains(client, "已导入 1 行数据（2列）");
+        assertLastReplyNotContains(client, "替换");
     }
 
     /** 断言至少有一条回复包含指定文本。 */

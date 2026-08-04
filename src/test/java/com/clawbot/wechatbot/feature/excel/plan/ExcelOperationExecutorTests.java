@@ -10,6 +10,7 @@ import org.mockito.InOrder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -46,6 +47,12 @@ class ExcelOperationExecutorTests {
         new FillMissingHandler(excelService),
         new RollbackHandler(excelService),
         new VersionHistoryHandler(excelService),
+        new WorkbookCreateHandler(excelService),
+        new WorkbookListHandler(excelService),
+        new WorkbookSelectHandler(excelService),
+        new WorkbookRenameHandler(excelService),
+        new WorkbookDeleteHandler(excelService),
+        new WorkbookCopyHandler(excelService),
         new KnowledgeAddHandler(ragService),
         new KnowledgeListHandler(ragService),
         new KnowledgeDeleteHandler(ragService)));
@@ -197,7 +204,6 @@ class ExcelOperationExecutorTests {
     @Test
     void createTableOverwritesAndSnapshotsBefore() throws Exception {
         ExcelTable table = existingTable();
-        when(excelService.loadOrCreate(anyString(), anyString())).thenReturn(table);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
 
         OperationResult result = executor.execute(plan(
@@ -592,5 +598,190 @@ class ExcelOperationExecutorTests {
         inOrder.verify(excelService).snapshotVersion(table, "按年龄排序");
         inOrder.verify(excelService).toXlsx(table);
         inOrder.verify(excelService).save(table);
+    }
+
+    // ============================
+    // 工作簿管理操作（纯文字回复，不导出附件、不快照）
+    // ============================
+    @Test
+    void workbookCreateHandlerCreatesWorkbookAndReplies() throws Exception {
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.WORKBOOK_CREATE, Map.of("title", "销售表"))),
+            existingTable());
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已新建表格「销售表」"));
+        assertNull(result.attachment());
+        verify(excelService).createWorkbook("user-1", "销售表");
+    }
+
+    @Test
+    void workbookListHandlerRepliesTitlesAndMarksActive() throws Exception {
+        ExcelTable t1 = new ExcelTable("user-1", "销售表");
+        t1.setId("t1");
+        ExcelTable t2 = new ExcelTable("user-1", "周报");
+        t2.setId("t2");
+        when(excelService.listWorkbooks("user-1")).thenReturn(List.of(t1, t2));
+        when(excelService.getActiveWorkbook("user-1")).thenReturn(t2);
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.WORKBOOK_LIST, Map.of())), existingTable());
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("共 2 张表格"));
+        assertTrue(result.text().contains("销售表"));
+        assertTrue(result.text().contains("周报（当前）"));
+        assertNull(result.attachment());
+    }
+
+    @Test
+    void workbookListHandlerEmptyReply() throws Exception {
+        when(excelService.listWorkbooks("user-1")).thenReturn(List.of());
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.WORKBOOK_LIST, Map.of())), existingTable());
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("还没有表格"));
+    }
+
+    @Test
+    void workbookSelectHandlerSwitchesActiveWorkbook() throws Exception {
+        ExcelTable t1 = new ExcelTable("user-1", "销售表");
+        t1.setId("t1");
+        when(excelService.listWorkbooks("user-1")).thenReturn(List.of(t1));
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.WORKBOOK_SELECT, Map.of("name", "销售表"))),
+            existingTable());
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已切换到表格「销售表」"));
+        verify(excelService).setActiveWorkbook("user-1", t1);
+    }
+
+    /** 选择不存在的表格：明确提示并给出现有列表，不切换。 */
+    @Test
+    void workbookSelectNotFoundListsExistingTitles() throws Exception {
+        ExcelTable t1 = new ExcelTable("user-1", "销售表");
+        t1.setId("t1");
+        when(excelService.listWorkbooks("user-1")).thenReturn(List.of(t1));
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.WORKBOOK_SELECT, Map.of("name", "不存在"))),
+            existingTable());
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("找不到表格「不存在」"));
+        assertTrue(result.text().contains("销售表"));
+    }
+
+    /** 选择同名表格：命中第一张并提示重名。 */
+    @Test
+    void workbookSelectWithDuplicateTitlesPicksFirstAndNotes() throws Exception {
+        ExcelTable first = new ExcelTable("user-1", "销售表");
+        first.setId("t1");
+        ExcelTable second = new ExcelTable("user-1", "销售表");
+        second.setId("t2");
+        when(excelService.listWorkbooks("user-1")).thenReturn(List.of(first, second));
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.WORKBOOK_SELECT, Map.of("name", "销售表"))),
+            existingTable());
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已切换到表格「销售表」"));
+        assertTrue(result.text().contains("2 张同名表格"));
+        verify(excelService).setActiveWorkbook("user-1", first);
+    }
+
+    @Test
+    void workbookRenameHandlerRenamesAndKeepsActive() throws Exception {
+        ExcelTable t1 = new ExcelTable("user-1", "销售表");
+        t1.setId("t1");
+        ExcelTable renamed = new ExcelTable("user-1", "月度销售");
+        renamed.setId("t1");
+        when(excelService.listWorkbooks("user-1")).thenReturn(List.of(t1));
+        when(excelService.renameWorkbook("user-1", "t1", "月度销售"))
+            .thenReturn(Optional.of(renamed));
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.WORKBOOK_RENAME,
+                Map.of("name", "销售表", "newTitle", "月度销售"))), existingTable());
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已重命名表格「销售表」为「月度销售」"));
+        verify(excelService).renameWorkbook("user-1", "t1", "月度销售");
+    }
+
+    /** 删除的是活动表：提示已无当前表。 */
+    @Test
+    void workbookDeleteHandlerDeletesAndNotesNoActiveTable() throws Exception {
+        ExcelTable t1 = new ExcelTable("user-1", "销售表");
+        t1.setId("t1");
+        when(excelService.listWorkbooks("user-1")).thenReturn(List.of(t1));
+        when(excelService.deleteWorkbook("user-1", "t1")).thenReturn(true);
+        when(excelService.getActiveWorkbook("user-1")).thenReturn(t1);
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.WORKBOOK_DELETE, Map.of("name", "销售表"))),
+            existingTable());
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已删除表格「销售表」"));
+        assertTrue(result.text().contains("已无当前表"));
+        verify(excelService).deleteWorkbook("user-1", "t1");
+    }
+
+    /** 删除的不是活动表：正常提示，不提及当前表。 */
+    @Test
+    void workbookDeleteHandlerKeepsActiveTableMention() throws Exception {
+        ExcelTable t1 = new ExcelTable("user-1", "销售表");
+        t1.setId("t1");
+        ExcelTable active = new ExcelTable("user-1", "周报");
+        active.setId("t2");
+        when(excelService.listWorkbooks("user-1")).thenReturn(List.of(t1, active));
+        when(excelService.deleteWorkbook("user-1", "t1")).thenReturn(true);
+        when(excelService.getActiveWorkbook("user-1")).thenReturn(active);
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.WORKBOOK_DELETE, Map.of("name", "销售表"))),
+            existingTable());
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已删除表格「销售表」"));
+        assertFalse(result.text().contains("已无当前表"));
+    }
+
+    @Test
+    void workbookCopyHandlerCopiesAndSwitches() throws Exception {
+        ExcelTable t1 = new ExcelTable("user-1", "销售表");
+        t1.setId("t1");
+        ExcelTable copy = new ExcelTable("user-1", "销售表副本");
+        copy.setId("t2");
+        when(excelService.listWorkbooks("user-1")).thenReturn(List.of(t1));
+        when(excelService.copyWorkbook("user-1", "t1")).thenReturn(Optional.of(copy));
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.WORKBOOK_COPY, Map.of("name", "销售表"))),
+            existingTable());
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已复制表格「销售表」为「销售表副本」"));
+        verify(excelService).copyWorkbook("user-1", "t1");
+    }
+
+    /** 删除不存在的表格：明确提示并给出现有列表。 */
+    @Test
+    void workbookDeleteNotFoundListsExistingTitles() throws Exception {
+        when(excelService.listWorkbooks("user-1")).thenReturn(List.of());
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.WORKBOOK_DELETE, Map.of("name", "不存在"))),
+            existingTable());
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("找不到表格「不存在」"));
+        assertTrue(result.text().contains("还没有表格"));
     }
 }

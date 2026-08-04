@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -64,7 +65,7 @@ class ExcelScreenshotMessageHandlerTests {
     @Test
     void handleRecognizesTableAndSaves() throws Exception {
         ExcelTable table = new ExcelTable("wechat-user", "旧表");
-        when(excelService.loadOrCreate(anyString(), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(anyString())).thenReturn(table);
         when(visionService.isConfigured()).thenReturn(true);
         when(visionService.understandImage(any(), anyString()))
             .thenReturn("姓名,年龄\n张三,25\n李四,30");
@@ -89,8 +90,6 @@ class ExcelScreenshotMessageHandlerTests {
 
     @Test
     void handleFailsGracefullyWhenVisionReturnsUnparseableText() throws Exception {
-        when(excelService.loadOrCreate(anyString(), anyString()))
-            .thenReturn(new ExcelTable("wechat-user", "旧表"));
         when(visionService.isConfigured()).thenReturn(true);
         when(visionService.understandImage(any(), anyString()))
             .thenReturn("这张图里没有表格");
@@ -109,7 +108,7 @@ class ExcelScreenshotMessageHandlerTests {
         ExcelTable table = new ExcelTable("wechat-user", "旧表");
         table.setHeaders(List.of("旧列"));
         table.setRows(List.of(List.of("旧数据")));
-        when(excelService.loadOrCreate(anyString(), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(anyString())).thenReturn(table);
         when(visionService.isConfigured()).thenReturn(true);
         when(visionService.understandImage(any(), anyString()))
             .thenReturn("姓名,年龄\n张三,25");
@@ -123,6 +122,30 @@ class ExcelScreenshotMessageHandlerTests {
         // 替换已有表格前先快照，保留原数据以便回滚
         verify(excelService).snapshotVersion(table, "覆盖生成表格");
         verify(excelService).save(table);
+    }
+
+    /** 没有活动表时：以「截图表格」新建一张并导入（多工作簿语义）。 */
+    @Test
+    void handleCreatesNewWorkbookWhenNoActiveTable() throws Exception {
+        ExcelTable table = new ExcelTable("wechat-user", "截图表格");
+        when(excelService.createWorkbook(eq("wechat-user"), eq("截图表格"))).thenReturn(table);
+        when(visionService.isConfigured()).thenReturn(true);
+        when(visionService.understandImage(any(), anyString()))
+            .thenReturn("姓名,年龄\n张三,25");
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ILinkClient client = mock(ILinkClient.class);
+        when(client.downloadImageFromMessageItem(any(MessageItem.class)))
+            .thenReturn(new byte[]{1, 2, 3});
+
+        handler.handle(client, imageMessage("做成表格"));
+
+        // 新建的表成为导入目标：数据落表，不产生替换快照
+        assertEquals(List.of("姓名", "年龄"), table.getHeaders());
+        assertEquals(1, table.getRows().size());
+        verify(excelService).createWorkbook("wechat-user", "截图表格");
+        verify(excelService, never()).snapshotVersion(any(), anyString());
+        verify(excelService).save(table);
+        assertLastReplyContains(client, "可直接继续编辑");
     }
 
     /** 断言至少有一条回复包含指定文本。 */

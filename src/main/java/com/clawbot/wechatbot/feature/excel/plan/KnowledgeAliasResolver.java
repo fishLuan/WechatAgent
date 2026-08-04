@@ -30,9 +30,10 @@ public final class KnowledgeAliasResolver {
         this.excelRagService = excelRagService;
     }
 
-    /** 对每个操作的列类参数尝试知识库映射；未命中或 RAG 为空时计划原样返回。 */
+    /** 对每个操作的列类参数尝试知识库映射；未命中、RAG 为空或表格为空（工作簿管理指令）时计划原样返回。 */
     public ResolvedPlan resolve(ExcelPlan plan, ExcelTable table) {
-        if (excelRagService == null || plan == null || plan.operations().isEmpty()) {
+        if (excelRagService == null || plan == null || plan.operations().isEmpty()
+            || table == null) {
             return new ResolvedPlan(plan, List.of());
         }
         List<String> notes = new ArrayList<>();

@@ -24,7 +24,7 @@ import java.util.Optional;
  * 表格截图消息处理器：
  *   消息含图片且文本带表格意图关键词（如「表格」「excel」）时，
  *   调用视觉模型把截图中的表格提取为文本 → 组装 CREATE_TABLE 计划
- *   → 走「校验 → 执行」导入为当前用户的表格（截图转表格视为显式替换）。
+ *   → 走「校验 → 执行」导入到当前活动表（无则新建，截图转表格视为显式替换）。
  *
  * 优先级：低于 ImageMessageHandler(10)，带表格关键词的图片先被本处理器接收；
  * 不含关键词的图片消息仍由 ImageMessageHandler 走通用图片描述。
@@ -102,8 +102,12 @@ public final class ExcelScreenshotMessageHandler implements MessageHandler {
             }
 
             // 5. 组装 CREATE_TABLE 计划并走「校验 → 执行」：
-            //    用户主动发截图转表格视为显式替换意图，overwrite 恒为 true
-            ExcelTable table = excelService.loadOrCreate(from, TABLE_TITLE);
+            //    用户主动发截图转表格视为显式替换意图，overwrite 恒为 true；
+            //    导入到当前活动表，没有活动表时以「截图表格」新建一张并设为活动表
+            ExcelTable table = excelService.getActiveWorkbook(from);
+            if (table == null) {
+                table = excelService.createWorkbook(from, TABLE_TITLE);
+            }
             boolean replaced = !table.getHeaders().isEmpty() || !table.getRows().isEmpty();
             ExcelPlan plan = buildPlan(from, parsed);
             Optional<String> validationError = planValidator.validate(plan, table);

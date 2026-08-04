@@ -490,4 +490,85 @@ class ExcelPlanParserTests {
         assertEquals(1, plan.operations().size());
         assertEquals(ExcelOperationType.ADD_ROW, plan.operations().get(0).type());
     }
+
+    // ============================
+    // 工作簿管理指令路由（多工作簿）
+    // ============================
+    @Test
+    void workbookCreateRoutesToWorkbookCreate() {
+        ExcelOperation op = parseSingle("新建表格 销售表");
+        assertEquals(ExcelOperationType.WORKBOOK_CREATE, op.type());
+        assertEquals("销售表", op.param("title"));
+        assertEquals("周报", parseSingle("新建工作簿 周报").param("title"));
+        assertEquals("销售表", parseSingle("新建表格名字 销售表").param("title"));
+        assertEquals("销售表", parseSingle("请新建表格：销售表").param("title"));
+    }
+
+    /** 「新建表格 X」带表格数据（换行/分隔符）时仍是生成表格，名称不能成为工作簿标题。 */
+    @Test
+    void workbookCreateWithTableDataStaysCreateTable() {
+        ExcelOperation op = parseSingle("新建表格：姓名,城市\n张三,北京");
+        assertEquals(ExcelOperationType.CREATE_TABLE, op.type());
+        assertEquals("姓名,城市", op.param("headers"));
+        assertEquals("张三,北京", op.param("rows"));
+        assertEquals(ExcelOperationType.CREATE_TABLE, parseSingle("新建表格：姓名,城市").type());
+    }
+
+    @Test
+    void workbookListPhrasesRouteToWorkbookList() {
+        assertEquals(ExcelOperationType.WORKBOOK_LIST, parseSingle("我的表格").type());
+        assertEquals(ExcelOperationType.WORKBOOK_LIST, parseSingle("表格列表").type());
+        assertEquals(ExcelOperationType.WORKBOOK_LIST, parseSingle("查看表格列表").type());
+        assertEquals(ExcelOperationType.WORKBOOK_LIST, parseSingle("有哪些表格").type());
+    }
+
+    @Test
+    void workbookSelectRoutesToWorkbookSelect() {
+        ExcelOperation op = parseSingle("选择表格 销售表");
+        assertEquals(ExcelOperationType.WORKBOOK_SELECT, op.type());
+        assertEquals("销售表", op.param("name"));
+        assertEquals("销售表", parseSingle("切换到表格 销售表").param("name"));
+        assertEquals("销售表", parseSingle("打开表格 销售表").param("name"));
+    }
+
+    @Test
+    void workbookRenameRoutesToWorkbookRename() {
+        ExcelOperation op = parseSingle("重命名表格 销售表为月度销售");
+        assertEquals(ExcelOperationType.WORKBOOK_RENAME, op.type());
+        assertEquals("销售表", op.param("name"));
+        assertEquals("月度销售", op.param("newTitle"));
+        ExcelOperation prefixed = parseSingle("把表格销售表改名为月度销售");
+        assertEquals(ExcelOperationType.WORKBOOK_RENAME, prefixed.type());
+        assertEquals("销售表", prefixed.param("name"));
+        assertEquals("月度销售", prefixed.param("newTitle"));
+    }
+
+    @Test
+    void workbookDeleteRoutesToWorkbookDelete() {
+        ExcelOperation op = parseSingle("删除表格 销售表");
+        assertEquals(ExcelOperationType.WORKBOOK_DELETE, op.type());
+        assertEquals("销售表", op.param("name"));
+        assertEquals("销售表", parseSingle("删除工作簿 销售表").param("name"));
+    }
+
+    @Test
+    void workbookCopyRoutesToWorkbookCopy() {
+        ExcelOperation op = parseSingle("复制表格 销售表");
+        assertEquals(ExcelOperationType.WORKBOOK_COPY, op.type());
+        assertEquals("销售表", op.param("name"));
+        assertEquals("销售表", parseSingle("复制工作簿 销售表").param("name"));
+    }
+
+    /** 工作簿管理路由不应改变既有指令的路由结果（生成/加行/删除行/去重/知识/版本历史/回滚）。 */
+    @Test
+    void existingRoutesUnchangedByWorkbookRouting() {
+        assertEquals(ExcelOperationType.CREATE_TABLE, parseSingle("生成表格：姓名,城市").type());
+        assertEquals(ExcelOperationType.ADD_ROW, parseSingle("添加一行：张三,25,北京").type());
+        assertEquals(ExcelOperationType.DELETE_ROW, parseSingle("删除第2行").type());
+        assertEquals(ExcelOperationType.DEDUPLICATE, parseSingle("删除重复订单").type());
+        assertEquals(ExcelOperationType.KNOWLEDGE_ADD,
+            parseSingle("添加知识：字段映射 营收→营业收入").type());
+        assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("查看版本历史").type());
+        assertEquals(ExcelOperationType.ROLLBACK, parseSingle("撤销").type());
+    }
 }

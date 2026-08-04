@@ -2,8 +2,10 @@ package com.clawbot.wechatbot.feature.excel;
 
 import com.clawbot.wechatbot.feature.excel.model.ExcelTable;
 import com.clawbot.wechatbot.feature.excel.model.ExcelTableVersion;
+import com.clawbot.wechatbot.feature.excel.model.ExcelUserState;
 import com.clawbot.wechatbot.feature.excel.repository.ExcelTableRepository;
 import com.clawbot.wechatbot.feature.excel.repository.ExcelTableVersionRepository;
+import com.clawbot.wechatbot.feature.excel.repository.ExcelUserStateRepository;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.CellType;
@@ -15,7 +17,10 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+
+import jakarta.annotation.PostConstruct;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -27,10 +32,13 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 
 /** Excel 表格核心服务：解析表格文本、POI 生成 .xlsx、列聚合查询。 */
 @Component
@@ -68,11 +76,22 @@ public class ExcelService {
 
     private final ExcelTableRepository repository;
     private final ExcelTableVersionRepository versionRepository;
+    private final ExcelUserStateRepository stateRepository;
 
+    /** 测试/旧场景构造器：不注入用户状态仓库（工作簿管理方法不可用）。 */
     public ExcelService(ExcelTableRepository repository,
                         ExcelTableVersionRepository versionRepository) {
+        this(repository, versionRepository, null);
+    }
+
+    /** Spring 装配：注入用户状态仓库，提供多工作簿（活动表）管理能力。 */
+    @Autowired
+    public ExcelService(ExcelTableRepository repository,
+                        ExcelTableVersionRepository versionRepository,
+                        ExcelUserStateRepository stateRepository) {
         this.repository = repository;
         this.versionRepository = versionRepository;
+        this.stateRepository = stateRepository;
     }
 
     /** 解析后的表格结构：表头 + 数据行。 */
@@ -95,10 +114,11 @@ public class ExcelService {
 
     /* ========== 表格状态（Mongo 持久化） ========== */
 
+    /** 取或建（旧「一张表」语义，多工作簿后不再使用；取该用户第一张表）。 */
     public ExcelTable loadOrCreate(String userId, String title) {
-        Optional<ExcelTable> existing = repository.findByWechatUserId(userId);
-        if (existing.isPresent()) {
-            return existing.get();
+        List<ExcelTable> existing = repository.findByWechatUserId(userId);
+        if (!existing.isEmpty()) {
+            return existing.get(0);
         }
         ExcelTable table = new ExcelTable(userId, title);
         return repository.save(table);
@@ -107,6 +127,129 @@ public class ExcelService {
     public ExcelTable save(ExcelTable table) {
         table.setUpdatedAt(Instant.now());
         return repository.save(table);
+    }
+
+    /**
+     * 存量数据回填：多工作簿上线前，老用户可能已有表但没有 excel_user_state 记录。
+     * 启动时把这类用户"最早创建的表"设为活动表，避免老用户收到"还没有表格"提示。
+     */
+    @PostConstruct
+    void backfillActiveWorkbooks() {
+        if (stateRepository == null) {
+            return; // 测试/旧构造器场景
+        }
+        Set<String> usersWithState = new HashSet<>();
+        for (ExcelUserState state : stateRepository.findAll()) {
+            usersWithState.add(state.getWechatUserId());
+        }
+        repository.findAll().stream()
+            .sorted(Comparator.comparing(ExcelTable::getCreatedAt,
+                Comparator.nullsLast(Comparator.naturalOrder())))
+            .forEach(table -> {
+                if (!usersWithState.contains(table.getWechatUserId())) {
+                    setActiveWorkbook(table.getWechatUserId(), table);
+                    usersWithState.add(table.getWechatUserId());
+                }
+            });
+    }
+
+    /* ========== 工作簿管理（多表，按活动表定位） ========== */
+
+    /**
+     * 读用户状态返回当前活动表；无状态记录、状态无活动表或表已不存在时返回 null。
+     * （活动表被删除时状态一并置空，此分支仅兜底历史脏数据）
+     */
+    public ExcelTable getActiveWorkbook(String wechatUserId) {
+        Optional<ExcelUserState> state = stateRepository.findByWechatUserId(wechatUserId);
+        if (state.isEmpty() || state.get().getActiveWorkbookId() == null
+            || state.get().getActiveWorkbookId().isBlank()) {
+            return null;
+        }
+        return repository.findById(state.get().getActiveWorkbookId()).orElse(null);
+    }
+
+    /** 保存活动表（无状态记录时新建，否则更新），返回该表。 */
+    public ExcelTable setActiveWorkbook(String wechatUserId, ExcelTable table) {
+        if (table == null || table.getId() == null || table.getId().isBlank()) {
+            return table;
+        }
+        ExcelUserState state = stateRepository.findByWechatUserId(wechatUserId)
+            .orElseGet(() -> new ExcelUserState(wechatUserId));
+        state.setActiveWorkbookId(table.getId());
+        stateRepository.save(state);
+        return table;
+    }
+
+    /** 新建一张表并设为活动表。 */
+    public ExcelTable createWorkbook(String wechatUserId, String title) {
+        ExcelTable table = repository.save(new ExcelTable(wechatUserId, title));
+        setActiveWorkbook(wechatUserId, table);
+        return table;
+    }
+
+    /** 某用户的全部表格，按创建时间升序（创建顺序）。 */
+    public List<ExcelTable> listWorkbooks(String wechatUserId) {
+        return repository.findByWechatUserId(wechatUserId).stream()
+            .sorted(Comparator.comparing(ExcelTable::getCreatedAt))
+            .toList();
+    }
+
+    /** 按 id 取表并校验归属：不是该用户的表（或不存在）返回 null。 */
+    public ExcelTable findWorkbookById(String wechatUserId, String workbookId) {
+        if (workbookId == null || workbookId.isBlank()) {
+            return null;
+        }
+        Optional<ExcelTable> table = repository.findById(workbookId);
+        if (table.isEmpty() || !wechatUserId.equals(table.get().getWechatUserId())) {
+            return null;
+        }
+        return table.get();
+    }
+
+    /** 改标题；表不存在或非该用户所有时返回 empty。 */
+    public Optional<ExcelTable> renameWorkbook(String wechatUserId, String workbookId,
+                                               String newTitle) {
+        ExcelTable table = findWorkbookById(wechatUserId, workbookId);
+        if (table == null) {
+            return Optional.empty();
+        }
+        table.setTitle(newTitle);
+        return Optional.of(repository.save(table));
+    }
+
+    /** 删除表 + 其全部版本快照；删除的是活动表时活动状态置空；表不存在或非该用户所有时返回 false。 */
+    public boolean deleteWorkbook(String wechatUserId, String workbookId) {
+        ExcelTable table = findWorkbookById(wechatUserId, workbookId);
+        if (table == null) {
+            return false;
+        }
+        // 级联删除该表全部版本快照（版本按 tableId 隔离，与回滚互不影响）
+        List<ExcelTableVersion> versions =
+            versionRepository.findByTableIdOrderByCreatedAtDesc(table.getId());
+        versionRepository.deleteAll(versions);
+        repository.delete(table);
+        // 删除的是活动表时，活动状态置空（此后指令提示先建表）
+        stateRepository.findByWechatUserId(wechatUserId).ifPresent(state -> {
+            if (workbookId.equals(state.getActiveWorkbookId())) {
+                state.setActiveWorkbookId(null);
+                stateRepository.save(state);
+            }
+        });
+        return true;
+    }
+
+    /** 复制表（新 id、标题加「副本」，不含版本历史）并设为活动表；源表不存在或非该用户所有时返回 empty。 */
+    public Optional<ExcelTable> copyWorkbook(String wechatUserId, String workbookId) {
+        ExcelTable source = findWorkbookById(wechatUserId, workbookId);
+        if (source == null) {
+            return Optional.empty();
+        }
+        ExcelTable copy = new ExcelTable(wechatUserId, source.getTitle() + "副本");
+        copy.setHeaders(source.getHeaders());
+        copy.setRows(source.getRows());
+        ExcelTable saved = repository.save(copy);
+        setActiveWorkbook(wechatUserId, saved);
+        return Optional.of(saved);
     }
 
     /* ========== 版本快照与回滚 ========== */

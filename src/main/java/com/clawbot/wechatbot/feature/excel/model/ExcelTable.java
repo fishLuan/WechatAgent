@@ -8,12 +8,12 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
-/** 按微信用户隔离的 Excel 表格状态（Mongo 持久化，重启不丢失）。 */
+/** 按微信用户隔离的 Excel 表格状态（Mongo 持久化，重启不丢失；一个用户可有多张表）。 */
 @Document(collection = "excel_table")
 public class ExcelTable {
     @Id
     private String id;
-    @Indexed(unique = true)
+    @Indexed
     private String wechatUserId;
     private String title;
     private List<String> headers = new ArrayList<>();

@@ -36,7 +36,7 @@ class ExcelOperationSkillTests {
     @Test
     void refusesToOverwriteExistingTableWithoutCoverKeyword() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
-        when(excelService.loadOrCreate(eq("user-1"), anyString()))
+        when(excelService.getActiveWorkbook(eq("user-1")))
             .thenReturn(existingTable());
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -51,7 +51,7 @@ class ExcelOperationSkillTests {
     @Test
     void blockedMessageShowsCorrectOverwriteExample() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
-        when(excelService.loadOrCreate(eq("user-1"), anyString()))
+        when(excelService.getActiveWorkbook(eq("user-1")))
             .thenReturn(existingTable());
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -68,7 +68,7 @@ class ExcelOperationSkillTests {
     void overwriteWithMultiLineDataAfterColonKeepsAllRows() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -87,7 +87,7 @@ class ExcelOperationSkillTests {
     void plainPasteWithColonInDataIsNotChopped() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = new ExcelTable("user-1", "空表");
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -104,7 +104,7 @@ class ExcelOperationSkillTests {
     @Test
     void coverKeywordInsideDataDoesNotUnlockOverwrite() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
-        when(excelService.loadOrCreate(eq("user-1"), anyString()))
+        when(excelService.getActiveWorkbook(eq("user-1")))
             .thenReturn(existingTable());
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -120,7 +120,7 @@ class ExcelOperationSkillTests {
     void createTableExportFailureDoesNotPersist() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = new ExcelTable("user-1", "空表");
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenThrow(
             new IllegalArgumentException("❌ 公式存在错误，已取消导出：单元格 B1 为 #DIV/0!。"));
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
@@ -138,7 +138,7 @@ class ExcelOperationSkillTests {
     void addRowExportFailureDoesNotPersist() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenThrow(
             new IllegalArgumentException("❌ 公式存在错误，已取消导出：单元格 B2 为 #DIV/0!。"));
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
@@ -154,7 +154,7 @@ class ExcelOperationSkillTests {
     void overwritesExistingTableWhenInstructionContainsCover() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -170,7 +170,7 @@ class ExcelOperationSkillTests {
     void overwritesEmptyTableWithoutCoverKeyword() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = new ExcelTable("user-1", "空表");
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -189,7 +189,7 @@ class ExcelOperationSkillTests {
     void createTableAppliesInstructionTitleOnFirstCreate() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = new ExcelTable("user-1", "空表");
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -206,7 +206,7 @@ class ExcelOperationSkillTests {
     void overwriteKeepsOriginalTitle() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();   // 标题「旧表」且已有数据
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -234,7 +234,7 @@ class ExcelOperationSkillTests {
     void rollbackWithoutVersionsReturnsFailure() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.versionCount(table)).thenReturn(0L);
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -252,7 +252,7 @@ class ExcelOperationSkillTests {
     void rollbackRestoresLatestVersionAndExportsAttachment() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.versionCount(table)).thenReturn(1L);
         ExcelTableVersion restored = new ExcelTableVersion(
             "t1", List.of("姓名"), List.of(), "添加第1行");
@@ -276,7 +276,7 @@ class ExcelOperationSkillTests {
     void rollbackAliasesUndoAndRestoreDispatch() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.versionCount(table)).thenReturn(1L);
         ExcelTableVersion restored = new ExcelTableVersion(
             "t1", List.of("姓名"), List.of(), "添加第1行");
@@ -302,7 +302,7 @@ class ExcelOperationSkillTests {
     void createTableMultiLineInstructionUsesCleanTitle() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = new ExcelTable("user-1", "空表");
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -320,7 +320,7 @@ class ExcelOperationSkillTests {
     void undoPhraseWithDeleteDescriptionRoutesToRollbackNotDelete() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.versionCount(table)).thenReturn(1L);
         ExcelTableVersion restored = new ExcelTableVersion(
             "t1", List.of("姓名"), List.of(), "添加第1行");
@@ -341,7 +341,7 @@ class ExcelOperationSkillTests {
     void rollbackExportFailureDoesNotConsumeVersion() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.versionCount(table)).thenReturn(1L);
         ExcelTableVersion restored = new ExcelTableVersion(
             "t1", List.of("姓名"), List.of(), "添加第1行");
@@ -363,7 +363,7 @@ class ExcelOperationSkillTests {
     void versionHistoryReportsCountAndRecentDescriptions() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.versionCount(table)).thenReturn(2L);
         ExcelTableVersion v1 = new ExcelTableVersion(
             "t1", List.of("姓名"), List.of(), "添加第1行");
@@ -385,7 +385,7 @@ class ExcelOperationSkillTests {
     void versionHistoryWithoutVersionsReturnsHint() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.versionCount(table)).thenReturn(0L);
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -405,7 +405,7 @@ class ExcelOperationSkillTests {
         ExcelTable table = existingTable();
         table.setRows(new ArrayList<>(List.of(
             List.of("李四", "30"), List.of("张三", "25"))));
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -426,7 +426,7 @@ class ExcelOperationSkillTests {
         ExcelTable table = existingTable();
         table.setRows(new ArrayList<>(List.of(
             List.of("李四", "30"), List.of("李四", "30"))));
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -445,7 +445,7 @@ class ExcelOperationSkillTests {
         table.setHeaders(List.of("地区", "销售额"));
         table.setRows(new ArrayList<>(List.of(
             List.of("北京", "100"), List.of("上海", "200"), List.of("北京", "300"))));
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -465,7 +465,7 @@ class ExcelOperationSkillTests {
         table.setHeaders(List.of("姓名", "年龄"));
         table.setRows(new ArrayList<>(List.of(
             new ArrayList<>(List.of("李四", "")), new ArrayList<>(List.of("张三", "25")))));
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -481,7 +481,7 @@ class ExcelOperationSkillTests {
     @Test
     void analysisOperationWithUnknownColumnFailsValidation() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(existingTable());
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(existingTable());
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
         SkillResult result = skill.execute(definition,
@@ -502,7 +502,7 @@ class ExcelOperationSkillTests {
         table.setHeaders(List.of("地区", "销售额"));
         table.setRows(new ArrayList<>(List.of(
             List.of("北京", "100"), List.of("北京", "100"), List.of("上海", "200"))));
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
@@ -524,7 +524,7 @@ class ExcelOperationSkillTests {
     @Test
     void fallbackMessageListsAnalysisOperations() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(existingTable());
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(existingTable());
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
         SkillResult result = skill.execute(definition,
@@ -543,7 +543,7 @@ class ExcelOperationSkillTests {
     @Test
     void knowledgeAddInstructionEndToEnd() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(existingTable());
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(existingTable());
         ExcelRagService ragService = mock(ExcelRagService.class);
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService, ragService);
 
@@ -563,7 +563,7 @@ class ExcelOperationSkillTests {
     @Test
     void knowledgeListInstructionEndToEnd() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(existingTable());
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(existingTable());
         ExcelRagService ragService = mock(ExcelRagService.class);
         ExcelRagKnowledge rule = new ExcelRagKnowledge("BUSINESS_RULE",
             List.of("毛利", "毛利润"), null, "毛利润 = 营业收入 - 营业成本", null);
@@ -583,7 +583,7 @@ class ExcelOperationSkillTests {
     @Test
     void knowledgeDeleteInstructionEndToEnd() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(existingTable());
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(existingTable());
         ExcelRagService ragService = mock(ExcelRagService.class);
         when(ragService.deleteByKeyword("营收")).thenReturn(true);
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService, ragService);
@@ -599,7 +599,7 @@ class ExcelOperationSkillTests {
     @Test
     void knowledgeDeleteWithoutMatchReturnsFailure() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(existingTable());
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(existingTable());
         ExcelRagService ragService = mock(ExcelRagService.class);
         when(ragService.deleteByKeyword("不存在")).thenReturn(false);
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService, ragService);
@@ -621,7 +621,7 @@ class ExcelOperationSkillTests {
         ExcelTable table = existingTable();
         table.setHeaders(List.of("营业收入", "地区"));
         table.setRows(new ArrayList<>(List.of(List.of("100", "北京"))));
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.queryColumn(eq(table), eq("营业收入"), eq(ExcelService.QueryType.SUM)))
             .thenReturn("📊 营业收入列的合计：100.00（基于 1 个数值）");
         ExcelRagService ragService = mock(ExcelRagService.class);
@@ -645,7 +645,7 @@ class ExcelOperationSkillTests {
         ExcelTable table = existingTable();
         table.setHeaders(List.of("当前库存", "安全库存"));
         table.setRows(new ArrayList<>(List.of(List.of("10", "20"))));
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.queryColumn(eq(table), eq("当前库存"), eq(ExcelService.QueryType.MAX)))
             .thenReturn("📊 当前库存列的最大值：10（基于 1 个数值）");
         ExcelRagService ragService = mock(ExcelRagService.class);
@@ -667,7 +667,7 @@ class ExcelOperationSkillTests {
     void singleArgConstructorWithoutRagKeepsBehaviorUnchanged() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();
-        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
         when(excelService.queryColumn(any(), eq("营业额"), any()))
             .thenReturn("❌ 找不到列「营业额」，现有列：姓名、年龄");
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
@@ -678,5 +678,85 @@ class ExcelOperationSkillTests {
         // 无知识库：不解析别名，按原别名执行查询（找不到列是既有行为）
         assertTrue(result.text().contains("找不到列"));
         verify(excelService).queryColumn(eq(table), eq("营业额"), eq(ExcelService.QueryType.SUM));
+    }
+
+    // ============================
+    // 多工作簿：无活动表报错、工作簿管理指令、新建后旧指令作用于新表
+    // ============================
+    /** 没有活动表时，旧指令（生成/增删改行/分析等）给出明确报错，不落库。 */
+    @Test
+    void instructionWithoutActiveWorkbookReturnsClearHint() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "生成表格：姓名,城市", "", "", ""));
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("还没有表格，请先发送「新建表格 名字」创建"));
+        assertTrue(result.text().contains("上传 xlsx"));
+        verify(excelService, never()).save(any());
+    }
+
+    /** 新建工作簿指令不需要活动表：直接新建并切换为当前表格（纯文字回复）。 */
+    @Test
+    void createWorkbookInstructionCreatesAndSwitchesActiveTable() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "新建表格 销售表", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已新建表格「销售表」"));
+        assertTrue(result.text().contains("切换为当前表格"));
+        assertTrue(result.attachments().isEmpty());
+        verify(excelService).createWorkbook("user-1", "销售表");
+    }
+
+    /** 工作簿管理指令不需要活动表：没有活动表也能查看表格列表。 */
+    @Test
+    void workbookListInstructionWorksWithoutActiveWorkbook() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = new ExcelTable("user-1", "销售表");
+        table.setId("t1");
+        when(excelService.listWorkbooks("user-1")).thenReturn(List.of(table));
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "查看表格列表", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("共 1 张表格"));
+        assertTrue(result.text().contains("销售表"));
+        assertTrue(result.attachments().isEmpty());
+        verify(excelService, never()).save(any());
+    }
+
+    /** 「新建表格 X」之后，旧指令作用于新表（活动表）。 */
+    @Test
+    void oldInstructionsActOnNewWorkbookAfterCreate() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable[] active = new ExcelTable[1];
+        when(excelService.createWorkbook(eq("user-1"), anyString())).thenAnswer(inv -> {
+            ExcelTable table = new ExcelTable("user-1", inv.getArgument(1));
+            active[0] = table;
+            return table;
+        });
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenAnswer(inv -> active[0]);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        assertTrue(skill.execute(definition,
+            new SkillRequest("user-1", "新建表格 销售表", "", "", "")).success());
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "生成表格：姓名,城市\n张三,北京", "", "", ""));
+
+        assertTrue(result.success());
+        // 旧指令作用于刚新建的活动表（而不是新建一张新表）
+        assertEquals(List.of("姓名", "城市"), active[0].getHeaders());
+        assertEquals(List.of(List.of("张三", "北京")), active[0].getRows());
+        verify(excelService, atLeastOnce()).save(active[0]);
     }
 }

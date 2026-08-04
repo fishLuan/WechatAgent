@@ -21,7 +21,7 @@ import java.util.List;
 
 /**
  * Excel 文件消息处理器：
- *   接收用户发来的 .xlsx 文件 → 大小/魔数校验 → POI 解析 → 导入为当前用户的表格
+ *   接收用户发来的 .xlsx 文件 → 大小/魔数校验 → POI 解析 → 导入到当前活动表（无则新建）
  *
  * 优先级：高于 DocumentMessageHandler(30)，xlsx 文件先到这里处理，不会走文档总结。
  */
@@ -101,8 +101,12 @@ public final class ExcelFileMessageHandler implements MessageHandler {
                 return;
             }
 
-            // 5. 导入为当前用户的表格（上传导入是显式操作，可替换现有表）
-            ExcelTable table = excelService.loadOrCreate(from, resolveTitle(fileName));
+            // 5. 导入到当前活动表（上传导入是显式操作，可替换现有表）；
+            //    没有活动表时以文件名新建一张并设为活动表
+            ExcelTable table = excelService.getActiveWorkbook(from);
+            if (table == null) {
+                table = excelService.createWorkbook(from, resolveTitle(fileName));
+            }
             boolean replaced = !table.getHeaders().isEmpty() || !table.getRows().isEmpty();
             if (replaced) {
                 // 替换前快照，保留原数据以便回滚

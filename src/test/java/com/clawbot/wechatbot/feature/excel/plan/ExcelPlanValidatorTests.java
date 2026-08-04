@@ -351,4 +351,67 @@ class ExcelPlanValidatorTests {
         assertTrue(error.isPresent());
         assertTrue(error.get().contains("还没有生成表格"));
     }
+
+    // ============================
+    // 工作簿管理指令校验（白名单/必填；不依赖表格状态）
+    // ============================
+    @Test
+    void validWorkbookCreatePasses() {
+        ExcelPlan plan = plan(op(ExcelOperationType.WORKBOOK_CREATE, Map.of("title", "销售表")));
+        assertEquals(Optional.empty(), validator.validate(plan, existingTable()));
+    }
+
+    @Test
+    void workbookCreateMissingTitleReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.WORKBOOK_CREATE, Map.of()));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("title"));
+    }
+
+    @Test
+    void workbookSelectMissingNameReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.WORKBOOK_SELECT, Map.of()));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("name"));
+    }
+
+    @Test
+    void workbookRenameMissingNewTitleReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.WORKBOOK_RENAME, Map.of("name", "销售表")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("newTitle"));
+    }
+
+    @Test
+    void validWorkbookRenamePasses() {
+        ExcelPlan plan = plan(op(ExcelOperationType.WORKBOOK_RENAME,
+            Map.of("name", "销售表", "newTitle", "月度销售")));
+        assertEquals(Optional.empty(), validator.validate(plan, existingTable()));
+    }
+
+    /** 工作簿管理操作不依赖表格状态：空表也能列表/选择/删除/复制。 */
+    @Test
+    void workbookManagementOpsPassOnEmptyTable() {
+        ExcelTable empty = new ExcelTable("user-1", "空表");
+        assertEquals(Optional.empty(), validator.validate(
+            plan(op(ExcelOperationType.WORKBOOK_LIST, Map.of())), empty));
+        assertEquals(Optional.empty(), validator.validate(
+            plan(op(ExcelOperationType.WORKBOOK_SELECT, Map.of("name", "销售表"))), empty));
+        assertEquals(Optional.empty(), validator.validate(
+            plan(op(ExcelOperationType.WORKBOOK_DELETE, Map.of("name", "销售表"))), empty));
+        assertEquals(Optional.empty(), validator.validate(
+            plan(op(ExcelOperationType.WORKBOOK_COPY, Map.of("name", "销售表"))), empty));
+    }
+
+    @Test
+    void workbookOpsUnknownParamReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.WORKBOOK_DELETE,
+            Map.of("name", "销售表", "hack", "x")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("hack"));
+    }
 }

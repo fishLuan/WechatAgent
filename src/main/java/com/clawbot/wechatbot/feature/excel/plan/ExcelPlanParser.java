@@ -16,6 +16,7 @@ import java.util.regex.Pattern;
  * 回滚判定优先、查询/删除/修改/添加/生成/版本历史顺序、覆盖保护标记、内容提取规则。
  * 另新增复合任务路由：带切分点的多条分析指令（如「删除重复订单，补全空白地区」）先于单操作切分为
  * 线性依赖链；不含切分点的单操作文本行为不变。
+ * 另新增工作簿管理路由：新建/列表/选择/重命名/删除/复制表格（多工作簿管理，不需要活动表）。
  * 解析器只产出计划，不执行任何修改。
  */
 public final class ExcelPlanParser {
@@ -70,6 +71,26 @@ public final class ExcelPlanParser {
         "^(?:请|帮我\\s*)*查看知识(?:库)?\\s*$");
     private static final Pattern KNOWLEDGE_DELETE_CMD = Pattern.compile(
         "^(?:请|帮我\\s*)*删除知识\\s*(.+?)\\s*$");
+    /** 工作簿管理指令：新建表格/新建工作簿 X（名称像表格数据时让位给生成表格）。 */
+    private static final Pattern WORKBOOK_CREATE_CMD = Pattern.compile(
+        "^(?:请|帮我\\s*)*新建(?:表格|工作簿)(?:名字)?\\s*[:：]?\\s*(.+)$");
+    /** 工作簿列表指令：我的表格/表格列表/查看表格列表/有哪些表格。 */
+    private static final Pattern WORKBOOK_LIST_CMD = Pattern.compile(
+        "^(?:请|帮我\\s*)*(?:我的表格|表格列表|查看表格列表|有哪些表格)\\s*$");
+    /** 选择表格指令：选择/切换到/打开表格 X。 */
+    private static final Pattern WORKBOOK_SELECT_CMD = Pattern.compile(
+        "^(?:请|帮我\\s*)*(?:选择|切换到|打开)表格\\s*(.+?)\\s*$");
+    /** 重命名表格指令：重命名表格 X为Y / 把表格X改名为Y。 */
+    private static final Pattern WORKBOOK_RENAME_VERB = Pattern.compile(
+        "^(?:请|帮我\\s*)*重命名(?:表格|工作簿)?\\s*(.+?)为(.+?)\\s*$");
+    private static final Pattern WORKBOOK_RENAME_PREFIX = Pattern.compile(
+        "^(?:请|帮我\\s*)*把表格\\s*(.+?)改名为(.+?)\\s*$");
+    /** 删除表格指令：删除表格/工作簿 X。 */
+    private static final Pattern WORKBOOK_DELETE_CMD = Pattern.compile(
+        "^(?:请|帮我\\s*)*删除(?:表格|工作簿)\\s*(.+?)\\s*$");
+    /** 复制表格指令：复制表格/工作簿 X。 */
+    private static final Pattern WORKBOOK_COPY_CMD = Pattern.compile(
+        "^(?:请|帮我\\s*)*复制(?:表格|工作簿)?\\s*(.+?)\\s*$");
     /** 片段尾部残留分隔符（切分点前的标点/连接词），清理时按长度从长到短尝试。 */
     private static final List<String> SEPARATOR_TAIL_WORDS = List.of(
         "然后", "接着", "同时", "并且", "并", "再", "，", "、", "；", ",", ";");
@@ -94,6 +115,11 @@ public final class ExcelPlanParser {
         // 分析类操作（排序/去重/分组汇总/缺失补全）：放在查询之后、删除行之前
         ExcelOperation analysis = tryAnalysis(text);
         if (analysis != null) return plan(userId, analysis);
+
+        // 工作簿管理指令（新建/列表/选择/重命名/删除/复制）：放在知识管理之前、
+        // 「生成表格」之前判定（「新建表格 X」不能被当成生成表格）
+        ExcelPlan workbook = tryWorkbook(userId, text);
+        if (workbook != null) return workbook;
 
         // 知识管理指令（必须在「添加行」之前判定：「添加知识：…」会命中添加行前缀正则，避免被当成加行）
         ExcelPlan knowledge = tryKnowledge(userId, text);
@@ -274,6 +300,73 @@ public final class ExcelPlanParser {
                 Map.of("keyword", delete.group(1).trim())));
         }
         return null;
+    }
+
+    /**
+     * 工作簿管理路由：新建 → 列表 → 选择 → 重命名 → 删除 → 复制（关键词互不重叠，顺序固定）。
+     * 任一指令缺参数（如「选择表格」无名称）时返回 null 交给兜底提示。
+     */
+    private ExcelPlan tryWorkbook(String userId, String text) {
+        Matcher create = WORKBOOK_CREATE_CMD.matcher(text);
+        if (create.matches()) {
+            String title = create.group(1).trim();
+            // 名称像表格数据（换行或分隔符）时让位给生成表格（「新建表格：姓名,城市\n张三,北京」仍是生成）
+            if (!title.isBlank() && !looksLikeTableData(title)) {
+                return plan(userId, op("1", ExcelOperationType.WORKBOOK_CREATE,
+                    Map.of("title", title)));
+            }
+            return null;
+        }
+        if (WORKBOOK_LIST_CMD.matcher(text).matches()) {
+            return plan(userId, op("1", ExcelOperationType.WORKBOOK_LIST, Map.of()));
+        }
+        Matcher select = WORKBOOK_SELECT_CMD.matcher(text);
+        if (select.matches()) {
+            String name = select.group(1).trim();
+            if (!name.isBlank()) {
+                return plan(userId, op("1", ExcelOperationType.WORKBOOK_SELECT,
+                    Map.of("name", name)));
+            }
+        }
+        Matcher rename = WORKBOOK_RENAME_VERB.matcher(text);
+        if (rename.matches()) {
+            return renamePlan(userId, rename.group(1).trim(), rename.group(2).trim());
+        }
+        rename = WORKBOOK_RENAME_PREFIX.matcher(text);
+        if (rename.matches()) {
+            return renamePlan(userId, rename.group(1).trim(), rename.group(2).trim());
+        }
+        Matcher delete = WORKBOOK_DELETE_CMD.matcher(text);
+        if (delete.matches()) {
+            String name = delete.group(1).trim();
+            if (!name.isBlank()) {
+                return plan(userId, op("1", ExcelOperationType.WORKBOOK_DELETE,
+                    Map.of("name", name)));
+            }
+        }
+        Matcher copy = WORKBOOK_COPY_CMD.matcher(text);
+        if (copy.matches()) {
+            String name = copy.group(1).trim();
+            if (!name.isBlank()) {
+                return plan(userId, op("1", ExcelOperationType.WORKBOOK_COPY,
+                    Map.of("name", name)));
+            }
+        }
+        return null;
+    }
+
+    /** 重命名计划：名称与新标题均非空才产出（缺失时让位，由兜底文案提示）。 */
+    private static ExcelPlan renamePlan(String userId, String name, String newTitle) {
+        if (name.isBlank() || newTitle.isBlank()) {
+            return null;
+        }
+        return plan(userId, op("1", ExcelOperationType.WORKBOOK_RENAME,
+            Map.of("name", name, "newTitle", newTitle)));
+    }
+
+    /** 名称是否像表格数据：含换行或表格分隔符（此时「新建表格 X」按生成表格处理）。 */
+    private static boolean looksLikeTableData(String name) {
+        return name.contains("\n") || name.matches(".*[\\t,，;；|].*");
     }
 
     /** 知识类别词 → 枚举名；无法识别的类别保留原文，由校验器给出明确提示。 */
