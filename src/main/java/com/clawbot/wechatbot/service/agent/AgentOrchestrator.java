@@ -470,9 +470,12 @@ public final class AgentOrchestrator implements AutoCloseable {
 
         if (results.size() == 1) {
             AgentTaskResult result = results.get(0);
+            if (result.hasMultipleTexts()) {
+                return AgentResponse.multi(result.texts());
+            }
             return new AgentResponse(
                 result.succeeded() ? result.text() : result.error(),
-                attachments);
+                List.of(), attachments);
         }
 
         StringBuilder reply = new StringBuilder();
@@ -484,7 +487,7 @@ public final class AgentOrchestrator implements AutoCloseable {
                 .append("】\n")
                 .append(result.succeeded() ? result.text() : result.error());
         }
-        return new AgentResponse(reply.toString(), attachments);
+        return new AgentResponse(reply.toString(), List.of(), attachments);
     }
 
     private String compactLabel(String instruction) {

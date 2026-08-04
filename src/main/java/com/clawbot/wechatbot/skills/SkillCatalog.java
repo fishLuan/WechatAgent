@@ -11,7 +11,11 @@ public interface SkillCatalog {
     default String plannerCatalog() {
         if (definitions().isEmpty()) return "(no domain skills are registered)";
         return definitions().stream()
-            .map(skill -> "- " + skill.name() + ": " + skill.description()
+            .map(skill -> "- " + skill.name()
+                + (skill.triggers().isEmpty()
+                    ? ""
+                    : " [" + String.join(", ", skill.triggers()) + "]")
+                + ": " + skill.description()
                 + (skill.capabilities().isEmpty()
                     ? ""
                     : "；capabilities=" + String.join(", ", skill.capabilities())))

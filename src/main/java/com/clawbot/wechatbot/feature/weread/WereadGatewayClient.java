@@ -47,6 +47,14 @@ public class WereadGatewayClient {
      * @return 响应 JSON（errcode=0 时业务数据在顶层；失败时含 errcode/errmsg）
      */
     public JsonNode call(String apiName, Map<String, Object> params) throws Exception {
+        String raw = callRaw(apiName, params);
+        return parseResponse(raw);
+    }
+
+    /**
+     * 原始调用，返回响应字符串不做 JSON 解析。用于调试/API 发现。
+     */
+    public String callRaw(String apiName, Map<String, Object> params) throws Exception {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("api_name", apiName);
         body.put("skill_version", SKILL_VERSION);
@@ -100,7 +108,7 @@ public class WereadGatewayClient {
                 System.err.println("[WEREAD] curl exit=" + process.exitValue()
                     + " 响应=" + truncate(output, 300));
             }
-            return parseResponse(output);
+            return output;
         } finally {
             Files.deleteIfExists(tempBody);
             Files.deleteIfExists(tempOutput);
