@@ -6,8 +6,13 @@ import com.clawbot.wechatbot.feature.excel.repository.ExcelTableRepository;
 import com.clawbot.wechatbot.feature.excel.repository.ExcelTableVersionRepository;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.Font;
+import org.apache.poi.ss.usermodel.FormulaError;
+import org.apache.poi.ss.usermodel.FormulaEvaluator;
 import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Component;
@@ -43,6 +48,23 @@ public class ExcelService {
     private static final int MAX_VERSIONS = 20;
     /** 回滚操作快照的固定说明：回滚时跳过刚写入的这一条，避免快照自身成为回滚目标。 */
     public static final String ROLLBACK_DESCRIPTION = "回滚操作";
+    /** 公式长度上限：公式来自微信消息，超长直接拒绝，避免极端输入拖垮正则解析。 */
+    private static final int MAX_FORMULA_LENGTH = 200;
+    /** 公式中禁止出现的字符：外部引用/超链接/比较运算/注入字符一律拒绝。 */
+    private static final String FORMULA_FORBIDDEN = "![]#;<>|&'\\";
+    /** 公式函数白名单：仅允许这些函数以「函数名(」形式出现。 */
+    private static final List<String> SAFE_FUNCTIONS = List.of(
+        "SUM", "AVERAGE", "MAX", "MIN", "COUNT", "COUNTA", "IF", "ROUND",
+        "ABS", "INT", "MOD", "TODAY", "NOW", "CONCATENATE");
+    /** 公式 token 正则：数字/四则与幂运算/括号/逗号/冒号/字符串字面量/单元格引用/函数名+左括号；token 前可带空白。 */
+    private static final java.util.regex.Pattern FORMULA_TOKEN = java.util.regex.Pattern.compile(
+        "\\s*(?:"
+            + "\\d+(?:\\.\\d+)?|\\.\\d+"   // 数字：123 / 1.5 / .5
+            + "|[+\\-*/^(),:]"             // 四则运算、幂、括号、逗号、冒号（范围引用）
+            + "|\"[^\"]*\""                // 双引号字符串字面量（不含内部转义引号）
+            + "|[A-Z]{1,3}[0-9]{1,7}"      // 单元格引用：A1 / AB12
+            + "|[A-Za-z]+\\s*\\("          // 函数调用：函数名 + 左括号（名称另行白名单校验）
+            + ")");
 
     private final ExcelTableRepository repository;
     private final ExcelTableVersionRepository versionRepository;
@@ -250,6 +272,19 @@ public class ExcelService {
             }
 
             autoSizeColumns(sheet, headers.size(), rows);
+
+            // 公式支持：强制 Excel 打开时重算；导出前先求值，存在公式错误则取消导出
+            workbook.setForceFormulaRecalculation(true);
+            FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
+            evaluator.evaluateAll();
+            Cell errorCell = findFirstErrorCell(workbook);
+            if (errorCell != null) {
+                throw new IllegalArgumentException(
+                    "❌ 公式存在错误，已取消导出：单元格 " + errorCell.getAddress().formatAsString()
+                        + " 为 " + FormulaError.forInt(errorCell.getErrorCellValue()).getString()
+                        + "。请检查公式后重试。");
+            }
+
             workbook.write(out);
             return out.toByteArray();
         }
@@ -257,6 +292,7 @@ public class ExcelService {
 
     /**
      * 数据单元格类型推断后写入（存储仍为字符串，仅在导出时推断）：
+     * 公式（以 = 开头且通过安全校验）→公式单元格（优先级最高，含 =1+1 这类纯数字公式）；
      * 空字符串→空单元格；数字（Long/Double 解析 + 往返校验，避免前导零/尾零文本被转数字）；
      * true/false（忽略大小写）→布尔；无歧义日期（yyyy-MM-dd / yyyy/MM/dd / yyyy年M月d日）→日期；
      * 其余一律按文本。
@@ -264,6 +300,17 @@ public class ExcelService {
     private static void writeValueCell(Cell cell, String raw, CellStyle dateStyle) {
         if (raw == null || raw.isEmpty()) {
             return; // 空字符串按空单元格处理
+        }
+        // 公式优先：以 = 开头且通过安全校验 → 公式单元格（优先级高于数字/布尔/日期推断）
+        if (raw.startsWith("=") && isSafeFormula(raw.substring(1))) {
+            String formula = raw.substring(1);
+            try {
+                cell.setCellFormula(formula);
+            } catch (RuntimeException error) {
+                // 个别 token 合法但 POI 无法解析的公式（如 A1B2、A1(）按文本写入，与非法公式保持一致
+                cell.setCellValue(raw);
+            }
+            return;
         }
         Long longValue = parseLongExact(raw);
         if (longValue != null) {
@@ -287,6 +334,60 @@ public class ExcelService {
             return;
         }
         cell.setCellValue(raw);
+    }
+
+    /**
+     * 公式安全校验（入参不含前导 =）：先按字符黑名单拒绝外部引用/超链接/注入类字符与非 ASCII，
+     * 再按 token 校验——token 序列须完整覆盖整个公式串，任何未识别的字符段都判为非法；
+     * 函数仅允许白名单（如 HYPERLINK(、foo( 拒绝），字母序列后无左括号（如 =hello）也判为非法。
+     */
+    private static boolean isSafeFormula(String formula) {
+        if (formula == null) {
+            return false;
+        }
+        formula = formula.trim();
+        if (formula.isEmpty() || formula.length() > MAX_FORMULA_LENGTH) {
+            return false;
+        }
+        for (int i = 0; i < formula.length(); i++) {
+            char ch = formula.charAt(i);
+            if (ch > 0x7F || FORMULA_FORBIDDEN.indexOf(ch) >= 0) {
+                return false;
+            }
+        }
+        java.util.regex.Matcher matcher = FORMULA_TOKEN.matcher(formula);
+        int pos = 0;
+        while (pos < formula.length()) {
+            if (!matcher.find(pos) || matcher.start() != pos) {
+                return false; // 存在无法识别的字符段
+            }
+            String token = matcher.group();
+            if (token.endsWith("(")) {
+                // 函数调用 token 必须以白名单函数名开头；单独的左括号（运算符）无需校验
+                String name = token.substring(0, token.length() - 1)
+                    .trim().toUpperCase(Locale.ROOT);
+                if (!name.isEmpty() && !SAFE_FUNCTIONS.contains(name)) {
+                    return false; // 非白名单函数拒绝
+                }
+            }
+            pos = matcher.end();
+        }
+        return true;
+    }
+
+    /** 遍历所有工作表，返回第一个公式错误单元格（如 #DIV/0!、#REF!、#NAME?）。 */
+    private static Cell findFirstErrorCell(Workbook workbook) {
+        for (Sheet sheet : workbook) {
+            for (Row row : sheet) {
+                for (Cell cell : row) {
+                    if (cell.getCellType() == CellType.FORMULA
+                        && cell.getCachedFormulaResultType() == CellType.ERROR) {
+                        return cell;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     /** 整数解析并往返校验：仅当 Long 转回字符串与原值一致时才视为数字（"007" 保持文本）。 */

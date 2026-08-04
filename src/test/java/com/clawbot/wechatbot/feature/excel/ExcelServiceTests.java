@@ -354,6 +354,144 @@ class ExcelServiceTests {
         assertEquals("操作5", recent.get(19).getDescription());
     }
 
+    // ============================
+    // 7. 公式单元格（导出时识别；非法公式保持文本；求值错误取消导出）
+    // ============================
+    @Test
+    void exportsSafeFormulaAsFormulaCell() throws Exception {
+        ExcelTable table = new ExcelTable("user-1", "公式表");
+        table.setHeaders(List.of("单价", "数量", "小计"));
+        table.setRows(List.of(
+            List.of("10", "3", "=A2*B2"),
+            List.of("20", "4", "=1+1")));
+        byte[] bytes = service.toXlsx(table);
+
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            Sheet sheet = workbook.getSheetAt(0);
+            Cell multiply = sheet.getRow(1).getCell(2);
+            assertEquals(CellType.FORMULA, multiply.getCellType());
+            assertEquals("A2*B2", multiply.getCellFormula());
+            // 纯数字公式同样走公式分支（优先级高于数字推断）
+            Cell pureNumeric = sheet.getRow(2).getCell(2);
+            assertEquals(CellType.FORMULA, pureNumeric.getCellType());
+            assertEquals("1+1", pureNumeric.getCellFormula());
+        }
+    }
+
+    @Test
+    void exportsSumRangeFormula() throws Exception {
+        ExcelTable table = new ExcelTable("user-1", "公式表");
+        table.setHeaders(List.of("数值", "合计"));
+        table.setRows(List.of(
+            List.of("1", "=SUM(A2:A4)"),
+            List.of("2", ""),
+            List.of("3", "")));
+        byte[] bytes = service.toXlsx(table);
+
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            Cell cell = workbook.getSheetAt(0).getRow(1).getCell(1);
+            assertEquals(CellType.FORMULA, cell.getCellType());
+            assertEquals("SUM(A2:A4)", cell.getCellFormula());
+        }
+    }
+
+    @Test
+    void exportsWhitelistedFunctionFormulas() throws Exception {
+        ExcelTable table = new ExcelTable("user-1", "公式表");
+        table.setHeaders(List.of("结果", "结果2"));
+        table.setRows(List.of(
+            List.of("=CONCATENATE(\"a\",\"b\")", "=IF(1,2,3)"),
+            List.of("1", "2")));
+        byte[] bytes = service.toXlsx(table);
+
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            Row row = workbook.getSheetAt(0).getRow(1);
+            assertEquals(CellType.FORMULA, row.getCell(0).getCellType());
+            assertEquals("CONCATENATE(\"a\",\"b\")", row.getCell(0).getCellFormula());
+            assertEquals(CellType.FORMULA, row.getCell(1).getCellType());
+            assertEquals("IF(1,2,3)", row.getCell(1).getCellFormula());
+        }
+    }
+
+    @Test
+    void invalidFormulasStayAsText() throws Exception {
+        ExcelTable table = new ExcelTable("user-1", "公式表");
+        table.setHeaders(List.of("非法公式1", "非法公式2", "非法公式3", "非法公式4"));
+        table.setRows(List.of(List.of(
+            "=hello",                          // 字母序列后无左括号
+            "=HYPERLINK(\"http://x\",\"y\")",  // 非白名单函数
+            "=Sheet1!A1",                      // 含 !（外部引用）
+            "=SUM(A1)+√2")));                  // 含非 ASCII 字符
+        byte[] bytes = service.toXlsx(table);
+
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            Row row = workbook.getSheetAt(0).getRow(1);
+            for (int c = 0; c < 4; c++) {
+                assertEquals(CellType.STRING, row.getCell(c).getCellType());
+            }
+            assertEquals("=hello", row.getCell(0).getStringCellValue());
+            assertEquals("=HYPERLINK(\"http://x\",\"y\")",
+                row.getCell(1).getStringCellValue());
+            assertEquals("=Sheet1!A1", row.getCell(2).getStringCellValue());
+            assertEquals("=SUM(A1)+√2", row.getCell(3).getStringCellValue());
+        }
+    }
+
+    @Test
+    void poiOpaqueFormulasFallBackToText() throws Exception {
+        // token 合法但 POI 无法解析的公式（相邻引用 A1B2、裸函数式引用 A1(）按文本写入，不中断导出
+        ExcelTable table = new ExcelTable("user-1", "公式表");
+        table.setHeaders(List.of("值1", "值2"));
+        table.setRows(List.of(List.of("=A1B2", "=A1(")));
+        byte[] bytes = service.toXlsx(table);
+
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            Row row = workbook.getSheetAt(0).getRow(1);
+            assertEquals(CellType.STRING, row.getCell(0).getCellType());
+            assertEquals("=A1B2", row.getCell(0).getStringCellValue());
+            assertEquals(CellType.STRING, row.getCell(1).getCellType());
+            assertEquals("=A1(", row.getCell(1).getStringCellValue());
+        }
+    }
+
+    @Test
+    void formulaErrorCancelsExportWithClearMessage() {
+        ExcelTable table = new ExcelTable("user-1", "公式表");
+        table.setHeaders(List.of("数值"));
+        table.setRows(List.of(List.of("=1/0")));
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+            () -> service.toXlsx(table));
+        assertTrue(error.getMessage().contains("#DIV/0!"));
+        assertTrue(error.getMessage().contains("A2"));     // 出错单元格地址
+        assertTrue(error.getMessage().contains("取消导出"));
+    }
+
+    @Test
+    void formulaReferencingEmptyCellsIsNotAnError() throws Exception {
+        ExcelTable table = new ExcelTable("user-1", "公式表");
+        table.setHeaders(List.of("甲", "乙", "合计"));
+        table.setRows(List.of(List.of("", "", "=A2+B2")));
+        // 空单元格引用按 0 参与计算，不应触发取消导出
+        byte[] bytes = service.toXlsx(table);
+
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            assertEquals(CellType.FORMULA,
+                workbook.getSheetAt(0).getRow(1).getCell(2).getCellType());
+        }
+    }
+
+    @Test
+    void forceFormulaRecalculationIsSet() throws Exception {
+        ExcelTable table = new ExcelTable("user-1", "公式表");
+        table.setHeaders(List.of("数值"));
+        table.setRows(List.of(List.of("=1+1")));
+        byte[] bytes = service.toXlsx(table);
+
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            assertTrue(workbook.getForceFormulaRecalculation());
+        }
+    }
+
     /** 内存版版本仓库：模拟 Mongo 的按创建时间倒序查询、保存/删除/计数。 */
     private static final class FakeVersionRepository
         implements ExcelTableVersionRepository {
