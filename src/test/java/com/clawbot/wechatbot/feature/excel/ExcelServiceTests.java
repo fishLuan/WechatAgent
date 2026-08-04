@@ -10,6 +10,11 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.apache.poi.ss.util.CellRangeAddress;
+import org.apache.poi.ss.util.PaneInformation;
+import org.apache.poi.xssf.usermodel.XSSFChart;
+import org.apache.poi.xssf.usermodel.XSSFDrawing;
+import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Example;
 import org.springframework.data.domain.Page;
@@ -623,6 +628,246 @@ class ExcelServiceTests {
 
         try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
             assertTrue(workbook.getForceFormulaRecalculation());
+        }
+    }
+
+    // ============================
+    // 8. 表格式化导出（标题行/冻结/筛选，每次导出自动应用）
+    // ============================
+    @Test
+    void exportsTitleRowFreezeAndFilter() throws Exception {
+        ExcelTable table = sampleTable();
+        table.setTitleRow("销售报表");
+        table.setFreezeHeader(true);
+        table.setAutoFilter(true);
+        byte[] bytes = service.toXlsx(table);
+
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            XSSFSheet sheet = (XSSFSheet) workbook.getSheetAt(0);
+            // 标题行：第 0 行合并跨全部列，文本为标题
+            assertEquals("销售报表", sheet.getRow(0).getCell(0).getStringCellValue());
+            assertEquals(1, sheet.getMergedRegions().size());
+            assertEquals(new CellRangeAddress(0, 0, 0, 2), sheet.getMergedRegions().get(0));
+            // 表头行从第 1 行开始，数据从第 2 行开始
+            assertEquals("姓名", sheet.getRow(1).getCell(0).getStringCellValue());
+            assertEquals("张三", sheet.getRow(2).getCell(0).getStringCellValue());
+            assertEquals(5, sheet.getLastRowNum() + 1); // 标题 + 表头 + 3 行数据
+            // 冻结窗格：冻结标题 + 表头两行（行冻结看水平分割位置）
+            PaneInformation pane = sheet.getPaneInformation();
+            assertNotNull(pane);
+            assertTrue(pane.isFreezePane());
+            assertEquals(2, pane.getHorizontalSplitPosition());
+            // 自动筛选：表头 + 数据范围
+            assertTrue(sheet.getCTWorksheet().isSetAutoFilter());
+        }
+    }
+
+    /** titleRow 导致表头偏移后，数据行数/位置仍然正确（表头在第 1 行、数据从第 2 行起）。 */
+    @Test
+    void titleRowOffsetsHeaderAndDataRows() throws Exception {
+        ExcelTable table = sampleTable();
+        table.setTitleRow("测试表标题");
+        byte[] bytes = service.toXlsx(table);
+
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            XSSFSheet sheet = (XSSFSheet) workbook.getSheetAt(0);
+            assertEquals("姓名", sheet.getRow(1).getCell(0).getStringCellValue());
+            assertEquals("张三", sheet.getRow(2).getCell(0).getStringCellValue());
+            assertEquals("王五", sheet.getRow(4).getCell(0).getStringCellValue());
+            // 无冻结/筛选设置时不应产生窗格与筛选（回归：未格式化导出与现状一致）
+            assertNull(sheet.getPaneInformation());
+            assertFalse(sheet.getCTWorksheet().isSetAutoFilter());
+        }
+    }
+
+    /** 只冻结不筛选、只筛选不冻结时各自生效。 */
+    @Test
+    void exportsFreezeAndFilterIndependently() throws Exception {
+        ExcelTable table = sampleTable();
+        table.setFreezeHeader(true);
+        byte[] freezeOnly = service.toXlsx(table);
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(freezeOnly))) {
+            XSSFSheet sheet = (XSSFSheet) workbook.getSheetAt(0);
+            PaneInformation pane = sheet.getPaneInformation();
+            assertNotNull(pane);
+            assertTrue(pane.isFreezePane());
+            assertEquals(1, pane.getHorizontalSplitPosition()); // 只冻结表头一行
+            assertFalse(sheet.getCTWorksheet().isSetAutoFilter());
+        }
+        ExcelTable filtered = sampleTable();
+        filtered.setAutoFilter(true);
+        byte[] filterOnly = service.toXlsx(filtered);
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(filterOnly))) {
+            XSSFSheet sheet = (XSSFSheet) workbook.getSheetAt(0);
+            assertNull(sheet.getPaneInformation());
+            assertTrue(sheet.getCTWorksheet().isSetAutoFilter());
+        }
+    }
+
+    // ============================
+    // 9. 图表导出（新增「图表」工作表）
+    // ============================
+    @Test
+    void exportsChartSheetWithBarChart() throws Exception {
+        ExcelTable table = new ExcelTable("user-1", "销售表");
+        table.setHeaders(List.of("产品", "销售额"));
+        table.setRows(List.of(
+            List.of("A", "100"), List.of("B", "200"), List.of("C", "150")));
+        byte[] bytes = service.toXlsxWithChart(table, "BAR", "产品", "销售额");
+        assertTrue(bytes.length > 0);
+
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            assertNotNull(workbook.getSheet("图表"));
+            XSSFSheet chartSheet = (XSSFSheet) workbook.getSheet("图表");
+            // 分类/数值解析后写入图表工作表（首行为表头，数值列非数值按 0）
+            assertEquals("产品", chartSheet.getRow(0).getCell(0).getStringCellValue());
+            assertEquals("销售额", chartSheet.getRow(0).getCell(1).getStringCellValue());
+            assertEquals("A", chartSheet.getRow(1).getCell(0).getStringCellValue());
+            assertEquals(100.0, chartSheet.getRow(1).getCell(1).getNumericCellValue(), 0.0001);
+            assertEquals("C", chartSheet.getRow(3).getCell(0).getStringCellValue());
+            // 图表对象存在（chart 关联部件挂在绘图对象下）
+            XSSFDrawing drawing = chartSheet.createDrawingPatriarch();
+            assertTrue(drawing.getRelations().stream()
+                .anyMatch(part -> part instanceof XSSFChart));
+        }
+    }
+
+    @Test
+    void exportsLineAndPieCharts() throws Exception {
+        ExcelTable table = new ExcelTable("user-1", "销售表");
+        table.setHeaders(List.of("产品", "销售额"));
+        table.setRows(List.of(
+            List.of("A", "100"), List.of("B", "200"),
+            List.of("C", "150"), List.of("D", "180")));
+        for (String chartType : List.of("LINE", "PIE")) {
+            byte[] bytes = service.toXlsxWithChart(table, chartType, "产品", "销售额");
+            try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+                XSSFSheet chartSheet = (XSSFSheet) workbook.getSheet("图表");
+                XSSFDrawing drawing = chartSheet.createDrawingPatriarch();
+                assertTrue(drawing.getRelations().stream()
+                    .anyMatch(part -> part instanceof XSSFChart));
+            }
+        }
+    }
+
+    /** 数值列非数值按 0 参与图表；空分类行跳过。 */
+    @Test
+    void chartNonNumericValuesCountAsZeroAndBlankCategoriesSkipped() throws Exception {
+        ExcelTable table = new ExcelTable("user-1", "销售表");
+        table.setHeaders(List.of("产品", "销售额"));
+        table.setRows(List.of(
+            List.of("A", "abc"), List.of("", "999"), List.of("C", "150")));
+        byte[] bytes = service.toXlsxWithChart(table, "BAR", "产品", "销售额");
+
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            XSSFSheet chartSheet = (XSSFSheet) workbook.getSheet("图表");
+            // 第一行：A/abc → 数值按 0；空分类行被跳过
+            assertEquals("A", chartSheet.getRow(1).getCell(0).getStringCellValue());
+            assertEquals(0.0, chartSheet.getRow(1).getCell(1).getNumericCellValue(), 0.0001);
+            assertEquals("C", chartSheet.getRow(2).getCell(0).getStringCellValue());
+            assertEquals(150.0, chartSheet.getRow(2).getCell(1).getNumericCellValue(), 0.0001);
+        }
+    }
+
+    /** 图表数据较少（不足 2 条）时失败，提示确认列。 */
+    @Test
+    void chartWithInsufficientDataFails() {
+        ExcelTable table = new ExcelTable("user-1", "销售表");
+        table.setHeaders(List.of("产品", "销售额"));
+        table.setRows(List.of(List.of("A", "100")));
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+            () -> service.toXlsxWithChart(table, "BAR", "产品", "销售额"));
+        assertTrue(error.getMessage().contains("图表数据不足"));
+
+        // 空表格同样失败
+        ExcelTable empty = new ExcelTable("user-1", "空表");
+        empty.setHeaders(List.of("产品", "销售额"));
+        assertThrows(IllegalArgumentException.class,
+            () -> service.toXlsxWithChart(empty, "BAR", "产品", "销售额"));
+    }
+
+    /** 图表导出与普通导出共用数据工作表构建：无图表导出时数据工作表行为不变（回归）。 */
+    @Test
+    void toXlsxWithChartKeepsDataSheetIntact() throws Exception {
+        ExcelTable table = sampleTable();
+        byte[] withChart = service.toXlsxWithChart(table, "BAR", "姓名", "年龄");
+        byte[] plain = service.toXlsx(table);
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(withChart))) {
+            Sheet sheet = workbook.getSheetAt(0);
+            assertEquals("测试表", sheet.getSheetName());
+            assertEquals("姓名", sheet.getRow(0).getCell(0).getStringCellValue());
+            assertEquals(4, sheet.getLastRowNum() + 1);
+            assertNotNull(workbook.getSheet("图表"));
+        }
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(plain))) {
+            assertNull(workbook.getSheet("图表"));
+            assertEquals(1, workbook.getNumberOfSheets());
+        }
+    }
+
+    // ============================
+    // 10. 汇总页导出（新增「汇总」工作表）
+    // ============================
+    @Test
+    void exportsDashboardSheetWithColumnSummary() throws Exception {
+        ExcelTable table = sampleTable(); // 姓名/年龄/工资 × 3 行
+        byte[] bytes = service.toXlsxWithDashboard(table);
+        assertTrue(bytes.length > 0);
+
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            assertNotNull(workbook.getSheet("汇总"));
+            Sheet summary = workbook.getSheet("汇总");
+            // 表标题（工作表名）+ 列数/行数
+            assertTrue(summary.getRow(0).getCell(0).getStringCellValue().contains("测试表"));
+            assertTrue(summary.getRow(1).getCell(0).getStringCellValue().contains("3 列"));
+            assertTrue(summary.getRow(1).getCell(0).getStringCellValue().contains("3 行"));
+            // 表头：列名 | 合计 | 平均
+            assertEquals("列名", summary.getRow(2).getCell(0).getStringCellValue());
+            assertEquals("合计", summary.getRow(2).getCell(1).getStringCellValue());
+            assertEquals("平均", summary.getRow(2).getCell(2).getStringCellValue());
+            // 非数值列（姓名）标「-」
+            assertEquals("-", summary.getRow(3).getCell(1).getStringCellValue());
+            assertEquals("-", summary.getRow(3).getCell(2).getStringCellValue());
+            // 数值列合计与平均：年龄 25+30+28=83、平均 27.67；工资 27500
+            assertEquals(83.0, summary.getRow(4).getCell(1).getNumericCellValue(), 0.0001);
+            assertEquals(27.67, summary.getRow(4).getCell(2).getNumericCellValue(), 0.001);
+            assertEquals(27500.0, summary.getRow(5).getCell(1).getNumericCellValue(), 0.0001);
+            // 简单说明文本
+            assertTrue(summary.getRow(6).getCell(0).getStringCellValue().contains("自动生成"));
+        }
+    }
+
+    /** 表格标题恰好为「图表」「汇总」时新增工作表加后缀，避免同名冲突（其余情况仍用固定名）。 */
+    @Test
+    void chartAndDashboardSheetNamesAvoidTitleCollision() throws Exception {
+        ExcelTable chartTable = new ExcelTable("user-1", "图表");
+        chartTable.setHeaders(List.of("产品", "销售额"));
+        chartTable.setRows(List.of(
+            List.of("A", "100"), List.of("B", "200"), List.of("C", "150")));
+        byte[] chartBytes = service.toXlsxWithChart(chartTable, "BAR", "产品", "销售额");
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(chartBytes))) {
+            assertNotNull(workbook.getSheet("图表2"));
+        }
+        ExcelTable dashboardTable = new ExcelTable("user-1", "汇总");
+        dashboardTable.setHeaders(List.of("产品", "销售额"));
+        dashboardTable.setRows(List.of(List.of("A", "100")));
+        byte[] dashboardBytes = service.toXlsxWithDashboard(dashboardTable);
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(dashboardBytes))) {
+            assertNotNull(workbook.getSheet("汇总2"));
+        }
+    }
+
+    /** 汇总页导出不修改数据工作表（回归：既有导出行为不变）。 */
+    @Test
+    void toXlsxWithDashboardKeepsDataSheetIntact() throws Exception {
+        ExcelTable table = sampleTable();
+        byte[] bytes = service.toXlsxWithDashboard(table);
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            assertEquals(2, workbook.getNumberOfSheets());
+            Sheet sheet = workbook.getSheetAt(0);
+            assertEquals("测试表", sheet.getSheetName());
+            assertEquals("姓名", sheet.getRow(0).getCell(0).getStringCellValue());
+            assertEquals(4, sheet.getLastRowNum() + 1);
         }
     }
 

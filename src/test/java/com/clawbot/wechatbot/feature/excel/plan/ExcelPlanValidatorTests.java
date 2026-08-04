@@ -414,4 +414,79 @@ class ExcelPlanValidatorTests {
         assertTrue(error.isPresent());
         assertTrue(error.get().contains("hack"));
     }
+
+    // ============================
+    // 表格式化/图表/汇总页校验
+    // ============================
+    @Test
+    void formatTableWithUnknownParamReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.FORMAT_TABLE,
+            Map.of("title", "销售报表", "hack", "x")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("hack"));
+    }
+
+    @Test
+    void formatTableNonTrueToggleReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.FORMAT_TABLE, Map.of("freezeHeader", "yes")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("freezeHeader"));
+    }
+
+    @Test
+    void validFormatTablePasses() {
+        ExcelPlan plan = plan(op(ExcelOperationType.FORMAT_TABLE,
+            Map.of("title", "销售报表", "freezeHeader", "true", "autoFilter", "true")));
+        assertEquals(Optional.empty(), validator.validate(plan, existingTable()));
+    }
+
+    @Test
+    void formatTableOnEmptyTableReturnsRequireTableError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.FORMAT_TABLE, Map.of("freezeHeader", "true")));
+        Optional<String> error = validator.validate(plan, new ExcelTable("user-1", "空表"));
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("还没有生成表格"));
+    }
+
+    @Test
+    void chartMissingRequiredParamsReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.CHART,
+            Map.of("chartType", "BAR", "categoryColumn", "产品名称")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("valueColumn"));
+    }
+
+    @Test
+    void chartInvalidTypeReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.CHART,
+            Map.of("chartType", "PIE_CHART", "categoryColumn", "产品名称",
+                "valueColumn", "销售额")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("BAR/LINE/PIE"));
+    }
+
+    @Test
+    void validChartPasses() {
+        ExcelPlan plan = plan(op(ExcelOperationType.CHART,
+            Map.of("chartType", "BAR", "categoryColumn", "产品名称", "valueColumn", "销售额")));
+        assertEquals(Optional.empty(), validator.validate(plan, existingTable()));
+    }
+
+    @Test
+    void dashboardOnEmptyTableReturnsRequireTableError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.DASHBOARD, Map.of()));
+        Optional<String> error = validator.validate(plan, new ExcelTable("user-1", "空表"));
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("还没有生成表格"));
+    }
+
+    @Test
+    void validDashboardPasses() {
+        ExcelPlan plan = plan(op(ExcelOperationType.DASHBOARD, Map.of()));
+        assertEquals(Optional.empty(), validator.validate(plan, existingTable()));
+    }
 }

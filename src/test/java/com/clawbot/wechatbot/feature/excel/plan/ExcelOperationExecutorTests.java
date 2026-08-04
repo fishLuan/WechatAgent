@@ -45,6 +45,9 @@ class ExcelOperationExecutorTests {
         new DeduplicateHandler(excelService),
         new GroupSummaryHandler(excelService),
         new FillMissingHandler(excelService),
+        new FormatTableHandler(excelService),
+        new ChartHandler(excelService),
+        new DashboardHandler(excelService),
         new RollbackHandler(excelService),
         new VersionHistoryHandler(excelService),
         new WorkbookCreateHandler(excelService),
@@ -783,5 +786,125 @@ class ExcelOperationExecutorTests {
         assertFalse(result.success());
         assertTrue(result.text().contains("找不到表格「不存在」"));
         assertTrue(result.text().contains("还没有表格"));
+    }
+
+    // ============================
+    // 表格式化：设置字段并快照、先导出后保存
+    // ============================
+    @Test
+    void formatTableHandlerSetsFieldsSnapshotsAndSaves() throws Exception {
+        ExcelTable table = existingTable();
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.FORMAT_TABLE,
+                Map.of("title", "销售报表", "freezeHeader", "true", "autoFilter", "true"))),
+            table);
+
+        assertTrue(result.success());
+        assertEquals("销售报表", table.getTitleRow());
+        assertTrue(table.isFreezeHeader());
+        assertTrue(table.isAutoFilter());
+        // 回复按实际应用项拼接
+        assertTrue(result.text().contains("✅ 已应用格式"));
+        assertTrue(result.text().contains("标题"));
+        assertTrue(result.text().contains("冻结首行"));
+        assertTrue(result.text().contains("自动筛选"));
+        assertNotNull(result.attachment());
+        verify(excelService).snapshotVersion(table, "设置格式");
+        verify(excelService).save(table);
+    }
+
+    /** 只应用指定的项：部分参数时其他字段保持原状。 */
+    @Test
+    void formatTableHandlerAppliesOnlyGivenOptions() throws Exception {
+        ExcelTable table = existingTable();
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.FORMAT_TABLE, Map.of("freezeHeader", "true"))), table);
+
+        assertTrue(result.success());
+        assertTrue(table.isFreezeHeader());
+        assertFalse(table.isAutoFilter());
+        assertNull(table.getTitleRow());
+        assertFalse(result.text().contains("自动筛选"));
+        verify(excelService).snapshotVersion(table, "设置格式");
+        verify(excelService).save(table);
+    }
+
+    // ============================
+    // 图表：列校验、数值不足失败；成功时不修改数据、不写快照
+    // ============================
+    @Test
+    void chartHandlerFailsOnMissingCategoryColumn() throws Exception {
+        ExcelTable table = existingTable();
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.CHART,
+                Map.of("chartType", "BAR", "categoryColumn", "不存在", "valueColumn", "年龄"))),
+            table);
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("找不到列「不存在」"));
+        verify(excelService, never()).save(table);
+        verify(excelService, never()).snapshotVersion(any(), anyString());
+    }
+
+    /** 数值列数值不足（少于 2 条）时失败，不触发导出。 */
+    @Test
+    void chartHandlerFailsWhenNumericValuesInsufficient() throws Exception {
+        ExcelTable table = existingTable(); // 仅 1 行数据
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.CHART,
+                Map.of("chartType", "BAR", "categoryColumn", "姓名", "valueColumn", "年龄"))),
+            table);
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("图表数据不足"));
+        verify(excelService, never()).toXlsxWithChart(any(), anyString(), anyString(), anyString());
+        verify(excelService, never()).save(table);
+    }
+
+    @Test
+    void chartHandlerGeneratesChartWithoutSnapshotsOrSave() throws Exception {
+        ExcelTable table = new ExcelTable("user-1", "测试表");
+        table.setHeaders(List.of("产品", "销售额"));
+        table.setRows(new ArrayList<>(List.of(
+            List.of("A", "100"), List.of("B", "200"), List.of("C", "150"))));
+        when(excelService.toXlsxWithChart(eq(table), eq("BAR"), eq("产品"), eq("销售额")))
+            .thenReturn(new byte[]{1, 2, 3});
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.CHART,
+                Map.of("chartType", "BAR", "categoryColumn", "产品", "valueColumn", "销售额"))),
+            table);
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("✅ 已生成柱状图"));
+        assertTrue(result.text().contains("按 产品 统计 销售额"));
+        assertTrue(result.text().contains("'图表'"));
+        assertNotNull(result.attachment());
+        verify(excelService, never()).save(table);
+        verify(excelService, never()).snapshotVersion(any(), anyString());
+    }
+
+    // ============================
+    // 汇总页：纯导出，不修改数据、不写快照
+    // ============================
+    @Test
+    void dashboardHandlerGeneratesWithoutSnapshotsOrSave() throws Exception {
+        ExcelTable table = existingTable();
+        when(excelService.toXlsxWithDashboard(table)).thenReturn(new byte[]{1, 2, 3});
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.DASHBOARD, Map.of())), table);
+
+        assertTrue(result.success());
+        assertEquals("✅ 已生成汇总页。", result.text());
+        assertNotNull(result.attachment());
+        verify(excelService, never()).save(table);
+        verify(excelService, never()).snapshotVersion(any(), anyString());
     }
 }

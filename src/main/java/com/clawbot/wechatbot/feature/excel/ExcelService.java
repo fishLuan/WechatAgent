@@ -15,8 +15,26 @@ import org.apache.poi.ss.usermodel.FormulaEvaluator;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.util.CellRangeAddress;
+import org.apache.poi.xssf.usermodel.XSSFChart;
+import org.apache.poi.xssf.usermodel.XSSFClientAnchor;
+import org.apache.poi.xssf.usermodel.XSSFDrawing;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.openxmlformats.schemas.drawingml.x2006.chart.CTBarChart;
+import org.openxmlformats.schemas.drawingml.x2006.chart.CTBarSer;
+import org.openxmlformats.schemas.drawingml.x2006.chart.CTCatAx;
+import org.openxmlformats.schemas.drawingml.x2006.chart.CTLineChart;
+import org.openxmlformats.schemas.drawingml.x2006.chart.CTLineSer;
+import org.openxmlformats.schemas.drawingml.x2006.chart.CTPieChart;
+import org.openxmlformats.schemas.drawingml.x2006.chart.CTPieSer;
+import org.openxmlformats.schemas.drawingml.x2006.chart.CTPlotArea;
+import org.openxmlformats.schemas.drawingml.x2006.chart.CTValAx;
+import org.openxmlformats.schemas.drawingml.x2006.chart.STAxPos;
+import org.openxmlformats.schemas.drawingml.x2006.chart.STBarDir;
+import org.openxmlformats.schemas.drawingml.x2006.chart.STCrosses;
+import org.openxmlformats.schemas.drawingml.x2006.chart.STOrientation;
+import org.openxmlformats.schemas.drawingml.x2006.chart.STTickLblPos;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -444,52 +462,316 @@ public class ExcelService {
     /* ========== POI 导出 .xlsx ========== */
 
     public byte[] toXlsx(ExcelTable table) throws IOException {
-        try (XSSFWorkbook workbook = new XSSFWorkbook();
+        try (XSSFWorkbook workbook = buildWorkbook(table);
              ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            XSSFSheet sheet = workbook.createSheet(safeSheetName(table.getTitle()));
+            writeWorkbook(workbook, out);
+            return out.toByteArray();
+        }
+    }
 
-            // 表头行（加粗）
-            CellStyle headerStyle = workbook.createCellStyle();
-            Font headerFont = workbook.createFont();
-            headerFont.setBold(true);
-            headerStyle.setFont(headerFont);
-            Row headerRow = sheet.createRow(0);
-            List<String> headers = table.getHeaders();
-            for (int i = 0; i < headers.size(); i++) {
-                Cell cell = headerRow.createCell(i);
-                cell.setCellValue(headers.get(i));
-                cell.setCellStyle(headerStyle);
+    /**
+     * 构建工作簿的数据工作表（toXlsx / 图表 / 汇总页共用）：
+     * titleRow 非空时第 0 行为合并单元格标题（加粗 14 号字），表头行从第 1 行开始；
+     * 表头加粗、数据按值类型写入、自动列宽；freezeHeader 冻结表头行、autoFilter 对表头+数据范围筛选。
+     */
+    private static XSSFWorkbook buildWorkbook(ExcelTable table) {
+        XSSFWorkbook workbook = new XSSFWorkbook();
+        XSSFSheet sheet = workbook.createSheet(safeSheetName(table.getTitle()));
+        List<String> headers = table.getHeaders();
+        List<List<String>> rows = table.getRows();
+        // 表标题行：跨全部列合并、加粗 14 号字；存在时表头行从第 1 行开始
+        int headerRowIndex = 0;
+        String titleRow = table.getTitleRow();
+        if (titleRow != null && !titleRow.isBlank()) {
+            CellStyle titleStyle = workbook.createCellStyle();
+            Font titleFont = workbook.createFont();
+            titleFont.setBold(true);
+            titleFont.setFontHeightInPoints((short) 14);
+            titleStyle.setFont(titleFont);
+            Row title = sheet.createRow(0);
+            Cell titleCell = title.createCell(0);
+            titleCell.setCellValue(titleRow);
+            titleCell.setCellStyle(titleStyle);
+            if (!headers.isEmpty()) {
+                sheet.addMergedRegion(new CellRangeAddress(0, 0, 0, headers.size() - 1));
             }
+            headerRowIndex = 1;
+        }
 
-            // 数据行：按值类型写入（数字/布尔/无歧义日期推断为类型单元格，其余按文本）
-            CellStyle dateStyle = workbook.createCellStyle();
-            dateStyle.setDataFormat(workbook.createDataFormat().getFormat("yyyy-mm-dd"));
-            List<List<String>> rows = table.getRows();
-            for (int r = 0; r < rows.size(); r++) {
-                Row row = sheet.createRow(r + 1);
-                List<String> cells = rows.get(r);
-                for (int c = 0; c < cells.size(); c++) {
-                    writeValueCell(row.createCell(c), cells.get(c), dateStyle);
+        // 表头行（加粗）
+        CellStyle headerStyle = workbook.createCellStyle();
+        Font headerFont = workbook.createFont();
+        headerFont.setBold(true);
+        headerStyle.setFont(headerFont);
+        Row headerRow = sheet.createRow(headerRowIndex);
+        for (int i = 0; i < headers.size(); i++) {
+            Cell cell = headerRow.createCell(i);
+            cell.setCellValue(headers.get(i));
+            cell.setCellStyle(headerStyle);
+        }
+
+        // 数据行：按值类型写入（数字/布尔/无歧义日期推断为类型单元格，其余按文本）
+        CellStyle dateStyle = workbook.createCellStyle();
+        dateStyle.setDataFormat(workbook.createDataFormat().getFormat("yyyy-mm-dd"));
+        for (int r = 0; r < rows.size(); r++) {
+            Row row = sheet.createRow(headerRowIndex + r + 1);
+            List<String> cells = rows.get(r);
+            for (int c = 0; c < cells.size(); c++) {
+                writeValueCell(row.createCell(c), cells.get(c), dateStyle);
+            }
+        }
+
+        autoSizeColumns(sheet, headers.size(), rows, headerRowIndex);
+
+        // 冻结表头行（createFreezePane 冻结 表头行号 之前的所有行；有标题行时标题一并冻结）
+        if (table.isFreezeHeader()) {
+            sheet.createFreezePane(0, headerRowIndex + 1);
+        }
+        // 自动筛选：表头 + 数据范围
+        if (table.isAutoFilter() && !headers.isEmpty()) {
+            sheet.setAutoFilter(new CellRangeAddress(
+                headerRowIndex, headerRowIndex + rows.size(), 0, headers.size() - 1));
+        }
+        return workbook;
+    }
+
+    /** 写工作簿：强制重算、公式求值检查（存在公式错误则取消导出）、写出字节流。 */
+    private static void writeWorkbook(XSSFWorkbook workbook, ByteArrayOutputStream out)
+        throws IOException {
+        // 公式支持：强制 Excel 打开时重算；导出前先求值，存在公式错误则取消导出
+        workbook.setForceFormulaRecalculation(true);
+        FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
+        evaluator.evaluateAll();
+        Cell errorCell = findFirstErrorCell(workbook);
+        if (errorCell != null) {
+            throw new IllegalArgumentException(
+                "❌ 公式存在错误，已取消导出：单元格 " + errorCell.getAddress().formatAsString()
+                    + " 为 " + FormulaError.forInt(errorCell.getErrorCellValue()).getString()
+                    + "。请检查公式后重试。"
+                    + "如公式使用了区域，请写成 =SUM(A1:B2) 这类函数形式。");
+        }
+        workbook.write(out);
+    }
+
+    /**
+     * 导出带图表的 .xlsx：数据工作表 + 「图表」工作表（分类/数值解析后写入图表工作表，用 XSSF 图表 API 绘制）。
+     * 图表数据较少（解析出的分类不足 2 条）时抛出 IllegalArgumentException；不修改表格数据。
+     */
+    public byte[] toXlsxWithChart(ExcelTable table, String chartType,
+                                  String categoryColumn, String valueColumn) throws IOException {
+        try (XSSFWorkbook workbook = buildWorkbook(table);
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            int categoryIndex = findColumnIndex(table.getHeaders(), categoryColumn);
+            int valueIndex = findColumnIndex(table.getHeaders(), valueColumn);
+            // 解析图表数据：数值列非数值按 0 处理；空分类跳过
+            List<String> categories = new ArrayList<>();
+            List<Double> values = new ArrayList<>();
+            for (List<String> row : table.getRows()) {
+                String category = categoryIndex < row.size() ? row.get(categoryIndex) : "";
+                if (category == null || category.isBlank()) {
+                    continue;
+                }
+                Double value = valueIndex < row.size()
+                    ? parseNumber(row.get(valueIndex)) : null;
+                categories.add(category);
+                values.add(value == null ? 0.0 : value);
+            }
+            if (categories.size() < 2) {
+                throw new IllegalArgumentException("图表数据不足，请确认分类列和数值列。");
+            }
+            // 表格标题恰好为「图表」时工作表名冲突，加后缀避免 createSheet 抛异常
+            String chartSheetName = "图表".equals(safeSheetName(table.getTitle())) ? "图表2" : "图表";
+            XSSFSheet chartSheet = workbook.createSheet(chartSheetName);
+            buildChartSheet(chartSheet, chartType, categories, values,
+                categoryColumn, valueColumn, chartSheetName);
+            writeWorkbook(workbook, out);
+            return out.toByteArray();
+        }
+    }
+
+    /**
+     * 导出带汇总页的 .xlsx：数据工作表 + 「汇总」工作表（表标题 + 列数/行数 + 每列数值型合计与平均，
+     * 非数值列标「-」+ 简单说明文本）；不修改表格数据。
+     */
+    public byte[] toXlsxWithDashboard(ExcelTable table) throws IOException {
+        try (XSSFWorkbook workbook = buildWorkbook(table);
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            // 表格标题恰好为「汇总」时工作表名冲突，加后缀避免 createSheet 抛异常
+            String sheetName = "汇总".equals(safeSheetName(table.getTitle())) ? "汇总2" : "汇总";
+            buildDashboardSheet(workbook, table, sheetName);
+            writeWorkbook(workbook, out);
+            return out.toByteArray();
+        }
+    }
+
+    /** 图表工作表：A 列分类、B 列数值（首行为表头），图表引用该区域并按类型绘制柱状/折线/饼图。 */
+    private static void buildChartSheet(XSSFSheet chartSheet, String chartType,
+                                        List<String> categories, List<Double> values,
+                                        String categoryColumn, String valueColumn,
+                                        String chartSheetName) {
+        Row header = chartSheet.createRow(0);
+        header.createCell(0).setCellValue(categoryColumn);
+        header.createCell(1).setCellValue(valueColumn);
+        for (int i = 0; i < categories.size(); i++) {
+            Row row = chartSheet.createRow(i + 1);
+            row.createCell(0).setCellValue(categories.get(i));
+            row.createCell(1).setCellValue(values.get(i));
+        }
+        // 图表放在数据区右侧（列 D 起），标题为「按X统计Y」
+        XSSFDrawing drawing = chartSheet.createDrawingPatriarch();
+        XSSFClientAnchor anchor = drawing.createAnchor(0, 0, 0, 0, 3, 0, 16, 24);
+        XSSFChart chart = drawing.createChart(anchor);
+        chart.setTitleText("按" + categoryColumn + "统计" + valueColumn);
+        chart.setTitleOverlay(false);
+        String seriesNameRef = "'" + chartSheetName + "'!$B$1";
+        String catRef = "'" + chartSheetName + "'!$A$2:$A$" + (categories.size() + 1);
+        String valRef = "'" + chartSheetName + "'!$B$2:$B$" + (values.size() + 1);
+        CTPlotArea plotArea = chart.getCTChart().getPlotArea();
+        switch (chartType) {
+            case "BAR" -> buildBarChart(plotArea, catRef, valRef, seriesNameRef);
+            case "LINE" -> buildLineChart(plotArea, catRef, valRef, seriesNameRef);
+            case "PIE" -> buildPieChart(plotArea, catRef, valRef, seriesNameRef);
+            default -> throw new IllegalArgumentException(
+                "非法计划：chartType「" + chartType + "」无效，应为 BAR/LINE/PIE。");
+        }
+    }
+
+    /** 柱状图：类别轴 + 数值轴（与折线图共用坐标轴构造）。 */
+    private static void buildBarChart(CTPlotArea plotArea, String catRef, String valRef,
+                                      String seriesNameRef) {
+        CTBarChart barChart = plotArea.addNewBarChart();
+        barChart.addNewBarDir().setVal(STBarDir.COL);
+        CTBarSer ser = barChart.addNewSer();
+        ser.addNewIdx().setVal(0);
+        ser.addNewOrder().setVal(0);
+        ser.addNewTx().addNewStrRef().setF(seriesNameRef);
+        ser.addNewCat().addNewStrRef().setF(catRef);
+        ser.addNewVal().addNewNumRef().setF(valRef);
+        barChart.addNewAxId().setVal(123456);
+        barChart.addNewAxId().setVal(123457);
+        addChartAxes(plotArea);
+    }
+
+    /** 折线图：类别轴 + 数值轴。 */
+    private static void buildLineChart(CTPlotArea plotArea, String catRef, String valRef,
+                                       String seriesNameRef) {
+        CTLineChart lineChart = plotArea.addNewLineChart();
+        CTLineSer ser = lineChart.addNewSer();
+        ser.addNewIdx().setVal(0);
+        ser.addNewOrder().setVal(0);
+        ser.addNewTx().addNewStrRef().setF(seriesNameRef);
+        ser.addNewCat().addNewStrRef().setF(catRef);
+        ser.addNewVal().addNewNumRef().setF(valRef);
+        lineChart.addNewAxId().setVal(123456);
+        lineChart.addNewAxId().setVal(123457);
+        addChartAxes(plotArea);
+    }
+
+    /** 饼图：无需坐标轴（类别 + 数值即可）。 */
+    private static void buildPieChart(CTPlotArea plotArea, String catRef, String valRef,
+                                      String seriesNameRef) {
+        CTPieChart pieChart = plotArea.addNewPieChart();
+        pieChart.addNewVaryColors().setVal(true);
+        CTPieSer ser = pieChart.addNewSer();
+        ser.addNewIdx().setVal(0);
+        ser.addNewOrder().setVal(0);
+        ser.addNewTx().addNewStrRef().setF(seriesNameRef);
+        ser.addNewCat().addNewStrRef().setF(catRef);
+        ser.addNewVal().addNewNumRef().setF(valRef);
+    }
+
+    /** 柱状/折线图共用的坐标轴：数值轴（B 侧）+ 类别轴（B 侧），id 与图表内引用一致。 */
+    private static void addChartAxes(CTPlotArea plotArea) {
+        CTValAx valAx = plotArea.addNewValAx();
+        valAx.addNewAxId().setVal(123457);
+        valAx.addNewCrossAx().setVal(123456);
+        valAx.addNewScaling().addNewOrientation().setVal(STOrientation.MIN_MAX);
+        valAx.addNewDelete().setVal(false);
+        valAx.addNewAxPos().setVal(STAxPos.B);
+        valAx.addNewCrosses().setVal(STCrosses.AUTO_ZERO);
+        CTCatAx catAx = plotArea.addNewCatAx();
+        catAx.addNewAxId().setVal(123456);
+        catAx.addNewScaling().addNewOrientation().setVal(STOrientation.MIN_MAX);
+        catAx.addNewDelete().setVal(false);
+        catAx.addNewAxPos().setVal(STAxPos.B);
+        catAx.addNewCrossAx().setVal(123457);
+        catAx.addNewCrosses().setVal(STCrosses.AUTO_ZERO);
+        catAx.addNewTickLblPos().setVal(STTickLblPos.NEXT_TO);
+    }
+
+    /** 汇总工作表：表标题 + 列数/行数 + 每列数值型合计与平均（非数值列标「-」）+ 简单说明文本。 */
+    private static void buildDashboardSheet(XSSFWorkbook workbook, ExcelTable table,
+                                            String sheetName) {
+        XSSFSheet summary = workbook.createSheet(sheetName);
+        List<String> headers = table.getHeaders();
+        List<List<String>> rows = table.getRows();
+        // 表标题（工作表名）+ 说明：第 0 行合并标题、第 1 行行列数
+        CellStyle titleStyle = workbook.createCellStyle();
+        Font titleFont = workbook.createFont();
+        titleFont.setBold(true);
+        titleFont.setFontHeightInPoints((short) 14);
+        titleStyle.setFont(titleFont);
+        Row title = summary.createRow(0);
+        Cell titleCell = title.createCell(0);
+        titleCell.setCellValue(table.getTitle() + " 汇总");
+        titleCell.setCellStyle(titleStyle);
+        if (!headers.isEmpty()) {
+            summary.addMergedRegion(new CellRangeAddress(0, 0, 0, Math.min(2, headers.size() - 1)));
+        }
+        Row info = summary.createRow(1);
+        info.createCell(0).setCellValue("共 " + headers.size() + " 列 × " + rows.size() + " 行数据");
+        // 表头：列名 | 合计 | 平均
+        CellStyle headerStyle = workbook.createCellStyle();
+        Font headerFont = workbook.createFont();
+        headerFont.setBold(true);
+        headerStyle.setFont(headerFont);
+        Row summaryHeader = summary.createRow(2);
+        summaryHeader.createCell(0).setCellValue("列名");
+        summaryHeader.createCell(1).setCellValue("合计");
+        summaryHeader.createCell(2).setCellValue("平均");
+        for (int c = 0; c < 3; c++) {
+            summaryHeader.getCell(c).setCellStyle(headerStyle);
+        }
+        // 每列合计与平均：仅统计数值型单元格（精确累加用 BigDecimal），非数值列标「-」
+        for (int c = 0; c < headers.size(); c++) {
+            Row row = summary.createRow(3 + c);
+            row.createCell(0).setCellValue(headers.get(c));
+            BigDecimal sum = BigDecimal.ZERO;
+            int count = 0;
+            for (List<String> dataRow : rows) {
+                if (c < dataRow.size()) {
+                    BigDecimal decimal = parseDecimal(dataRow.get(c));
+                    if (decimal != null) {
+                        sum = sum.add(decimal);
+                        count++;
+                    }
                 }
             }
-
-            autoSizeColumns(sheet, headers.size(), rows);
-
-            // 公式支持：强制 Excel 打开时重算；导出前先求值，存在公式错误则取消导出
-            workbook.setForceFormulaRecalculation(true);
-            FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
-            evaluator.evaluateAll();
-            Cell errorCell = findFirstErrorCell(workbook);
-            if (errorCell != null) {
-                throw new IllegalArgumentException(
-                    "❌ 公式存在错误，已取消导出：单元格 " + errorCell.getAddress().formatAsString()
-                        + " 为 " + FormulaError.forInt(errorCell.getErrorCellValue()).getString()
-                        + "。请检查公式后重试。"
-                        + "如公式使用了区域，请写成 =SUM(A1:B2) 这类函数形式。");
+            if (count == 0) {
+                row.createCell(1).setCellValue("-");
+                row.createCell(2).setCellValue("-");
+            } else {
+                row.createCell(1).setCellValue(sum.doubleValue());
+                row.createCell(2).setCellValue(
+                    sum.divide(BigDecimal.valueOf(count), 2, RoundingMode.HALF_UP).doubleValue());
             }
-
-            workbook.write(out);
-            return out.toByteArray();
+        }
+        // 简单说明文本
+        Row note = summary.createRow(3 + headers.size());
+        note.createCell(0).setCellValue(
+            "说明：本页由表格自动生成，合计与平均仅统计数值型单元格，非数值列显示「-」。");
+        // 汇总页列宽：中文按 2 个宽度单位估算（与主表自动列宽一致）
+        int[] widths = new int[]{0, 0, 0};
+        for (Row row : summary) {
+            for (int c = 0; c < 3; c++) {
+                Cell cell = row.getCell(c);
+                if (cell != null && cell.getCellType() == CellType.STRING) {
+                    widths[c] = Math.max(widths[c], displayWidth(cell.getStringCellValue()));
+                }
+            }
+        }
+        for (int c = 0; c < 3; c++) {
+            summary.setColumnWidth(c, Math.min(MAX_COLUMN_WIDTH, widths[c] * 256 + 200));
         }
     }
 
@@ -630,12 +912,13 @@ public class ExcelService {
 
     /** 自动列宽：中文字符按 2 个宽度单位估算，避免 POI 原生算法对中文失效。 */
     private static void autoSizeColumns(
-        XSSFSheet sheet, int headerCount, List<List<String>> rows
+        XSSFSheet sheet, int headerCount, List<List<String>> rows, int headerRowIndex
     ) {
         if (headerCount == 0) return;
         int[] widths = new int[headerCount];
         for (int c = 0; c < headerCount; c++) {
-            widths[c] = displayWidth(sheet.getRow(0).getCell(c).getStringCellValue());
+            widths[c] = displayWidth(
+                sheet.getRow(headerRowIndex).getCell(c).getStringCellValue());
         }
         for (List<String> cells : rows) {
             for (int c = 0; c < Math.min(cells.size(), headerCount); c++) {

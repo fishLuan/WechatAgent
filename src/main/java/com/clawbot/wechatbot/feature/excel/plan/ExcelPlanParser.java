@@ -98,6 +98,28 @@ public final class ExcelPlanParser {
     /** 复制表格指令：复制表格/工作簿 X。 */
     private static final Pattern WORKBOOK_COPY_CMD = Pattern.compile(
         "^(?:请|帮我\\s*)*复制(?:表格|工作簿)?\\s*(.+?)\\s*$");
+    /** 表格式化指令：加标题/标题为/设置标题 X（X 到分隔符为止）。 */
+    private static final Pattern FORMAT_TITLE = Pattern.compile(
+        "(?:加标题|标题为|设置标题)\\s*[:：]?\\s*(.+?)\\s*(?:[，,、；;。]|$)");
+    /** 表格式化指令：冻结首行/冻结表头 → freezeHeader。 */
+    private static final Pattern FORMAT_FREEZE = Pattern.compile("冻结(?:首行|表头)");
+    /** 表格式化指令：加筛选/自动筛选 → autoFilter。 */
+    private static final Pattern FORMAT_FILTER = Pattern.compile("(?:加筛选|自动筛选)");
+    /** 表格式化指令：美化表格/格式化 → 全部默认（无标题，冻结 + 筛选开）。 */
+    private static final Pattern FORMAT_BEAUTIFY = Pattern.compile("(?:美化表格|格式化)");
+    /** 图表指令：生成X图：分类,数值 / 折线图 分类,数值（冒号或空格分隔）。 */
+    private static final Pattern CHART_PLAIN = Pattern.compile(
+        "^(?:请|帮我\\s*)*(?:生成|做一个)?\\s*(柱状图|柱形图|折线图|饼图)\\s*[:：]?\\s*(.*)$");
+    /** 图表指令：按X生成Y图（V）或 按X生成V图（数值列带括号；图型词可直接跟在「生成」后）。 */
+    private static final Pattern CHART_BY_PAREN = Pattern.compile(
+        "^(?:请|帮我\\s*)*按\\s*(.+?)\\s*生成\\s*(.*?)\\s*(柱状图|柱形图|折线图|饼图)"
+            + "\\s*[（(]\\s*(.+?)\\s*[）)]\\s*$");
+    /** 图表指令：按X生成V图（数值列紧跟图型词）。 */
+    private static final Pattern CHART_BY_JOINED = Pattern.compile(
+        "^(?:请|帮我\\s*)*按\\s*(.+?)\\s*生成\\s*(.*?)\\s*(柱状图|柱形图|折线图|饼图)\\s*$");
+    /** 汇总页指令：生成汇总页/汇总页/dashboard（大小写不敏感）。 */
+    private static final Pattern DASHBOARD_CMD = Pattern.compile(
+        "^(?:请|帮我\\s*)*(?:生成汇总页|汇总页|dashboard)\\s*$", Pattern.CASE_INSENSITIVE);
     /** 片段尾部残留分隔符（切分点前的标点/连接词），清理时按长度从长到短尝试。 */
     private static final List<String> SEPARATOR_TAIL_WORDS = List.of(
         "然后", "接着", "同时", "并且", "并", "再", "，", "、", "；", ",", ";");
@@ -131,6 +153,16 @@ public final class ExcelPlanParser {
         // 知识管理指令（必须在「添加行」之前判定：「添加知识：…」会命中添加行前缀正则，避免被当成加行）
         ExcelPlan knowledge = tryKnowledge(userId, text);
         if (knowledge != null) return knowledge;
+
+        // 表格式化 / 图表 / 汇总页：分析类与知识管理之后、删除行之前判定。
+        // 必须在「添加行」（「加标题」「加筛选」会被「加」字宽匹配吞掉）与「生成表格」
+        // （「生成柱状图」「生成汇总页」含「生成」）分支之前
+        ExcelOperation format = tryFormat(text);
+        if (format != null) return plan(userId, format);
+        ExcelOperation chart = tryChart(text);
+        if (chart != null) return plan(userId, chart);
+        ExcelOperation dashboard = tryDashboard(text);
+        if (dashboard != null) return plan(userId, dashboard);
 
         // 3. 删除行
         Matcher rowMatcher = ROW_NUMBER.matcher(text);
@@ -368,6 +400,105 @@ public final class ExcelPlanParser {
             }
         }
         return null;
+    }
+
+    /**
+     * 表格式化路由：整句关键词识别，可组合（如「加标题 销售报表，冻结首行，加筛选」产出单个 FORMAT_TABLE）。
+     * 标题取「加标题/标题为/设置标题」后到分隔符为止；冻结/筛选/美化按关键词置位；
+     * 「美化表格/格式化」补齐全部默认项（无标题，冻结 + 筛选开）。
+     */
+    private ExcelOperation tryFormat(String text) {
+        Map<String, String> params = new LinkedHashMap<>();
+        Matcher title = FORMAT_TITLE.matcher(text);
+        if (title.find()) {
+            String value = title.group(1).trim();
+            if (!value.isBlank()) {
+                params.put("title", value);
+            }
+        }
+        if (FORMAT_FREEZE.matcher(text).find()) {
+            params.put("freezeHeader", "true");
+        }
+        if (FORMAT_FILTER.matcher(text).find()) {
+            params.put("autoFilter", "true");
+        }
+        if (FORMAT_BEAUTIFY.matcher(text).find()) {
+            params.putIfAbsent("freezeHeader", "true");
+            params.putIfAbsent("autoFilter", "true");
+        }
+        return params.isEmpty() ? null : op("1", ExcelOperationType.FORMAT_TABLE, params);
+    }
+
+    /**
+     * 图表路由：图型词 → BAR/LINE/PIE，分类列/数值列取「图型词 分类,数值」、
+     * 「按X生成Y图（V）」或「按X生成V图」三种形态；数值列缺失时不产出该参数交给校验器提示。
+     */
+    private ExcelOperation tryChart(String text) {
+        Matcher plain = CHART_PLAIN.matcher(text);
+        if (plain.matches()) {
+            List<String> columns = splitChartColumns(plain.group(2));
+            Map<String, String> params = new LinkedHashMap<>();
+            params.put("chartType", chartType(plain.group(1)));
+            if (!columns.isEmpty()) {
+                params.put("categoryColumn", columns.get(0));
+            }
+            if (columns.size() > 1) {
+                params.put("valueColumn", columns.get(1));
+            }
+            return op("1", ExcelOperationType.CHART, params);
+        }
+        Matcher paren = CHART_BY_PAREN.matcher(text);
+        if (paren.matches()) {
+            Map<String, String> params = new LinkedHashMap<>();
+            params.put("chartType", chartType(paren.group(3)));
+            params.put("categoryColumn", paren.group(1).trim());
+            String value = paren.group(4).trim();
+            if (!value.isBlank()) {
+                params.put("valueColumn", value);
+            }
+            return op("1", ExcelOperationType.CHART, params);
+        }
+        Matcher joined = CHART_BY_JOINED.matcher(text);
+        if (joined.matches()) {
+            Map<String, String> params = new LinkedHashMap<>();
+            params.put("chartType", chartType(joined.group(3)));
+            params.put("categoryColumn", joined.group(1).trim());
+            String value = joined.group(2).trim();
+            if (!value.isBlank()) {
+                params.put("valueColumn", value);
+            }
+            return op("1", ExcelOperationType.CHART, params);
+        }
+        return null;
+    }
+
+    /** 汇总页路由：生成汇总页/汇总页/dashboard（大小写不敏感）。 */
+    private ExcelOperation tryDashboard(String text) {
+        if (DASHBOARD_CMD.matcher(text).matches()) {
+            return op("1", ExcelOperationType.DASHBOARD, Map.of());
+        }
+        return null;
+    }
+
+    /** 图型词 → 图表类型枚举名：柱状图/柱形图 → BAR，折线图 → LINE，饼图 → PIE。 */
+    private static String chartType(String word) {
+        return switch (word) {
+            case "柱状图", "柱形图" -> "BAR";
+            case "折线图" -> "LINE";
+            default -> "PIE";
+        };
+    }
+
+    /** 图表「分类,数值」列拆分：按中英文逗号/顿号/分号切分，去空白后保留非空段。 */
+    private static List<String> splitChartColumns(String body) {
+        List<String> columns = new ArrayList<>();
+        for (String part : body.split("[，,、；;]")) {
+            String column = part.trim();
+            if (!column.isBlank()) {
+                columns.add(column);
+            }
+        }
+        return columns;
     }
 
     /** 重命名计划：名称与新标题均非空才产出（缺失时让位，由兜底文案提示）。 */

@@ -4,6 +4,7 @@ import com.clawbot.wechatbot.feature.excel.ExcelService;
 import com.clawbot.wechatbot.feature.excel.model.ExcelRagKnowledge;
 import com.clawbot.wechatbot.feature.excel.model.ExcelTable;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -38,7 +39,10 @@ public final class ExcelPlanValidator {
         Map.entry(ExcelOperationType.KNOWLEDGE_LIST, Set.of()),
         Map.entry(ExcelOperationType.KNOWLEDGE_DELETE, Set.of("keyword")),
         Map.entry(ExcelOperationType.AUDIT_LIST, Set.of()),
-        Map.entry(ExcelOperationType.VERSION_DIFF, Set.of()));
+        Map.entry(ExcelOperationType.VERSION_DIFF, Set.of()),
+        Map.entry(ExcelOperationType.FORMAT_TABLE, Set.of("title", "freezeHeader", "autoFilter")),
+        Map.entry(ExcelOperationType.CHART, Set.of("chartType", "categoryColumn", "valueColumn")),
+        Map.entry(ExcelOperationType.DASHBOARD, Set.of()));
 
     /** 每种操作必填的参数 key。 */
     private static final Map<ExcelOperationType, Set<String>> REQUIRED_PARAM_KEYS = Map.ofEntries(
@@ -63,7 +67,10 @@ public final class ExcelPlanValidator {
         Map.entry(ExcelOperationType.KNOWLEDGE_LIST, Set.of()),
         Map.entry(ExcelOperationType.KNOWLEDGE_DELETE, Set.of("keyword")),
         Map.entry(ExcelOperationType.AUDIT_LIST, Set.of()),
-        Map.entry(ExcelOperationType.VERSION_DIFF, Set.of()));
+        Map.entry(ExcelOperationType.VERSION_DIFF, Set.of()),
+        Map.entry(ExcelOperationType.FORMAT_TABLE, Set.of()),
+        Map.entry(ExcelOperationType.CHART, Set.of("chartType", "categoryColumn", "valueColumn")),
+        Map.entry(ExcelOperationType.DASHBOARD, Set.of()));
 
     private final ExcelService excelService;
 
@@ -114,7 +121,34 @@ public final class ExcelPlanValidator {
             case KNOWLEDGE_ADD -> validateKnowledgeAdd(operation);
             case KNOWLEDGE_LIST -> Optional.empty();
             case KNOWLEDGE_DELETE -> validateKnowledgeDelete(operation);
+            case FORMAT_TABLE -> validateFormatTable(operation, table);
+            case CHART -> validateChart(operation, table);
+            case DASHBOARD -> validateRequireTable(table);
         };
+    }
+
+    /** 表格式化校验：先要求表格存在，再校验 freezeHeader/autoFilter 只能为 true（title 可空）。 */
+    private Optional<String> validateFormatTable(ExcelOperation operation, ExcelTable table) {
+        Optional<String> requireTable = validateRequireTable(table);
+        if (requireTable.isPresent()) return requireTable;
+        for (String key : List.of("freezeHeader", "autoFilter")) {
+            String value = operation.param(key);
+            if (value != null && !"true".equals(value)) {
+                return Optional.of("非法计划：" + key + "「" + value + "」只能为 true。");
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** 图表校验：先要求表格存在，再校验 chartType 必须是 BAR/LINE/PIE（列存在性由 Handler 校验）。 */
+    private Optional<String> validateChart(ExcelOperation operation, ExcelTable table) {
+        Optional<String> requireTable = validateRequireTable(table);
+        if (requireTable.isPresent()) return requireTable;
+        String chartType = operation.param("chartType");
+        if (!"BAR".equals(chartType) && !"LINE".equals(chartType) && !"PIE".equals(chartType)) {
+            return Optional.of("非法计划：chartType「" + chartType + "」无效，应为 BAR/LINE/PIE。");
+        }
+        return Optional.empty();
     }
 
     /** 生成表格校验：表头非空；已有非空数据时需显式带「覆盖」才允许替换。 */

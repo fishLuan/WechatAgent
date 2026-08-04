@@ -599,4 +599,127 @@ class ExcelPlanParserTests {
         assertEquals(ExcelOperationType.ROLLBACK, parseSingle("恢复").type());
         assertEquals(ExcelOperationType.CREATE_TABLE, parseSingle("生成表格：姓名,城市").type());
     }
+
+    // ============================
+    // 表格式化指令路由（加标题/冻结首行/加筛选/美化表格）
+    // ============================
+    @Test
+    void formatTitlePhrasesRouteToFormatTable() {
+        ExcelOperation op = parseSingle("加标题 销售报表");
+        assertEquals(ExcelOperationType.FORMAT_TABLE, op.type());
+        assertEquals("销售报表", op.param("title"));
+        assertNull(op.param("freezeHeader"));
+        assertEquals("销售报表", parseSingle("标题为 销售报表").param("title"));
+        assertEquals("销售报表", parseSingle("设置标题 销售报表").param("title"));
+        assertEquals("销售报表", parseSingle("请设置标题：销售报表").param("title"));
+    }
+
+    @Test
+    void formatFreezeAndFilterPhrasesRouteToFormatTable() {
+        assertEquals("true", parseSingle("冻结首行").param("freezeHeader"));
+        assertEquals("true", parseSingle("冻结表头").param("freezeHeader"));
+        assertEquals("true", parseSingle("加筛选").param("autoFilter"));
+        assertEquals("true", parseSingle("自动筛选").param("autoFilter"));
+    }
+
+    /** 美化表格/格式化：全部默认（无标题，冻结 + 筛选开）。 */
+    @Test
+    void formatBeautifyDefaultsToFreezeAndFilter() {
+        ExcelOperation op = parseSingle("美化表格");
+        assertEquals(ExcelOperationType.FORMAT_TABLE, op.type());
+        assertEquals("true", op.param("freezeHeader"));
+        assertEquals("true", op.param("autoFilter"));
+        assertNull(op.param("title"));
+        ExcelOperation generic = parseSingle("格式化");
+        assertEquals("true", generic.param("freezeHeader"));
+        assertEquals("true", generic.param("autoFilter"));
+    }
+
+    /** 可组合指令：整句多关键词识别，产出单个 FORMAT_TABLE 操作。 */
+    @Test
+    void formatCombinedKeywordsProduceSingleOperation() {
+        ExcelOperation op = parseSingle("加标题 销售报表，冻结首行，加筛选");
+        assertEquals(ExcelOperationType.FORMAT_TABLE, op.type());
+        assertEquals("销售报表", op.param("title"));
+        assertEquals("true", op.param("freezeHeader"));
+        assertEquals("true", op.param("autoFilter"));
+    }
+
+    // ============================
+    // 图表指令路由（柱状/折线/饼图，三种形态）
+    // ============================
+    @Test
+    void chartColonFormRoutesToChartWithColumns() {
+        ExcelOperation op = parseSingle("生成柱状图：产品名称,销售额");
+        assertEquals(ExcelOperationType.CHART, op.type());
+        assertEquals("BAR", op.param("chartType"));
+        assertEquals("产品名称", op.param("categoryColumn"));
+        assertEquals("销售额", op.param("valueColumn"));
+    }
+
+    @Test
+    void chartTypeWordsMapToBarLinePie() {
+        assertEquals("BAR", parseSingle("生成柱形图：产品名称,销售额").param("chartType"));
+        assertEquals("LINE", parseSingle("折线图 日期,价格").param("chartType"));
+        assertEquals("PIE", parseSingle("饼图：地区,销售额").param("chartType"));
+    }
+
+    @Test
+    void chartByPhrasesRouteToChart() {
+        ExcelOperation paren = parseSingle("按产品名称生成柱状图（销售额）");
+        assertEquals(ExcelOperationType.CHART, paren.type());
+        assertEquals("BAR", paren.param("chartType"));
+        assertEquals("产品名称", paren.param("categoryColumn"));
+        assertEquals("销售额", paren.param("valueColumn"));
+        ExcelOperation joined = parseSingle("按产品名称生成销售额柱状图");
+        assertEquals(ExcelOperationType.CHART, joined.type());
+        assertEquals("BAR", joined.param("chartType"));
+        assertEquals("产品名称", joined.param("categoryColumn"));
+        assertEquals("销售额", joined.param("valueColumn"));
+        assertEquals("LINE", parseSingle("按日期生成折线图（价格）").param("chartType"));
+        assertEquals("PIE", parseSingle("按地区生成销售额饼图").param("chartType"));
+    }
+
+    /** 图型词后只有分类列时：数值列参数不产出，交给校验器提示。 */
+    @Test
+    void chartMissingValueColumnIsOmittedForValidator() {
+        ExcelOperation op = parseSingle("生成柱状图：产品名称");
+        assertEquals(ExcelOperationType.CHART, op.type());
+        assertEquals("产品名称", op.param("categoryColumn"));
+        assertNull(op.param("valueColumn"));
+    }
+
+    // ============================
+    // 汇总页指令路由
+    // ============================
+    @Test
+    void dashboardCommandsRouteToDashboard() {
+        assertEquals(ExcelOperationType.DASHBOARD, parseSingle("生成汇总页").type());
+        assertEquals(ExcelOperationType.DASHBOARD, parseSingle("汇总页").type());
+        assertEquals(ExcelOperationType.DASHBOARD, parseSingle("dashboard").type());
+        assertEquals(ExcelOperationType.DASHBOARD, parseSingle("Dashboard").type());
+        assertEquals(ExcelOperationType.DASHBOARD, parseSingle("请生成汇总页").type());
+    }
+
+    /** 「加标题」不被添加行路由吞掉；「生成柱状图/生成汇总页」不被生成表格路由吞掉。 */
+    @Test
+    void formatChartDashboardRouteBeforeAddAndCreate() {
+        assertEquals(ExcelOperationType.FORMAT_TABLE, parseSingle("加标题 销售报表").type());
+        assertEquals(ExcelOperationType.FORMAT_TABLE, parseSingle("加筛选").type());
+        assertEquals(ExcelOperationType.CHART, parseSingle("生成柱状图：产品名称,销售额").type());
+        assertEquals(ExcelOperationType.DASHBOARD, parseSingle("生成汇总页").type());
+    }
+
+    /** 新路由不应改变既有指令的路由结果（添加行/生成/排序/工作簿/知识）。 */
+    @Test
+    void existingRoutesUnchangedByFormatChartDashboardRouting() {
+        assertEquals(ExcelOperationType.ADD_ROW, parseSingle("添加一行：张三,25,北京").type());
+        assertEquals(ExcelOperationType.CREATE_TABLE, parseSingle("生成表格：姓名,城市").type());
+        assertEquals(ExcelOperationType.SORT, parseSingle("按销售额排序").type());
+        assertEquals(ExcelOperationType.WORKBOOK_CREATE, parseSingle("新建表格 销售表").type());
+        assertEquals(ExcelOperationType.KNOWLEDGE_ADD,
+            parseSingle("添加知识：字段映射 营收→营业收入").type());
+        assertEquals(ExcelOperationType.WORKBOOK_RENAME,
+            parseSingle("重命名表格 销售表为月度销售").type());
+    }
 }

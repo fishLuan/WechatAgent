@@ -4,7 +4,9 @@ import com.clawbot.wechatbot.feature.excel.ExcelService;
 import com.clawbot.wechatbot.feature.excel.model.ExcelRagKnowledge;
 import com.clawbot.wechatbot.feature.excel.model.ExcelTable;
 import com.clawbot.wechatbot.feature.excel.plan.AddRowHandler;
+import com.clawbot.wechatbot.feature.excel.plan.ChartHandler;
 import com.clawbot.wechatbot.feature.excel.plan.CreateTableHandler;
+import com.clawbot.wechatbot.feature.excel.plan.DashboardHandler;
 import com.clawbot.wechatbot.feature.excel.plan.DeduplicateHandler;
 import com.clawbot.wechatbot.feature.excel.plan.DeleteRowHandler;
 import com.clawbot.wechatbot.feature.excel.plan.ExcelOperationExecutor;
@@ -13,6 +15,7 @@ import com.clawbot.wechatbot.feature.excel.plan.ExcelPlan;
 import com.clawbot.wechatbot.feature.excel.plan.ExcelPlanParser;
 import com.clawbot.wechatbot.feature.excel.plan.ExcelPlanValidator;
 import com.clawbot.wechatbot.feature.excel.plan.FillMissingHandler;
+import com.clawbot.wechatbot.feature.excel.plan.FormatTableHandler;
 import com.clawbot.wechatbot.feature.excel.plan.GroupSummaryHandler;
 import com.clawbot.wechatbot.feature.excel.plan.KnowledgeAddHandler;
 import com.clawbot.wechatbot.feature.excel.plan.KnowledgeAliasResolver;
@@ -48,7 +51,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
-/** Excel 表格操作技能：生成、增删改行、分析操作（排序/去重/分组汇总/缺失补全）、列聚合查询、工作簿管理（多表）、知识管理（解析 → 别名解析 → 校验 → 执行四段式）。 */
+/** Excel 表格操作技能：生成、增删改行、分析操作（排序/去重/分组汇总/缺失补全）、列聚合查询、表格式化/图表/汇总页、工作簿管理（多表）、知识管理（解析 → 别名解析 → 校验 → 执行四段式）。 */
 @Component
 public final class ExcelOperationSkill implements SkillExecutor {
     public static final String EXECUTOR_NAME = "excel-operation";
@@ -62,7 +65,8 @@ public final class ExcelOperationSkill implements SkillExecutor {
             + "添加一行、修改第N行、删除第N行、按某列排序、按某列去重、"
             + "按某列汇总某列、补全某列空值、查询某列的最大/最小/合计/平均、"
             + "回滚到上一版本、查看版本历史、对比上一版、新建表格、查看表格列表、选择表格、"
-            + "重命名表格、删除表格、复制表格、添加知识、查看知识、删除知识、查看操作日志。";
+            + "重命名表格、删除表格、复制表格、添加知识、查看知识、删除知识、查看操作日志、"
+            + "美化表格（加标题/冻结首行/加筛选）、生成柱状图/折线图/饼图、生成汇总页。";
     /** 工作簿管理类操作（及操作日志）：不需要活动表，直接校验执行。 */
     private static final Set<ExcelOperationType> WORKBOOK_TYPES = Set.of(
         ExcelOperationType.WORKBOOK_CREATE,
@@ -113,6 +117,9 @@ public final class ExcelOperationSkill implements SkillExecutor {
             new DeduplicateHandler(excelService),
             new GroupSummaryHandler(excelService),
             new FillMissingHandler(excelService),
+            new FormatTableHandler(excelService),
+            new ChartHandler(excelService),
+            new DashboardHandler(excelService),
             new RollbackHandler(excelService),
             new VersionHistoryHandler(excelService),
             new WorkbookCreateHandler(excelService),
