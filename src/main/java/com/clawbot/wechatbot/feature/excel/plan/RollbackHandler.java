@@ -35,7 +35,9 @@ public final class RollbackHandler implements ExcelOperationHandler {
         if (!restored) {
             return OperationResult.failure("❌ 没有可回滚的版本。");
         }
+        // 先导出再保存：导出失败（如公式错误）时不落库，避免把坏状态写回
+        byte[] bytes = excelService.toXlsx(table);
         excelService.save(table);
-        return OperationResult.success("✅ 已回滚到上一版本。", excelService.toXlsx(table));
+        return OperationResult.success("✅ 已回滚到上一版本。", bytes);
     }
 }

@@ -112,6 +112,40 @@ class ExcelOperationSkillTests {
     }
 
     @Test
+    void createTableExportFailureDoesNotPersist() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = new ExcelTable("user-1", "空表");
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenThrow(
+            new IllegalArgumentException("❌ 公式存在错误，已取消导出：单元格 B1 为 #DIV/0!。"));
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "姓名,数值\n张三,=1/0", "", "", ""));
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("公式存在错误"));
+        // 导出失败不得落库：save 不应被调用，表格保持原状态
+        verify(excelService, never()).save(any());
+    }
+
+    @Test
+    void addRowExportFailureDoesNotPersist() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenThrow(
+            new IllegalArgumentException("❌ 公式存在错误，已取消导出：单元格 B2 为 #DIV/0!。"));
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "添加一行：王五,=1/0", "", "", ""));
+
+        assertFalse(result.success());
+        verify(excelService, never()).save(any());
+    }
+
+    @Test
     void overwritesExistingTableWhenInstructionContainsCover() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();

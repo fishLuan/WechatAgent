@@ -37,9 +37,10 @@ public final class UpdateRowHandler implements ExcelOperationHandler {
         // 变更前快照，便于回滚
         excelService.snapshotVersion(table, "修改第" + rowNumber + "行");
         table.getRows().set(index, cells);
+        // 先导出再保存：导出失败（如公式错误）时不落库
+        byte[] bytes = excelService.toXlsx(table);
         excelService.save(table);
         return OperationResult.success(
-            "✅ 已修改第 " + rowNumber + " 行。",
-            excelService.toXlsx(table));
+            "✅ 已修改第 " + rowNumber + " 行。", bytes);
     }
 }

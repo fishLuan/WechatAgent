@@ -32,9 +32,10 @@ public final class DeleteRowHandler implements ExcelOperationHandler {
         // 变更前快照，便于回滚
         excelService.snapshotVersion(table, "删除第" + rowNumber + "行");
         List<String> removed = table.getRows().remove(index);
+        // 先导出再保存：导出失败（如公式错误）时不落库
+        byte[] bytes = excelService.toXlsx(table);
         excelService.save(table);
         return OperationResult.success(
-            "✅ 已删除第 " + rowNumber + " 行（" + String.join("、", removed) + "）。",
-            excelService.toXlsx(table));
+            "✅ 已删除第 " + rowNumber + " 行（" + String.join("、", removed) + "）。", bytes);
     }
 }

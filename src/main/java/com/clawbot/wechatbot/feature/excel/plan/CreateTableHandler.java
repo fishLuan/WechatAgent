@@ -35,10 +35,12 @@ public final class CreateTableHandler implements ExcelOperationHandler {
         }
         loaded.setHeaders(parsed.headers());
         loaded.setRows(parsed.rows());
+        // 先导出再保存：导出失败（如公式错误）时不落库，避免留下无法导出的坏表格
+        byte[] bytes = excelService.toXlsx(loaded);
         excelService.save(loaded);
         return OperationResult.success(
             "✅ 表格已生成（" + parsed.headers().size() + "列×"
                 + parsed.rows().size() + "行）：" + loaded.getTitle(),
-            excelService.toXlsx(loaded));
+            bytes);
     }
 }

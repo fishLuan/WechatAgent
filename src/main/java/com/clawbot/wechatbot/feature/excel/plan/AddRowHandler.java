@@ -30,9 +30,10 @@ public final class AddRowHandler implements ExcelOperationHandler {
         // 变更前快照，便于回滚
         excelService.snapshotVersion(table, "添加第" + (table.getRows().size() + 1) + "行");
         table.getRows().add(cells);
+        // 先导出再保存：导出失败（如公式错误）时不落库，避免"取消导出但数据已变更"
+        byte[] bytes = excelService.toXlsx(table);
         excelService.save(table);
         return OperationResult.success(
-            "✅ 已添加第 " + table.getRows().size() + " 行。",
-            excelService.toXlsx(table));
+            "✅ 已添加第 " + table.getRows().size() + " 行。", bytes);
     }
 }
