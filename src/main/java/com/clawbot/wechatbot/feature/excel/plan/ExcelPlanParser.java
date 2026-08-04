@@ -31,6 +31,28 @@ public final class ExcelPlanParser {
     /** 版本历史指令：版本历史/查看版本/历史版本/查看版本历史，前缀「请/帮我」可任意组合与重复。 */
     private static final Pattern VERSION_HISTORY_CMD = Pattern.compile(
         "^(?:(?:请|帮我)\\s*)*(?:版本历史|历史版本|查看版本(?:历史)?)(?:记录|列表)?\\s*$");
+    /** 排序指令：按X排序/按X升序·降序/按X从小到大·从大到小/把表格按X倒序。 */
+    private static final Pattern SORT_CMD = Pattern.compile(
+        "^(?:请|帮我\\s*)*(?:把表格)?\\s*按\\s*(.+?)\\s*"
+            + "(?:排序|升序|正序|降序|倒序|从小到大|从大到小)(?:排序)?\\s*$");
+    /** 去重指令（整行）：去重 / 删除重复行·订单·数据。 */
+    private static final Pattern DEDUPLICATE_PLAIN = Pattern.compile(
+        "^(?:请|帮我\\s*)*去重\\s*$");
+    private static final Pattern DEDUPLICATE_ACTION = Pattern.compile(
+        "^(?:请|帮我\\s*)*(?:删除|去掉|移除|清除)\\s*重复\\s*(?:行|数据|记录|订单)?\\s*$");
+    /** 去重指令（按列）：按X列去重 / 按X去重。 */
+    private static final Pattern DEDUPLICATE_COLUMN = Pattern.compile(
+        "^(?:请|帮我\\s*)*按\\s*(.+?)\\s*(?:列)?\\s*去重\\s*$");
+    /** 分组汇总指令：按X汇总Y / 按X统计Y的合计·求和·平均·最大·最小·数量，可带「占比|百分比」。 */
+    private static final Pattern GROUP_SUMMARY_CMD = Pattern.compile(
+        "^(?:请|帮我\\s*)*按\\s*(.+?)\\s*(?:汇总|统计)\\s*(.+?)\\s*(?:的)?\\s*"
+            + "(合计|求和|总和|平均|平均值|平均数|最大|最小|数量|个数|行数)?"
+            + "(?:并|且)?\\s*(?:算|计算)?\\s*(?:占比|百分比)?\\s*$");
+    /** 缺失补全指令：补全X列/补全空白X列（默认「未知」），或 把X列补全为V（指定值）。 */
+    private static final Pattern FILL_MISSING_PLAIN = Pattern.compile(
+        "^(?:请|帮我\\s*)*补全\\s*(?:空白|空的)?\\s*(.+?)\\s*(?:列)?\\s*$");
+    private static final Pattern FILL_MISSING_VALUE = Pattern.compile(
+        "^(?:请|帮我\\s*)*把\\s*(.+?)\\s*(?:列)?\\s*补全为\\s*(.+?)\\s*$");
 
     /** 解析用户文本为 ExcelPlan；无法识别时返回 null（由调用方给出兜底提示）。 */
     public ExcelPlan parse(String userId, String text) {
@@ -42,6 +64,10 @@ public final class ExcelPlanParser {
         // 2. 查询类（直接返回文字，不导出文件）
         ExcelOperation query = tryQuery(text);
         if (query != null) return plan(userId, query);
+
+        // 分析类操作（排序/去重/分组汇总/缺失补全）：放在查询之后、删除行之前
+        ExcelOperation analysis = tryAnalysis(text);
+        if (analysis != null) return plan(userId, analysis);
 
         // 3. 删除行
         Matcher rowMatcher = ROW_NUMBER.matcher(text);
@@ -88,6 +114,11 @@ public final class ExcelPlanParser {
 
     /** 查询路由：命中「某列的聚合」或「合计/统计 前缀」时产出 QUERY 操作，否则返回 null。 */
     private ExcelOperation tryQuery(String text) {
+        // 「按X统计Y的合计/平均/行数」这类说法会被下方正则误当成列查询（列名带「按X统计」前缀），
+        // 让位给分析分支的分组汇总（GROUP_SUMMARY_CMD 是同一份正则，判定结果一致）
+        if (isGroupSummaryCommand(text)) {
+            return null;
+        }
         Matcher query = QUERY.matcher(text);
         if (query.matches()) {
             String column = query.group(1).trim();
@@ -102,6 +133,109 @@ public final class ExcelPlanParser {
                 "column", sum.group(1).trim(), "queryType", ExcelService.QueryType.SUM.name()));
         }
         return null;
+    }
+
+    /** 分析类操作路由：排序 → 去重 → 分组汇总 → 缺失补全（关键词互不重叠，顺序固定）。 */
+    private ExcelOperation tryAnalysis(String text) {
+        ExcelOperation sort = trySort(text);
+        if (sort != null) return sort;
+        ExcelOperation deduplicate = tryDeduplicate(text);
+        if (deduplicate != null) return deduplicate;
+        ExcelOperation groupSummary = tryGroupSummary(text);
+        if (groupSummary != null) return groupSummary;
+        return tryFillMissing(text);
+    }
+
+    /** 排序路由：direction 默认 ASC；出现「降序|倒序|从大到小」→ DESC。 */
+    private ExcelOperation trySort(String text) {
+        Matcher matcher = SORT_CMD.matcher(text);
+        if (!matcher.matches()) return null;
+        String column = matcher.group(1).trim();
+        if (column.isBlank()) return null;
+        boolean descending = text.contains("降序") || text.contains("倒序")
+            || text.contains("从大到小");
+        return op("1", ExcelOperationType.SORT,
+            Map.of("column", column, "direction", descending ? "DESC" : "ASC"));
+    }
+
+    /** 去重路由：按X去重产出指定列；去重/删除重复行·订单·数据按整行去重。 */
+    private ExcelOperation tryDeduplicate(String text) {
+        Matcher byColumn = DEDUPLICATE_COLUMN.matcher(text);
+        if (byColumn.matches()) {
+            String column = byColumn.group(1).trim();
+            if (!column.isBlank()) {
+                return op("1", ExcelOperationType.DEDUPLICATE, Map.of("column", column));
+            }
+        }
+        if (DEDUPLICATE_PLAIN.matcher(text).matches()
+            || DEDUPLICATE_ACTION.matcher(text).matches()) {
+            return op("1", ExcelOperationType.DEDUPLICATE, Map.of());
+        }
+        return null;
+    }
+
+    /** 分组汇总路由：aggregate 默认 SUM；含「占比|百分比」时标记 includeRatio=true。 */
+    private ExcelOperation tryGroupSummary(String text) {
+        Matcher matcher = GROUP_SUMMARY_CMD.matcher(text);
+        if (!matcher.matches()) return null;
+        String groupColumn = matcher.group(1).trim();
+        String valueColumn = matcher.group(2).trim();
+        if (groupColumn.isBlank()) return null;
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("groupColumn", groupColumn);
+        String aggregateWord = matcher.group(3);
+        if (aggregateWord == null && "行数".equals(valueColumn)) {
+            // 「按X统计行数」这类说法没有数值列，视为按组计数
+            params.put("aggregate", ExcelService.QueryType.COUNT.name());
+        } else {
+            if (!valueColumn.isBlank()) {
+                params.put("valueColumn", valueColumn);
+            }
+            params.put("aggregate", aggregate(aggregateWord));
+        }
+        if (text.contains("占比") || text.contains("百分比")) {
+            params.put("includeRatio", "true");
+        }
+        return op("1", ExcelOperationType.GROUP_SUMMARY, params);
+    }
+
+    /** 聚合词映射：合计/求和/总和→SUM，平均→AVERAGE，最大→MAX，最小→MIN，数量/个数/行数→COUNT，缺省→SUM。 */
+    private static String aggregate(String word) {
+        if (word == null) return ExcelService.QueryType.SUM.name();
+        return switch (word) {
+            case "合计", "求和", "总和" -> ExcelService.QueryType.SUM.name();
+            case "平均", "平均值", "平均数" -> ExcelService.QueryType.AVERAGE.name();
+            case "最大" -> ExcelService.QueryType.MAX.name();
+            case "最小" -> ExcelService.QueryType.MIN.name();
+            default -> ExcelService.QueryType.COUNT.name(); // 数量/个数/行数
+        };
+    }
+
+    /** 缺失补全路由：无指定值时默认「未知」；「把X补全为V」取指定值。 */
+    private ExcelOperation tryFillMissing(String text) {
+        Matcher withValue = FILL_MISSING_VALUE.matcher(text);
+        if (withValue.matches()) {
+            String column = withValue.group(1).trim();
+            String value = withValue.group(2).trim();
+            if (!column.isBlank() && !value.isBlank()) {
+                return op("1", ExcelOperationType.FILL_MISSING,
+                    Map.of("column", column, "value", value));
+            }
+        }
+        Matcher plain = FILL_MISSING_PLAIN.matcher(text);
+        if (plain.matches()) {
+            String column = plain.group(1).trim();
+            if (!column.isBlank()) {
+                return op("1", ExcelOperationType.FILL_MISSING,
+                    Map.of("column", column, "value", "未知"));
+            }
+        }
+        return null;
+    }
+
+    /** 分组汇总指令判定（与查询分支共用同一份正则，供 tryQuery 让路）。 */
+    private static boolean isGroupSummaryCommand(String text) {
+        return GROUP_SUMMARY_CMD.matcher(text).matches();
     }
 
     /** 生成表格参数：表头行/数据行/是否显式带「覆盖」/标题（标题用于 loadOrCreate）。 */

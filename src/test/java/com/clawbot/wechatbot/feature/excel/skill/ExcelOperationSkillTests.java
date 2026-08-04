@@ -8,6 +8,7 @@ import com.clawbot.wechatbot.skills.SkillRequest;
 import com.clawbot.wechatbot.skills.SkillResult;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -389,5 +390,118 @@ class ExcelOperationSkillTests {
 
         assertTrue(result.success());
         assertTrue(result.text().contains("还没有版本记录"));
+    }
+
+    // ============================
+    // 分析类操作（排序/去重/分组汇总/缺失补全）端到端
+    // ============================
+    @Test
+    void sortInstructionEndToEnd() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        table.setRows(new ArrayList<>(List.of(
+            List.of("李四", "30"), List.of("张三", "25"))));
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "按年龄倒序", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已按年龄排序"));
+        assertTrue(result.text().contains("降序"));
+        // 降序：30 排在 25 前
+        assertEquals(List.of(List.of("李四", "30"), List.of("张三", "25")), table.getRows());
+        verify(excelService).save(table);
+    }
+
+    @Test
+    void deduplicateInstructionEndToEnd() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        table.setRows(new ArrayList<>(List.of(
+            List.of("李四", "30"), List.of("李四", "30"))));
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "删除重复订单", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已删除 1 行重复数据"));
+        verify(excelService).save(table);
+    }
+
+    @Test
+    void groupSummaryInstructionEndToEnd() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        table.setHeaders(List.of("地区", "销售额"));
+        table.setRows(new ArrayList<>(List.of(
+            List.of("北京", "100"), List.of("上海", "200"), List.of("北京", "300"))));
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "按地区汇总销售额并算占比", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已生成汇总表，原表已替换，可回滚"));
+        assertEquals(List.of("地区", "销售额(合计)", "占比"), table.getHeaders());
+        verify(excelService).save(table);
+    }
+
+    @Test
+    void fillMissingInstructionEndToEnd() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        table.setHeaders(List.of("姓名", "年龄"));
+        table.setRows(new ArrayList<>(List.of(
+            new ArrayList<>(List.of("李四", "")), new ArrayList<>(List.of("张三", "25")))));
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "补全空白年龄", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已补全年龄列 1 个空值"));
+        assertEquals(List.of(List.of("李四", "未知"), List.of("张三", "25")), table.getRows());
+        verify(excelService).save(table);
+    }
+
+    @Test
+    void analysisOperationWithUnknownColumnFailsValidation() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(existingTable());
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "按不存在的列排序", "", "", ""));
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("找不到列"));
+        verify(excelService, never()).save(any());
+    }
+
+    /** 兜底文案应包含新增的四种分析类操作说明。 */
+    @Test
+    void fallbackMessageListsAnalysisOperations() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(existingTable());
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "你好", "", "", ""));
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("排序"));
+        assertTrue(result.text().contains("去重"));
+        assertTrue(result.text().contains("汇总"));
+        assertTrue(result.text().contains("补全"));
     }
 }

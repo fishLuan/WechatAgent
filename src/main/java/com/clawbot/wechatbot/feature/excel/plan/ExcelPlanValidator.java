@@ -15,24 +15,32 @@ import java.util.Set;
 public final class ExcelPlanValidator {
 
     /** 每种操作允许的参数 key 白名单。 */
-    private static final Map<ExcelOperationType, Set<String>> ALLOWED_PARAM_KEYS = Map.of(
-        ExcelOperationType.CREATE_TABLE, Set.of("headers", "rows", "overwrite", "title"),
-        ExcelOperationType.ADD_ROW, Set.of("cells"),
-        ExcelOperationType.UPDATE_ROW, Set.of("rowNumber", "cells"),
-        ExcelOperationType.DELETE_ROW, Set.of("rowNumber"),
-        ExcelOperationType.QUERY, Set.of("column", "queryType"),
-        ExcelOperationType.ROLLBACK, Set.of(),
-        ExcelOperationType.VERSION_HISTORY, Set.of());
+    private static final Map<ExcelOperationType, Set<String>> ALLOWED_PARAM_KEYS = Map.ofEntries(
+        Map.entry(ExcelOperationType.CREATE_TABLE, Set.of("headers", "rows", "overwrite", "title")),
+        Map.entry(ExcelOperationType.ADD_ROW, Set.of("cells")),
+        Map.entry(ExcelOperationType.UPDATE_ROW, Set.of("rowNumber", "cells")),
+        Map.entry(ExcelOperationType.DELETE_ROW, Set.of("rowNumber")),
+        Map.entry(ExcelOperationType.QUERY, Set.of("column", "queryType")),
+        Map.entry(ExcelOperationType.SORT, Set.of("column", "direction")),
+        Map.entry(ExcelOperationType.DEDUPLICATE, Set.of("column")),
+        Map.entry(ExcelOperationType.GROUP_SUMMARY, Set.of("groupColumn", "valueColumn", "aggregate", "includeRatio")),
+        Map.entry(ExcelOperationType.FILL_MISSING, Set.of("column", "value")),
+        Map.entry(ExcelOperationType.ROLLBACK, Set.of()),
+        Map.entry(ExcelOperationType.VERSION_HISTORY, Set.of()));
 
     /** 每种操作必填的参数 key。 */
-    private static final Map<ExcelOperationType, Set<String>> REQUIRED_PARAM_KEYS = Map.of(
-        ExcelOperationType.CREATE_TABLE, Set.of("headers", "rows", "overwrite", "title"),
-        ExcelOperationType.ADD_ROW, Set.of("cells"),
-        ExcelOperationType.UPDATE_ROW, Set.of("rowNumber", "cells"),
-        ExcelOperationType.DELETE_ROW, Set.of("rowNumber"),
-        ExcelOperationType.QUERY, Set.of("column", "queryType"),
-        ExcelOperationType.ROLLBACK, Set.of(),
-        ExcelOperationType.VERSION_HISTORY, Set.of());
+    private static final Map<ExcelOperationType, Set<String>> REQUIRED_PARAM_KEYS = Map.ofEntries(
+        Map.entry(ExcelOperationType.CREATE_TABLE, Set.of("headers", "rows", "overwrite", "title")),
+        Map.entry(ExcelOperationType.ADD_ROW, Set.of("cells")),
+        Map.entry(ExcelOperationType.UPDATE_ROW, Set.of("rowNumber", "cells")),
+        Map.entry(ExcelOperationType.DELETE_ROW, Set.of("rowNumber")),
+        Map.entry(ExcelOperationType.QUERY, Set.of("column", "queryType")),
+        Map.entry(ExcelOperationType.SORT, Set.of("column", "direction")),
+        Map.entry(ExcelOperationType.DEDUPLICATE, Set.of()),
+        Map.entry(ExcelOperationType.GROUP_SUMMARY, Set.of("groupColumn", "aggregate")),
+        Map.entry(ExcelOperationType.FILL_MISSING, Set.of("column", "value")),
+        Map.entry(ExcelOperationType.ROLLBACK, Set.of()),
+        Map.entry(ExcelOperationType.VERSION_HISTORY, Set.of()));
 
     private final ExcelService excelService;
 
@@ -73,6 +81,10 @@ public final class ExcelPlanValidator {
             case UPDATE_ROW, DELETE_ROW -> validateRowOperation(operation, table);
             case ROLLBACK -> validateRollback(table);
             case QUERY -> validateQuery(operation);
+            case SORT -> validateSort(operation, table);
+            case DEDUPLICATE -> validateDeduplicate(operation, table);
+            case GROUP_SUMMARY -> validateGroupSummary(operation, table);
+            case FILL_MISSING -> validateFillMissing(operation, table);
             case VERSION_HISTORY -> Optional.empty();
         };
     }
@@ -136,6 +148,74 @@ public final class ExcelPlanValidator {
         } catch (IllegalArgumentException ignored) {
             return Optional.of(
                 "非法计划：queryType「" + queryType + "」无效，应为 MAX/MIN/SUM/AVERAGE/COUNT。");
+        }
+        return Optional.empty();
+    }
+
+    /** 排序校验：先要求表格存在，再校验 direction 取值与列存在性。 */
+    private Optional<String> validateSort(ExcelOperation operation, ExcelTable table) {
+        Optional<String> requireTable = validateRequireTable(table);
+        if (requireTable.isPresent()) return requireTable;
+        String direction = operation.param("direction");
+        if (!"ASC".equals(direction) && !"DESC".equals(direction)) {
+            return Optional.of(
+                "非法计划：direction「" + direction + "」无效，应为 ASC/DESC。");
+        }
+        return validateColumnExists(operation.param("column"), table);
+    }
+
+    /** 去重校验：先要求表格存在；指定了列时校验列存在性（column 可缺省，按整行去重）。 */
+    private Optional<String> validateDeduplicate(ExcelOperation operation, ExcelTable table) {
+        Optional<String> requireTable = validateRequireTable(table);
+        if (requireTable.isPresent()) return requireTable;
+        return validateColumnExists(operation.param("column"), table);
+    }
+
+    /**
+     * 分组汇总校验：先要求表格存在，再校验 aggregate 取值、占比约束与列存在性；
+     * 统计行数（COUNT）时 valueColumn 允许缺省。
+     */
+    private Optional<String> validateGroupSummary(ExcelOperation operation, ExcelTable table) {
+        Optional<String> requireTable = validateRequireTable(table);
+        if (requireTable.isPresent()) return requireTable;
+        String aggregate = operation.param("aggregate");
+        try {
+            ExcelService.QueryType.valueOf(aggregate);
+        } catch (IllegalArgumentException | NullPointerException ignored) {
+            return Optional.of(
+                "非法计划：aggregate「" + aggregate + "」无效，应为 SUM/AVERAGE/MAX/MIN/COUNT。");
+        }
+        String includeRatio = operation.param("includeRatio");
+        if (includeRatio != null && !"true".equals(includeRatio)) {
+            return Optional.of("非法计划：includeRatio「" + includeRatio + "」只能为 true。");
+        }
+        if ("true".equals(includeRatio) && !"SUM".equals(aggregate)) {
+            return Optional.of("占比只能配合合计（SUM）使用，当前聚合为「" + aggregate + "」。");
+        }
+        Optional<String> groupError = validateColumnExists(operation.param("groupColumn"), table);
+        if (groupError.isPresent()) return groupError;
+        // 统计行数时允许缺省数值列；指定了数值列则同样校验存在性
+        String valueColumn = operation.param("valueColumn");
+        if (!"COUNT".equals(aggregate)
+            && (valueColumn == null || valueColumn.isBlank())) {
+            return Optional.of("分组汇总操作缺少参数「valueColumn」（统计行数时可省略）。");
+        }
+        return validateColumnExists(valueColumn, table);
+    }
+
+    /** 缺失补全校验：先要求表格存在，再校验列存在性。 */
+    private Optional<String> validateFillMissing(ExcelOperation operation, ExcelTable table) {
+        Optional<String> requireTable = validateRequireTable(table);
+        if (requireTable.isPresent()) return requireTable;
+        return validateColumnExists(operation.param("column"), table);
+    }
+
+    /** 列存在性校验：文案与 queryColumn 保持一致；列名为空视为通过（由必填参数检查兜底）。 */
+    private Optional<String> validateColumnExists(String column, ExcelTable table) {
+        if (column == null || column.isBlank()) return Optional.empty();
+        if (ExcelService.findColumnIndex(table.getHeaders(), column) < 0) {
+            return Optional.of("❌ 找不到列「" + column + "」，现有列："
+                + String.join("、", table.getHeaders()));
         }
         return Optional.empty();
     }

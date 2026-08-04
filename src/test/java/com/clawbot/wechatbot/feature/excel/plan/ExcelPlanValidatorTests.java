@@ -150,4 +150,155 @@ class ExcelPlanValidatorTests {
         assertTrue(error.isPresent());
         assertTrue(error.get().contains("非法计划"));
     }
+
+    // ============================
+    // 排序校验
+    // ============================
+    @Test
+    void invalidSortDirectionReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.SORT,
+            Map.of("column", "年龄", "direction", "UP")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("direction"));
+        assertTrue(error.get().contains("ASC/DESC"));
+    }
+
+    @Test
+    void sortWithUnknownColumnReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.SORT,
+            Map.of("column", "不存在", "direction", "ASC")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("找不到列「不存在」"));
+        assertTrue(error.get().contains("姓名"));
+    }
+
+    @Test
+    void validSortPasses() {
+        ExcelPlan plan = plan(op(ExcelOperationType.SORT,
+            Map.of("column", "年龄", "direction", "DESC")));
+        assertEquals(Optional.empty(), validator.validate(plan, existingTable()));
+    }
+
+    // ============================
+    // 去重校验
+    // ============================
+    @Test
+    void deduplicateWithoutColumnPasses() {
+        ExcelPlan plan = plan(op(ExcelOperationType.DEDUPLICATE, Map.of()));
+        assertEquals(Optional.empty(), validator.validate(plan, existingTable()));
+    }
+
+    @Test
+    void deduplicateWithUnknownColumnReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.DEDUPLICATE, Map.of("column", "不存在")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("找不到列"));
+    }
+
+    @Test
+    void deduplicateWithExistingColumnPasses() {
+        ExcelPlan plan = plan(op(ExcelOperationType.DEDUPLICATE, Map.of("column", "姓名")));
+        assertEquals(Optional.empty(), validator.validate(plan, existingTable()));
+    }
+
+    // ============================
+    // 分组汇总校验
+    // ============================
+    @Test
+    void invalidAggregateReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.GROUP_SUMMARY,
+            Map.of("groupColumn", "姓名", "valueColumn", "年龄", "aggregate", "PRODUCT")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("aggregate"));
+        assertTrue(error.get().contains("SUM/AVERAGE/MAX/MIN/COUNT"));
+    }
+
+    @Test
+    void groupSummaryMissingValueColumnOnNonCountReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.GROUP_SUMMARY,
+            Map.of("groupColumn", "姓名", "aggregate", "SUM")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("valueColumn"));
+    }
+
+    @Test
+    void groupSummaryCountWithoutValueColumnPasses() {
+        ExcelPlan plan = plan(op(ExcelOperationType.GROUP_SUMMARY,
+            Map.of("groupColumn", "姓名", "aggregate", "COUNT")));
+        assertEquals(Optional.empty(), validator.validate(plan, existingTable()));
+    }
+
+    @Test
+    void groupSummaryUnknownGroupColumnReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.GROUP_SUMMARY,
+            Map.of("groupColumn", "不存在", "valueColumn", "年龄", "aggregate", "SUM")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("找不到列"));
+    }
+
+    @Test
+    void ratioWithNonSumAggregateReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.GROUP_SUMMARY,
+            Map.of("groupColumn", "姓名", "valueColumn", "年龄", "aggregate", "AVERAGE",
+                "includeRatio", "true")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("占比"));
+    }
+
+    @Test
+    void invalidIncludeRatioValueReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.GROUP_SUMMARY,
+            Map.of("groupColumn", "姓名", "valueColumn", "年龄", "aggregate", "SUM",
+                "includeRatio", "yes")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("includeRatio"));
+    }
+
+    @Test
+    void validGroupSummaryWithRatioPasses() {
+        ExcelPlan plan = plan(op(ExcelOperationType.GROUP_SUMMARY,
+            Map.of("groupColumn", "姓名", "valueColumn", "年龄", "aggregate", "SUM",
+                "includeRatio", "true")));
+        assertEquals(Optional.empty(), validator.validate(plan, existingTable()));
+    }
+
+    // ============================
+    // 缺失补全校验
+    // ============================
+    @Test
+    void fillMissingWithUnknownColumnReturnsError() {
+        ExcelPlan plan = plan(op(ExcelOperationType.FILL_MISSING,
+            Map.of("column", "不存在", "value", "未知")));
+        Optional<String> error = validator.validate(plan, existingTable());
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("找不到列"));
+    }
+
+    @Test
+    void validFillMissingPasses() {
+        ExcelPlan plan = plan(op(ExcelOperationType.FILL_MISSING,
+            Map.of("column", "姓名", "value", "未知")));
+        assertEquals(Optional.empty(), validator.validate(plan, existingTable()));
+    }
+
+    // ============================
+    // 分析操作在空表上要求先生成表格
+    // ============================
+    @Test
+    void analysisOperationOnEmptyTableReturnsRequireTableError() {
+        ExcelTable table = new ExcelTable("user-1", "空表");
+        ExcelPlan plan = plan(op(ExcelOperationType.SORT,
+            Map.of("column", "年龄", "direction", "ASC")));
+        Optional<String> error = validator.validate(plan, table);
+        assertTrue(error.isPresent());
+        assertTrue(error.get().contains("还没有生成表格"));
+    }
 }

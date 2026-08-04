@@ -149,6 +149,144 @@ class ExcelPlanParserTests {
     }
 
     // ============================
+    // 排序路由
+    // ============================
+    @Test
+    void sortRoutesToSortWithAscDefault() {
+        ExcelOperation op = parseSingle("按销售额排序");
+        assertEquals(ExcelOperationType.SORT, op.type());
+        assertEquals("销售额", op.param("column"));
+        assertEquals("ASC", op.param("direction"));
+    }
+
+    @Test
+    void sortDirectionWordsMapToAscAndDesc() {
+        assertEquals("DESC", parseSingle("按销售额倒序").param("direction"));
+        assertEquals("DESC", parseSingle("按销售额降序").param("direction"));
+        assertEquals("DESC", parseSingle("按销售额从大到小").param("direction"));
+        assertEquals("ASC", parseSingle("按销售额升序").param("direction"));
+        assertEquals("ASC", parseSingle("按销售额正序").param("direction"));
+        assertEquals("ASC", parseSingle("按销售额从小到大").param("direction"));
+    }
+
+    @Test
+    void sortWithTablePrefixAndCombinedWords() {
+        ExcelOperation op = parseSingle("把表格按销售额倒序");
+        assertEquals(ExcelOperationType.SORT, op.type());
+        assertEquals("销售额", op.param("column"));
+        assertEquals("DESC", op.param("direction"));
+        // 「从小到大排序」连读：方向词后带「排序」也能识别
+        assertEquals("销售额", parseSingle("按销售额从小到大排序").param("column"));
+        assertEquals("ASC", parseSingle("按销售额从小到大排序").param("direction"));
+    }
+
+    // ============================
+    // 去重路由
+    // ============================
+    @Test
+    void deduplicateWholeRowPhrasesRouteToDeduplicate() {
+        assertEquals(ExcelOperationType.DEDUPLICATE, parseSingle("去重").type());
+        assertNull(parseSingle("去重").param("column"));
+        assertEquals(ExcelOperationType.DEDUPLICATE, parseSingle("删除重复行").type());
+        assertEquals(ExcelOperationType.DEDUPLICATE, parseSingle("删除重复订单").type());
+        assertEquals(ExcelOperationType.DEDUPLICATE, parseSingle("删除重复数据").type());
+        assertEquals(ExcelOperationType.DEDUPLICATE, parseSingle("去掉重复").type());
+    }
+
+    @Test
+    void deduplicateByColumnCapturesColumn() {
+        ExcelOperation op = parseSingle("按地区去重");
+        assertEquals(ExcelOperationType.DEDUPLICATE, op.type());
+        assertEquals("地区", op.param("column"));
+        assertEquals("地区", parseSingle("按地区列去重").param("column"));
+    }
+
+    /** 「删除重复订单」不带第N行，必须走去重而非删除行。 */
+    @Test
+    void deduplicateDoesNotConflictWithDeleteRow() {
+        assertEquals(ExcelOperationType.DEDUPLICATE, parseSingle("删除重复订单").type());
+        assertEquals(ExcelOperationType.DELETE_ROW, parseSingle("删除第2行").type());
+    }
+
+    // ============================
+    // 分组汇总路由
+    // ============================
+    @Test
+    void groupSummaryRoutesWithDefaultSum() {
+        ExcelOperation op = parseSingle("按地区汇总销售额");
+        assertEquals(ExcelOperationType.GROUP_SUMMARY, op.type());
+        assertEquals("地区", op.param("groupColumn"));
+        assertEquals("销售额", op.param("valueColumn"));
+        assertEquals("SUM", op.param("aggregate"));
+        assertNull(op.param("includeRatio"));
+    }
+
+    @Test
+    void groupSummaryAggregateWordsMapToTypes() {
+        assertEquals("SUM", parseSingle("按地区统计销售额的合计").param("aggregate"));
+        assertEquals("SUM", parseSingle("按地区统计销售额求和").param("aggregate"));
+        assertEquals("AVERAGE", parseSingle("按地区统计销售额的平均").param("aggregate"));
+        assertEquals("MAX", parseSingle("按地区统计销售额的最大").param("aggregate"));
+        assertEquals("MIN", parseSingle("按地区统计销售额的最小").param("aggregate"));
+        assertEquals("COUNT", parseSingle("按地区统计订单的数量").param("aggregate"));
+        assertEquals("COUNT", parseSingle("按地区统计订单的个数").param("aggregate"));
+        assertEquals("COUNT", parseSingle("按地区统计订单的行数").param("aggregate"));
+    }
+
+    @Test
+    void groupSummaryWithRatioSetsIncludeRatio() {
+        ExcelOperation op = parseSingle("按地区汇总销售额并算占比");
+        assertEquals(ExcelOperationType.GROUP_SUMMARY, op.type());
+        assertEquals("地区", op.param("groupColumn"));
+        assertEquals("销售额", op.param("valueColumn"));
+        assertEquals("SUM", op.param("aggregate"));
+        assertEquals("true", op.param("includeRatio"));
+        assertEquals("true", parseSingle("按地区汇总销售额并计算百分比").param("includeRatio"));
+    }
+
+    /** 「按X统计Y的合计/行数」这类说法不能被查询分支截胡（列名不能带「按X统计」前缀）。 */
+    @Test
+    void groupSummaryWithTheAggregateWordRoutesToGroupNotQuery() {
+        assertEquals(ExcelOperationType.GROUP_SUMMARY,
+            parseSingle("按地区统计销售额的合计").type());
+        assertEquals(ExcelOperationType.GROUP_SUMMARY,
+            parseSingle("按地区统计人数的行数").type());
+        assertEquals(ExcelOperationType.GROUP_SUMMARY,
+            parseSingle("按地区统计销售额的平均").type());
+    }
+
+    @Test
+    void groupSummaryBareRowCountPhraseCountsRows() {
+        ExcelOperation op = parseSingle("按地区统计行数");
+        assertEquals(ExcelOperationType.GROUP_SUMMARY, op.type());
+        assertEquals("地区", op.param("groupColumn"));
+        assertEquals("COUNT", op.param("aggregate"));
+        assertNull(op.param("valueColumn"));
+    }
+
+    // ============================
+    // 缺失补全路由
+    // ============================
+    @Test
+    void fillMissingRoutesWithDefaultUnknownValue() {
+        ExcelOperation op = parseSingle("补全空白地区");
+        assertEquals(ExcelOperationType.FILL_MISSING, op.type());
+        assertEquals("地区", op.param("column"));
+        assertEquals("未知", op.param("value"));
+        assertEquals("地区", parseSingle("补全地区列").param("column"));
+        assertEquals("未知", parseSingle("补全地区").param("value"));
+    }
+
+    @Test
+    void fillMissingWithExplicitValue() {
+        ExcelOperation op = parseSingle("把地区补全为0");
+        assertEquals(ExcelOperationType.FILL_MISSING, op.type());
+        assertEquals("地区", op.param("column"));
+        assertEquals("0", op.param("value"));
+        assertEquals("未知", parseSingle("把地区列补全为未知").param("value"));
+    }
+
+    // ============================
     // 版本历史与无法识别
     // ============================
     @Test
@@ -175,5 +313,19 @@ class ExcelPlanParserTests {
     void unrecognizedTextReturnsNull() {
         assertNull(parser.parse("user-1", "你好"));
         assertNull(parser.parse("user-1", "随便说点什么"));
+    }
+
+    /** 分析类路由不应改变既有指令（生成/加行/查询/删除/回滚/版本历史）的路由结果。 */
+    @Test
+    void existingRoutesUnchangedByAnalysisRouting() {
+        assertEquals(ExcelOperationType.ROLLBACK, parseSingle("撤销删除第2行").type());
+        assertEquals(ExcelOperationType.QUERY, parseSingle("查询金额的最大值").type());
+        assertEquals(ExcelOperationType.QUERY, parseSingle("合计金额").type());
+        assertEquals(ExcelOperationType.QUERY, parseSingle("统计人数的多少行").type());
+        assertEquals(ExcelOperationType.DELETE_ROW, parseSingle("删除第2行").type());
+        assertEquals(ExcelOperationType.UPDATE_ROW, parseSingle("修改第2行为 张三,25,北京").type());
+        assertEquals(ExcelOperationType.ADD_ROW, parseSingle("添加一行：张三,25,北京").type());
+        assertEquals(ExcelOperationType.CREATE_TABLE, parseSingle("生成表格：姓名,城市").type());
+        assertEquals(ExcelOperationType.VERSION_HISTORY, parseSingle("查看版本历史").type());
     }
 }

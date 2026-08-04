@@ -524,7 +524,8 @@ public class ExcelService {
             + type.label() + "：" + formatted + "（基于 " + values.size() + " 个数值）";
     }
 
-    private static int findColumnIndex(List<String> headers, String columnName) {
+    /** 列定位：先精确匹配、再模糊包含匹配（校验器与分析操作复用）；找不到返回 -1。 */
+    public static int findColumnIndex(List<String> headers, String columnName) {
         if (columnName == null || columnName.isBlank()) return -1;
         String target = columnName.trim();
         for (int i = 0; i < headers.size(); i++) {
@@ -538,8 +539,8 @@ public class ExcelService {
         return -1;
     }
 
-    /** 解析数值：兼容 ￥、%、千分位逗号等修饰符。 */
-    private static Double parseNumber(String value) {
+    /** 解析数值：兼容 ￥、%、千分位逗号等修饰符（排序/分组汇总等分析操作复用）。 */
+    public static Double parseNumber(String value) {
         String cleaned = cleanNumberText(value);
         if (cleaned == null) return null;
         try {
@@ -549,8 +550,8 @@ public class ExcelService {
         }
     }
 
-    /** 解析为 BigDecimal（SUM/AVERAGE 精确累加用），失败返回 null。 */
-    private static BigDecimal parseDecimal(String value) {
+    /** 解析为 BigDecimal（SUM/AVERAGE 精确累加用），失败返回 null（分组汇总复用）。 */
+    public static BigDecimal parseDecimal(String value) {
         String cleaned = cleanNumberText(value);
         if (cleaned == null) return null;
         try {
