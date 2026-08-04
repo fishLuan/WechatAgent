@@ -191,7 +191,10 @@ public final class ExcelFileMessageHandler implements MessageHandler {
     private static FileItem findFileItem(WeixinMessage msg) {
         if (msg.getItem_list() == null) return null;
         for (MessageItem item : msg.getItem_list()) {
-            if (item.getFile_item() != null) return item.getFile_item();
+            FileItem fileItem = item.getFile_item();
+            if (fileItem != null && isXlsx(fileItem.getFile_name())) {
+                return fileItem;
+            }
         }
         return null;
     }
@@ -199,7 +202,10 @@ public final class ExcelFileMessageHandler implements MessageHandler {
     private static MessageItem findFileMessageItem(WeixinMessage msg) {
         if (msg.getItem_list() == null) return null;
         for (MessageItem item : msg.getItem_list()) {
-            if (item.getFile_item() != null) return item;
+            FileItem fileItem = item.getFile_item();
+            if (fileItem != null && isXlsx(fileItem.getFile_name())) {
+                return item;
+            }
         }
         return null;
     }

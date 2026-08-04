@@ -24,8 +24,9 @@ public final class ExcelOperationSkill implements SkillExecutor {
             + "(最大值|最小(?:值)?|合计|总和|平均值|平均数|平均|行数|总数|总行数|多少行)");
     private static final Pattern SUM_PREFIX = Pattern.compile(
         "^(?:合计|统计)\\s*(.+?)(?:的)?(?:金额|总和|合计|数值|值)?$");
-    private static final Pattern ROW_DATA_AFTER_MARK = Pattern.compile(
-        "(?:为|改成|改为|数据(?:是|为)?|内容(?:是|为)?|[:：])\\s*([\\s\\S]+)$");
+    /** 内容分隔标记：只在指令第一行内寻找，且取最靠右的一个，避免把数据行里的冒号/「为」误当分隔符。 */
+    private static final Pattern CONTENT_MARKER = Pattern.compile(
+        "为|改成|改为|数据(?:是|为)?|内容(?:是|为)?|[:：]");
     private static final Pattern ADD_PREFIX = Pattern.compile(
         "^(?:添加|增加|加入|新增|加)\\s*(?:一行|一条|1行|1条)?\\s*[:：]?\\s*(.+)$");
     private static final Pattern UPDATE_PREFIX = Pattern.compile(
@@ -104,7 +105,8 @@ public final class ExcelOperationSkill implements SkillExecutor {
         }
         ExcelTable table = excelService.loadOrCreate(userId, resolveTitle(text));
         // 防静默覆盖：已有非空数据时，指令需显式包含「覆盖」才允许替换
-        if (hasData(table) && !text.contains("覆盖")) {
+        // 只认第一行，避免数据行里恰好出现「覆盖」二字误触发覆盖。
+        if (hasData(table) && !firstLine(text).contains("覆盖")) {
             return SkillResult.failure(
                 "❌ 你已经有一张 " + table.getHeaders().size() + "列×"
                     + table.getRows().size() + "行 的表格，直接生成会覆盖原数据，已拦截。"
@@ -209,20 +211,37 @@ public final class ExcelOperationSkill implements SkillExecutor {
 
     /** 从指令中提取表格数据：优先冒号/换行后的完整内容，否则整个指令作为数据。 */
     private String resolveContent(String text) {
-        Matcher mark = ROW_DATA_AFTER_MARK.matcher(text);
-        if (mark.find() && !mark.group(1).isBlank()) {
-            return mark.group(1);
-        }
-        return text;
+        int contentStart = findContentStart(text);
+        return contentStart >= 0 ? text.substring(contentStart) : text;
     }
 
     /** 提取修改指令中的新数据："为/改成/冒号"之后的内容。 */
     private String extractRowData(String text) {
-        Matcher mark = ROW_DATA_AFTER_MARK.matcher(text);
-        if (mark.find()) {
-            return mark.group(1).trim();
+        int contentStart = findContentStart(text);
+        if (contentStart < 0) return "";
+        String rowData = firstLine(text).substring(contentStart).trim();
+        return rowData.isBlank() ? "" : rowData;
+    }
+
+    /** 在第一行内找最靠右的内容分隔标记，返回其后的内容起点（跳过空白）；找不到返回 -1。 */
+    private static int findContentStart(String text) {
+        String head = firstLine(text);
+        Matcher mark = CONTENT_MARKER.matcher(head);
+        int contentStart = -1;
+        while (mark.find()) {
+            contentStart = mark.end();
         }
-        return "";
+        if (contentStart < 0) return -1;
+        while (contentStart < head.length()
+            && Character.isWhitespace(head.charAt(contentStart))) {
+            contentStart++;
+        }
+        return contentStart;
+    }
+
+    private static String firstLine(String text) {
+        int newline = text.indexOf('\n');
+        return newline < 0 ? text : text.substring(0, newline);
     }
 
     private String resolveTitle(String text) {

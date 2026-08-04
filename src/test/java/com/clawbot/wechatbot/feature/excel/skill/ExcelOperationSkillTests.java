@@ -76,6 +76,39 @@ class ExcelOperationSkillTests {
     }
 
     @Test
+    void plainPasteWithColonInDataIsNotChopped() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = new ExcelTable("user-1", "空表");
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1",
+                "姓名,城市,备注\n张三,北京,时间：9点", "", "", ""));
+
+        assertTrue(result.success());
+        assertEquals(List.of("姓名", "城市", "备注"), table.getHeaders());
+        assertEquals(List.of(List.of("张三", "北京", "时间：9点")), table.getRows());
+        verify(excelService).save(table);
+    }
+
+    @Test
+    void coverKeywordInsideDataDoesNotUnlockOverwrite() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.loadOrCreate(eq("user-1"), anyString()))
+            .thenReturn(existingTable());
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1",
+                "生成表格：姓名,城市\n张三,覆盖区域", "", "", ""));
+
+        assertFalse(result.success());
+        verify(excelService, never()).save(any());
+    }
+
+    @Test
     void overwritesExistingTableWhenInstructionContainsCover() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelTable table = existingTable();
