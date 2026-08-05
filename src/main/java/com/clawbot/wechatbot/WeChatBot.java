@@ -39,6 +39,8 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -147,6 +149,7 @@ public class WeChatBot implements SmartLifecycle {
                 .onLogin(new OnLoginListener() {
                     @Override
                     public void onLoginSuccess(LoginContext ctx) {
+                        session.loginSucceeded = true;
                         System.out.println();
                         System.out.println(session.prefix() + " [OK] 登录成功!");
                         System.out.println("       Bot ID: " + ctx.getBotId());
@@ -415,12 +418,16 @@ public class WeChatBot implements SmartLifecycle {
     private void loginWithQrRefresh(BotSession session, ILinkClient client)
         throws InterruptedException {
         int attempt = 0;
-        while (running && !client.isLoggedIn()) {
+        session.loginSucceeded = client.isLoggedIn();
+        while (running && !loginCompleted(session, client)) {
             attempt++;
             session.lastLoginFailure = null;
             try {
                 System.out.println(session.prefix() + " [2/3] Getting QR code... attempt=" + attempt);
                 String qrContent = client.executeLogin();
+                // 登录回调可能在 executeLogin() 返回前到达。此时不能再展示新二维码，
+                // 更不能等待 SDK 可能已经切换过的 LoginFuture。
+                if (loginCompleted(session, client)) break;
                 notifications.notifyLoginRequired(qrContent);
                 System.out.println();
                 System.out.println(session.prefix() + " [3/3] Displaying QR code...");
@@ -429,9 +436,10 @@ public class WeChatBot implements SmartLifecycle {
                     "微信扫码登录");
                 System.out.println(session.prefix() + " [INFO] 请用微信扫码，等待登录...");
                 System.out.println();
-                client.getLoginFuture().get();
-            } catch (ExecutionException error) {
+                waitForLogin(session, client);
+            } catch (ExecutionException | TimeoutException error) {
                 if (!running) return;
+                if (loginCompleted(session, client)) break;
                 Throwable cause = session.lastLoginFailure != null
                     ? session.lastLoginFailure
                     : error.getCause();
@@ -451,6 +459,32 @@ public class WeChatBot implements SmartLifecycle {
                 Thread.sleep(retryDelayMillis);
             }
         }
+    }
+
+    private void waitForLogin(BotSession session, ILinkClient client)
+        throws InterruptedException, ExecutionException, TimeoutException {
+        long timeoutMillis = Math.max(1_000L, config.getLoginTimeoutMs());
+        long deadlineNanos = System.nanoTime()
+            + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while (running && !loginCompleted(session, client)) {
+            Throwable failure = session.lastLoginFailure;
+            if (failure != null) throw new ExecutionException(failure);
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                throw new TimeoutException("等待微信扫码登录超时");
+            }
+            long waitMillis = Math.max(1L, Math.min(500L,
+                TimeUnit.NANOSECONDS.toMillis(remainingNanos)));
+            try {
+                client.getLoginFuture().get(waitMillis, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException ignored) {
+                // 定期重新检查 onLoginSuccess 状态，避免成功回调与 Future 切换竞态。
+            }
+        }
+    }
+
+    private boolean loginCompleted(BotSession session, ILinkClient client) {
+        return session.loginSucceeded || client.isLoggedIn();
     }
 
     private String extractText(WeixinMessage message) {
@@ -581,9 +615,11 @@ public class WeChatBot implements SmartLifecycle {
     private final class BotSession {
         private volatile ILinkClient client;
         private volatile Throwable lastLoginFailure;
+        private volatile boolean loginSucceeded;
         private Thread pollingThread;
 
         private void start() {
+            loginSucceeded = false;
             pollingThread = new Thread(() -> runBot(this), "wechat-bot-polling");
             pollingThread.setDaemon(false);
             pollingThread.start();
