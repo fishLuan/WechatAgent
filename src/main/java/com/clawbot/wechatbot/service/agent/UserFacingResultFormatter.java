@@ -11,8 +11,8 @@ import java.util.Map;
 final class UserFacingResultFormatter {
 
     private static final List<String> PREFERRED_TEXT_FIELDS = List.of(
-        "display_text", "message", "text", "weather_text", "weather_info",
-        "reply", "poem", "summary"
+        "display_text", "message", "description", "text", "weather_text",
+        "weather_info", "reply", "poem", "summary"
     );
 
     private final ObjectMapper mapper;
@@ -23,7 +23,7 @@ final class UserFacingResultFormatter {
 
     String format(String rawText) {
         if (rawText == null || rawText.isBlank()) return "";
-        String trimmed = rawText.trim();
+        String trimmed = unwrapJsonCodeFence(rawText.trim());
         if (!looksLikeJson(trimmed)) return rawText;
         try {
             JsonNode root = mapper.readTree(trimmed);
@@ -42,6 +42,15 @@ final class UserFacingResultFormatter {
     private boolean looksLikeJson(String text) {
         return (text.startsWith("{") && text.endsWith("}"))
             || (text.startsWith("[") && text.endsWith("]"));
+    }
+
+    private String unwrapJsonCodeFence(String text) {
+        if (!text.startsWith("```") || !text.endsWith("```")) return text;
+        int firstLineEnd = text.indexOf('\n');
+        if (firstLineEnd < 0) return text;
+        String language = text.substring(3, firstLineEnd).trim();
+        if (!language.isEmpty() && !language.equalsIgnoreCase("json")) return text;
+        return text.substring(firstLineEnd + 1, text.length() - 3).trim();
     }
 
     private String preferredText(JsonNode root) {
