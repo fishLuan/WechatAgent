@@ -690,17 +690,57 @@ class ExcelOperationSkillTests {
     // ============================
     /** 没有活动表时，旧指令（生成/增删改行/分析等）给出明确报错，不落库。 */
     @Test
-    void instructionWithoutActiveWorkbookReturnsClearHint() throws Exception {
+    void nonCreateInstructionWithoutActiveWorkbookReturnsClearHint() throws Exception {
         ExcelService excelService = mock(ExcelService.class);
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
 
         SkillResult result = skill.execute(definition,
-            new SkillRequest("user-1", "生成表格：姓名,城市", "", "", ""));
+            new SkillRequest("user-1", "添加行：张三,北京", "", "", ""));
 
         assertFalse(result.success());
         assertTrue(result.text().contains("还没有表格，请先发送「新建表格 名字」创建"));
         assertTrue(result.text().contains("上传 xlsx"));
         verify(excelService, never()).save(any());
+    }
+
+    /** 首次使用（无活动表）：生成/创建表格应先建空表再填充，不再被无活动表拦截。 */
+    @Test
+    void firstCreateWithoutActiveWorkbookCreatesTable() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(null);
+        ExcelTable fresh = new ExcelTable("user-1", "表格");
+        when(excelService.createWorkbook(eq("user-1"), anyString())).thenReturn(fresh);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "生成表格：姓名,城市\n张三,北京", "", "", ""));
+
+        assertTrue(result.success());
+        assertEquals(List.of("姓名", "城市"), fresh.getHeaders());
+        assertEquals(List.of(List.of("张三", "北京")), fresh.getRows());
+        verify(excelService).createWorkbook(eq("user-1"), anyString());
+        verify(excelService).save(fresh);
+    }
+
+    /** 首次使用 + 「创建名为X的表格，表头为…」说法：标题取 X，表头正确落入新表。 */
+    @Test
+    void firstCreateWithNamedPhraseAppliesTitleAndHeaders() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(null);
+        ExcelTable fresh = new ExcelTable("user-1", "表格");
+        when(excelService.createWorkbook(eq("user-1"), anyString())).thenReturn(fresh);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1",
+                "创建名为“季度销售”的Excel表格，表头为：产品,数量,金额", "", "", ""));
+
+        assertTrue(result.success());
+        assertEquals("季度销售", fresh.getTitle());
+        assertEquals(List.of("产品", "数量", "金额"), fresh.getHeaders());
+        verify(excelService).createWorkbook(eq("user-1"), eq("季度销售"));
     }
 
     /** 新建工作簿指令不需要活动表：直接新建并切换为当前表格（纯文字回复）。 */

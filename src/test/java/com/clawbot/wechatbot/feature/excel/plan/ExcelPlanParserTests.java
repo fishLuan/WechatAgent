@@ -150,6 +150,25 @@ class ExcelPlanParserTests {
         assertEquals("我的表格", op.param("title"));
     }
 
+    /** 「创建名为X的表格，表头为…」：标题取 X，表头/数据/覆盖标记正确提取。 */
+    @Test
+    void namedPhraseExtractsTitleAndHeaders() {
+        ExcelOperation op = parseSingle("创建名为“季度销售”的Excel表格，表头为：产品,数量,金额");
+        assertEquals(ExcelOperationType.CREATE_TABLE, op.type());
+        assertEquals("季度销售", op.param("title"));
+        assertEquals("产品,数量,金额", op.param("headers"));
+        assertEquals("", op.param("rows"));
+        assertEquals("false", op.param("overwrite"));
+    }
+
+    /** 无引号/弯引号混合也能提取：名为X的表格（X 内不含「的」时取完整）。 */
+    @Test
+    void namedPhraseWithoutQuotesExtractsTitle() {
+        ExcelOperation op = parseSingle("创建名为季度销售的表");
+        assertEquals(ExcelOperationType.CREATE_TABLE, op.type());
+        assertEquals("季度销售", op.param("title"));
+    }
+
     // ============================
     // 排序路由
     // ============================

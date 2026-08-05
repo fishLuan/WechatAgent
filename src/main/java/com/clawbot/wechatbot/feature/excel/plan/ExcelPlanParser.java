@@ -43,6 +43,9 @@ public final class ExcelPlanParser {
     /** 版本对比指令：版本对比/对比上一版(本)（取最新版本快照与当前表对比）。 */
     private static final Pattern VERSION_DIFF_CMD = Pattern.compile(
         "^(?:(?:请|帮我)\\s*)*(?:版本对比|对比上一版(?:本)?)\\s*$");
+    /** 标题专用提取：创建名为「X」的表格（支持半角/弯引号与「」，X 到「的」为止），无「名为」时走关键词裁剪。 */
+    private static final Pattern NAMED_TITLE = Pattern.compile(
+        "名为\\s*(?:\"([^\"”」]+)\"|“([^”」]+)”|「([^」]+)」|([^\"”」]+?))\\s*的");
     /** 排序指令：按X排序/按X升序·降序/按X从小到大·从大到小/把表格按X倒序。 */
     private static final Pattern SORT_CMD = Pattern.compile(
         "^(?:请|帮我\\s*)*(?:把表格)?\\s*按\\s*(.+?)\\s*"
@@ -676,7 +679,18 @@ public final class ExcelPlanParser {
 
     private static String resolveTitle(String text) {
         // 只取第一行做标题裁剪，避免多行指令把后续数据带进标题
-        String normalized = firstLine(text)
+        String head = firstLine(text);
+        Matcher named = NAMED_TITLE.matcher(head);
+        if (named.find()) {
+            String title = named.group(1) != null ? named.group(1)
+                : (named.group(2) != null ? named.group(2)
+                    : (named.group(3) != null ? named.group(3) : named.group(4)));
+            title = title.trim();
+            if (!title.isBlank()) {
+                return title.substring(0, Math.min(30, title.length()));
+            }
+        }
+        String normalized = head
             .replaceAll("生成|创建|制作|新建|做一个|覆盖|表格|Excel|excel|请|帮我", "")
             .replaceAll("[:：].*$", "")
             .trim();

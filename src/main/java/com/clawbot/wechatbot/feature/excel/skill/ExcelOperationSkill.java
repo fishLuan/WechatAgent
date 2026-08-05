@@ -165,12 +165,19 @@ public final class ExcelOperationSkill implements SkillExecutor {
             return SkillResult.failure(FALLBACK_MESSAGE);
         }
         // 2. 工作簿管理类操作（新建/列表/选择/重命名/删除/复制）不需要活动表，直接校验执行；
-        //    其余操作（原 loadOrCreate 语义）作用于当前活动表，没有活动表时给出明确错误
+        //    生成/创建表格是唯一允许没有活动表的普通操作（原 loadOrCreate 语义：先建空表再填充）；
+        //    其余操作作用于当前活动表，没有活动表时给出明确错误
         ExcelTable table = null;
         if (!isWorkbookManagementPlan(plan)) {
             table = excelService.getActiveWorkbook(userId);
             if (table == null) {
-                return SkillResult.failure(NO_ACTIVE_WORKBOOK_HINT);
+                if (isCreateTablePlan(plan)) {
+                    String title = plan.operations().get(0).param("title");
+                    table = excelService.createWorkbook(userId,
+                        title == null || title.isBlank() ? "表格" : title);
+                } else {
+                    return SkillResult.failure(NO_ACTIVE_WORKBOOK_HINT);
+                }
             }
         }
         // 3. 知识库别名解析：模糊匹配失败的列名按知识库字段映射替换，并记录映射说明（无 RAG 时原样返回）
@@ -214,6 +221,12 @@ public final class ExcelOperationSkill implements SkillExecutor {
     /** 计划是否全部由工作簿管理类操作组成（工作簿管理指令只会产出单操作计划，此为统一判定）。 */
     private static boolean isWorkbookManagementPlan(ExcelPlan plan) {
         return plan.operations().stream().allMatch(op -> WORKBOOK_TYPES.contains(op.type()));
+    }
+
+    /** 计划是否为单个「生成/创建表格」操作（首次使用时允许没有活动表，先建空表再填充）。 */
+    private static boolean isCreateTablePlan(ExcelPlan plan) {
+        return plan.operations().size() == 1
+            && plan.operations().get(0).type() == ExcelOperationType.CREATE_TABLE;
     }
 
     /** 成功回复前加注知识库标注：别名映射说明 + 命中的业务规则/操作示例（换行拼在操作文案前）。 */
