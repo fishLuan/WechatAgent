@@ -31,6 +31,7 @@ public class BilibiliProperties {
         + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
     private int searchCacheMinutes = 30;
     private int searchCircuitBreakerMinutes = 30;
+    private Rag rag = new Rag();
 
     @PostConstruct
     void validate() {
@@ -54,6 +55,7 @@ public class BilibiliProperties {
         requirePositive(searchResultCount, "search-result-count");
         requirePositive(searchCacheMinutes, "search-cache-minutes");
         requirePositive(searchCircuitBreakerMinutes, "search-circuit-breaker-minutes");
+        rag.validate();
         if (userAgent == null || userAgent.isBlank()) {
             throw invalid("user-agent", "不能为空");
         }
@@ -155,5 +157,23 @@ public class BilibiliProperties {
     public int getSearchCircuitBreakerMinutes() { return searchCircuitBreakerMinutes; }
     public void setSearchCircuitBreakerMinutes(int value) {
         this.searchCircuitBreakerMinutes = value;
+    }
+    public Rag getRag() { return rag; }
+    public void setRag(Rag rag) { this.rag = rag == null ? new Rag() : rag; }
+
+    public static class Rag {
+        private Vector vector = new Vector();
+        void validate() { vector.validate(); }
+        public Vector getVector() { return vector; }
+        public void setVector(Vector vector) {
+            this.vector = vector == null ? new Vector() : vector;
+        }
+    }
+
+    public static class Vector {
+        private boolean enabled;
+        void validate() { }
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
     }
 }

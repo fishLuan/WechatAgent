@@ -8,10 +8,13 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 public class BilibiliRagAnswerGenerator {
+    private static final long WARNING_INTERVAL_MILLIS = 30_000L;
     private final ObjectProvider<ChatService> chatService;
+    private final AtomicLong lastFailureWarningAt = new AtomicLong();
 
     public BilibiliRagAnswerGenerator(ObjectProvider<ChatService> chatService) {
         this.chatService = chatService;
@@ -25,8 +28,23 @@ public class BilibiliRagAnswerGenerator {
         try {
             return chat.chat(prompt(context), "").trim();
         } catch (Exception error) {
+            logFallback(error);
             return fallback(context);
         }
+    }
+
+    private void logFallback(Exception error) {
+        long now = System.currentTimeMillis();
+        long previous = lastFailureWarningAt.get();
+        if (now - previous < WARNING_INTERVAL_MILLIS
+            || !lastFailureWarningAt.compareAndSet(previous, now)) {
+            return;
+        }
+        String reason = error.getMessage();
+        System.err.println("[BILIBILI-RAG] 生成模型暂时不可用，已使用本地检索结果："
+            + (reason == null || reason.isBlank()
+                ? error.getClass().getSimpleName()
+                : reason));
     }
 
     private String prompt(BilibiliRagContext context) {

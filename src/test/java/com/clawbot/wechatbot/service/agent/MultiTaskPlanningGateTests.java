@@ -6,6 +6,7 @@ import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -39,7 +40,32 @@ class MultiTaskPlanningGateTests {
         };
         MultiTaskPlanningGate gate = new MultiTaskPlanningGate(planner);
 
-        assertTrue(gate.plan(message("订阅牧神记")).isEmpty());
+        assertTrue(gate.plan(message(
+            "订阅牧神记，然后设置电影推送时间20:00")).isEmpty());
+    }
+
+    @Test
+    void skipsLlmPlanningForOrdinarySingleTaskText() {
+        AtomicInteger calls = new AtomicInteger();
+        TaskPlanner planner = text -> {
+            calls.incrementAndGet();
+            return List.of(new AgentTask(
+                "task-1", 0, AgentTaskType.CHAT_TOOL, text, List.of()));
+        };
+        MultiTaskPlanningGate gate = new MultiTaskPlanningGate(planner);
+
+        assertTrue(gate.plan(message("杭州今天天气怎么样")).isEmpty());
+        assertTrue(gate.plan(message("想看治愈冒险动漫")).isEmpty());
+        assertEquals(0, calls.get());
+    }
+
+    @Test
+    void recognizesCommonMultiTaskStructuresLocally() {
+        MultiTaskPlanningGate gate = new MultiTaskPlanningGate(text -> List.of());
+
+        assertTrue(gate.looksLikeMultipleTasks("查杭州天气，然后设置明早提醒"));
+        assertTrue(gate.looksLikeMultipleTasks("分别总结文档并生成一份周报"));
+        assertTrue(gate.looksLikeMultipleTasks("第一查汇率，第二设置提醒"));
     }
 
     @Test
