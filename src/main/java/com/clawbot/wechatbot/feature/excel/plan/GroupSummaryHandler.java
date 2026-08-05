@@ -13,7 +13,7 @@ import java.util.Map;
 
 /**
  * 分组汇总操作：按分组列聚合数值列（SUM/AVERAGE 用 BigDecimal，MAX/MIN 数值比较，COUNT 计行数）；
- * 结果替换当前表格（变更前快照，原表可回滚）；includeRatio=true 时追加「占比」列（该组值/总值×100）。
+ * 结果新建一张「原表名-汇总」的独立表，原表保留、不切换当前表；includeRatio=true 时追加「占比」列。
  */
 public final class GroupSummaryHandler implements ExcelOperationHandler {
 
@@ -48,8 +48,6 @@ public final class GroupSummaryHandler implements ExcelOperationHandler {
             return OperationResult.failure(
                 "❌ 找不到列「" + valueColumn + "」，现有列：" + String.join("、", table.getHeaders()));
         }
-        // 变更前快照，便于回滚（汇总结果将替换当前表格）
-        excelService.snapshotVersion(table, "按" + groupColumn + "汇总");
         // 分组统计：LinkedHashMap 保持分组首次出现顺序
         Map<String, GroupStat> groups = new LinkedHashMap<>();
         for (List<String> cells : table.getRows()) {
@@ -91,14 +89,17 @@ public final class GroupSummaryHandler implements ExcelOperationHandler {
             }
             summaryRows.add(row);
         }
-        // 汇总结果替换当前表格（原表已快照，可回滚恢复）
-        table.setHeaders(summaryHeaders);
-        table.setRows(summaryRows);
+        // 汇总结果新建一张独立表（原表保留、不切换当前表），标题「原表名-汇总」
+        ExcelTable summaryTable = new ExcelTable(userId, table.getTitle() + "-汇总");
+        summaryTable.setHeaders(summaryHeaders);
+        summaryTable.setRows(summaryRows);
         // 先导出再保存：导出失败（如公式错误）时不落库
-        byte[] bytes = excelService.toXlsx(table);
-        excelService.save(table);
+        byte[] bytes = excelService.toXlsx(summaryTable);
+        excelService.save(summaryTable);
         return OperationResult.success(
-            "✅ 已生成汇总表，原表已替换，可回滚。", bytes);
+            "✅ 已生成汇总表「" + summaryTable.getTitle()
+                + "」，原表保持不变（发送「切换表格：" + summaryTable.getTitle()
+                + "」查看）。", bytes);
     }
 
     /** 聚合列名后缀：合计/平均/最大/最小/计数。 */

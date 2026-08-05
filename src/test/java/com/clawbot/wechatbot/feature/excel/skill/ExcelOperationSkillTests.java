@@ -456,9 +456,12 @@ class ExcelOperationSkillTests {
             new SkillRequest("user-1", "按地区汇总销售额并算占比", "", "", ""));
 
         assertTrue(result.success());
-        assertTrue(result.text().contains("已生成汇总表，原表已替换，可回滚"));
-        assertEquals(List.of("地区", "销售额(合计)", "占比"), table.getHeaders());
-        verify(excelService).save(table);
+        assertTrue(result.text().contains("已生成汇总表"));
+        assertTrue(result.text().contains("原表保持不变"));
+        // 汇总新建独立表，原表不被替换
+        assertEquals(List.of("地区", "销售额"), table.getHeaders());
+        assertEquals(3, table.getRows().size());
+        verify(excelService).save(any(ExcelTable.class));
     }
 
     @Test
@@ -516,9 +519,9 @@ class ExcelOperationSkillTests {
         // 复合回复：已完成 N 步 + 最后一步文案
         assertTrue(result.text().contains("已完成 2 步操作"));
         assertTrue(result.text().contains("最后一步：已生成汇总表"));
-        // 两步均生效：先去重（北京 100 重复一次），再按地区汇总
-        assertEquals(List.of("地区", "销售额(合计)"), table.getHeaders());
-        assertEquals(List.of(List.of("北京", "100.00"), List.of("上海", "200.00")),
+        // 先去重（北京 100 重复一次，原表变 2 行），汇总新建独立表、原表保留
+        assertEquals(List.of("地区", "销售额"), table.getHeaders());
+        assertEquals(List.of(List.of("北京", "100"), List.of("上海", "200")),
             table.getRows());
         verify(excelService, atLeastOnce()).save(table);
     }

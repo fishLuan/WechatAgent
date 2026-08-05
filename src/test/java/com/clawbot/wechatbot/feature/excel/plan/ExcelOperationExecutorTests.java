@@ -27,8 +27,10 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
 
 /** 执行器测试：按计划顺序执行、任一操作失败立即停止。 */
 class ExcelOperationExecutorTests {
@@ -200,10 +202,14 @@ class ExcelOperationExecutorTests {
                 Map.of("column", "销售额", "direction", "DESC"))), table);
 
         assertTrue(result.success());
-        assertEquals(List.of("地区", "销售额(合计)"), table.getHeaders());
-        // 华东 250、华北 130；降序排序 → 华东在前（模糊列名应命中"销售额(合计)"）
-        assertEquals(List.of("华东", "华北"),
+        // 汇总新建独立表（华东 250、华北 130），原表保留并按销售额降序排序
+        assertEquals(List.of("地区", "销售额"), table.getHeaders());
+        assertEquals(List.of("华东", "华东", "华北", "华北"),
             table.getRows().stream().map(row -> row.get(0)).toList());
+        ExcelTable summary = savedSummaryTable();
+        assertEquals(List.of("地区", "销售额(合计)"), summary.getHeaders());
+        assertEquals(List.of(List.of("华东", "250.00"), List.of("华北", "130.00")),
+            summary.getRows());
     }
 
     @Test
@@ -394,10 +400,10 @@ class ExcelOperationExecutorTests {
     }
 
     // ============================
-    // 分组汇总：SUM/AVERAGE/COUNT/占比、替换表头
+    // 分组汇总：SUM/AVERAGE/COUNT/占比，结果新建独立汇总表、原表保留
     // ============================
     @Test
-    void groupSummarySumReplacesTable() throws Exception {
+    void groupSummaryCreatesNewWorkbookKeepingOriginal() throws Exception {
         ExcelTable table = existingTable();
         table.setHeaders(List.of("地区", "销售额"));
         table.setRows(new ArrayList<>(List.of(
@@ -409,15 +415,19 @@ class ExcelOperationExecutorTests {
                 Map.of("groupColumn", "地区", "valueColumn", "销售额", "aggregate", "SUM"))), table);
 
         assertTrue(result.success());
-        // 汇总结果替换当前表格
-        assertEquals(List.of("地区", "销售额(合计)"), table.getHeaders());
+        // 原表保持不变
+        assertEquals(List.of("地区", "销售额"), table.getHeaders());
+        assertEquals(3, table.getRows().size());
+        // 汇总结果落在新建的「测试表-汇总」
+        ExcelTable summary = savedSummaryTable();
+        assertEquals("测试表-汇总", summary.getTitle());
+        assertEquals(List.of("地区", "销售额(合计)"), summary.getHeaders());
         assertEquals(List.of(List.of("北京", "150.00"), List.of("上海", "200.00")),
-            table.getRows());
+            summary.getRows());
         assertTrue(result.text().contains("已生成汇总表"));
-        assertTrue(result.text().contains("可回滚"));
+        assertTrue(result.text().contains("原表保持不变"));
         assertNotNull(result.attachment());
-        verify(excelService).snapshotVersion(table, "按地区汇总");
-        verify(excelService).save(table);
+        verify(excelService, never()).snapshotVersion(any(), anyString());
     }
 
     @Test
@@ -433,7 +443,8 @@ class ExcelOperationExecutorTests {
                 Map.of("groupColumn", "地区", "valueColumn", "销售额", "aggregate", "AVERAGE"))), table);
 
         assertEquals(List.of(List.of("北京", "75.00"), List.of("上海", "200.00")),
-            table.getRows());
+            savedSummaryTable().getRows());
+        assertEquals(List.of("地区", "销售额"), table.getHeaders());
     }
 
     @Test
@@ -448,8 +459,9 @@ class ExcelOperationExecutorTests {
             op(1, ExcelOperationType.GROUP_SUMMARY,
                 Map.of("groupColumn", "地区", "aggregate", "COUNT"))), table);
 
-        assertEquals(List.of("地区", "行数"), table.getHeaders());
-        assertEquals(List.of(List.of("北京", "2"), List.of("上海", "1")), table.getRows());
+        ExcelTable summary = savedSummaryTable();
+        assertEquals(List.of("地区", "行数"), summary.getHeaders());
+        assertEquals(List.of(List.of("北京", "2"), List.of("上海", "1")), summary.getRows());
     }
 
     @Test
@@ -464,7 +476,7 @@ class ExcelOperationExecutorTests {
             op(1, ExcelOperationType.GROUP_SUMMARY,
                 Map.of("groupColumn", "地区", "valueColumn", "订单", "aggregate", "COUNT"))), table);
 
-        assertEquals(List.of("地区", "订单(计数)"), table.getHeaders());
+        assertEquals(List.of("地区", "订单(计数)"), savedSummaryTable().getHeaders());
     }
 
     @Test
@@ -481,9 +493,19 @@ class ExcelOperationExecutorTests {
                     "includeRatio", "true"))), table);
 
         // 北京 400/600=66.67%，上海 200/600=33.33%
-        assertEquals(List.of("地区", "销售额(合计)", "占比"), table.getHeaders());
+        ExcelTable summary = savedSummaryTable();
+        assertEquals(List.of("地区", "销售额(合计)", "占比"), summary.getHeaders());
         assertEquals(List.of(List.of("北京", "400.00", "66.67"),
-            List.of("上海", "200.00", "33.33")), table.getRows());
+            List.of("上海", "200.00", "33.33")), summary.getRows());
+    }
+
+    /** 抓取本次执行中保存的「汇总」表（新建独立表）。 */
+    private ExcelTable savedSummaryTable() {
+        ArgumentCaptor<ExcelTable> captor = ArgumentCaptor.forClass(ExcelTable.class);
+        verify(excelService, atLeastOnce()).save(captor.capture());
+        return captor.getAllValues().stream()
+            .filter(t -> t.getTitle().endsWith("-汇总"))
+            .findFirst().orElseThrow();
     }
 
     // ============================
