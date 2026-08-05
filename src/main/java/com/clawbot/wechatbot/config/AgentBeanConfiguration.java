@@ -174,13 +174,16 @@ public class AgentBeanConfiguration {
         PlanMutationApplier mutationApplier,
         AgentReplanPolicy replanPolicy,
         ResultReferenceResolver referenceResolver,
-        com.clawbot.wechatbot.service.agent.interrupt.AgentExecutionControlService executionControl
+        com.clawbot.wechatbot.service.agent.interrupt.AgentExecutionControlService executionControl,
+        com.clawbot.wechatbot.service.agent.checkpoint.AgentCheckpointStore checkpointStore
     ) {
         return new AgentOrchestrator(chat, planner, handlers, config.isAgentEnabled(),
             config.getAgentMaxOuterRounds(), config.getAgentMaxTasksPerBatch(),
             config.getAgentMaxParallelism(),
             Duration.ofSeconds(config.getAgentExecutionTimeoutSeconds()), context,
             acceptanceEvaluator, replanner, mutationApplier, replanPolicy,
-            referenceResolver).enableInterrupts(executionControl);
+            referenceResolver)
+            .enableInterrupts(executionControl)
+            .enableCheckpoints(checkpointStore);
     }
 }

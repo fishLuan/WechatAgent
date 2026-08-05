@@ -41,6 +41,17 @@ public final class LlmTaskReplanner implements TaskReplanner {
         不得返回其他操作，不得重复修改同一目标；无法修复时使用 ABORT_BRANCH。
         """;
 
+    private static final String IMAGE_OUTPUT_RULE = """
+        IMAGE_GENERATION 返回二进制 IMAGE 附件，不返回 image_url、url 或图片链接。
+        图片任务因这些字段不存在而验收失败时，应移除错误验收字段并保留
+        IMAGE_GENERATION 类型，不得因此使用 ABORT_BRANCH。
+        """;
+
+    private static final String VOICE_INPUT_RULE = """
+        voice-reply 朗读前置结果时使用 input={} 和 depends_on，禁止将字符串 $ref
+        直接作为整个 input。语音 Skill 会通过 dependencyText 获取前置文字。
+        """;
+
     private final DeepSeekClient client;
     private final ObjectMapper mapper;
     private final SkillCatalog skills;
@@ -54,6 +65,7 @@ public final class LlmTaskReplanner implements TaskReplanner {
     @Override
     public ReplanResult replan(ReplanRequest request) throws Exception {
         ArrayNode messages = mapper.createArrayNode();
+        messages.add(message("system", IMAGE_OUTPUT_RULE + VOICE_INPUT_RULE));
         messages.add(message(
             "system", PROMPT + "\n可用 Skill：\n" + skills.plannerCatalog()));
         messages.add(message(

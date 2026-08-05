@@ -5,6 +5,7 @@ import com.clawbot.wechatbot.service.agent.AcceptanceOperator;
 import com.clawbot.wechatbot.service.agent.AgentTask;
 import com.clawbot.wechatbot.service.agent.AgentTaskResult;
 import com.clawbot.wechatbot.service.agent.AgentTaskType;
+import com.clawbot.wechatbot.service.agent.AgentAttachment;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
@@ -57,6 +58,18 @@ class DefaultTaskAcceptanceEvaluatorTests {
     }
 
     @Test
+    void classifiesMissingPlannerFieldsAsSchemaMismatch() {
+        AgentTask task = task(
+            mapper.createObjectNode().put("weather_info", "string"), List.of());
+
+        TaskEvaluation evaluation = evaluator.evaluate(task,
+            AgentTaskResult.success(task, "阜阳今天晴", List.of()), Map.of());
+
+        assertEquals(TaskDecision.REPLAN, evaluation.decision());
+        assertEquals("TASK_OUTPUT_SCHEMA_MISMATCH", evaluation.code());
+    }
+
+    @Test
     void wrapsPlainTextSoTextCriteriaCanBeEvaluated() {
         AgentTask task = task(
             mapper.createObjectNode().put("text", "string"),
@@ -94,6 +107,40 @@ class DefaultTaskAcceptanceEvaluatorTests {
             Map.of());
 
         assertTrue(evaluation.passed());
+    }
+
+    @Test
+    void imageAttachmentPassesEvenWhenPlannerIncorrectlyRequiresImageUrl() {
+        AgentTask task = new AgentTask(
+            "image-1", 0, AgentTaskType.IMAGE_GENERATION, "", "生成图片",
+            mapper.createObjectNode(),
+            mapper.createObjectNode().put("image_url", "string"),
+            List.of(criterion("$.image_url", AcceptanceOperator.EXISTS,
+                mapper.nullNode())), List.of());
+        AgentAttachment image = new AgentAttachment(
+            AgentAttachment.AttachmentType.IMAGE,
+            new byte[] {1, 2, 3}, "image.png", "生成图片");
+
+        TaskEvaluation evaluation = evaluator.evaluate(task,
+            AgentTaskResult.success(task, "图片已生成", List.of(image)), Map.of());
+
+        assertTrue(evaluation.passed());
+        assertEquals("IMAGE",
+            evaluation.verifiedOutput().path("attachments").path(0)
+                .path("type").asText());
+    }
+
+    @Test
+    void imageTaskWithoutImageAttachmentRequestsRetry() {
+        AgentTask task = new AgentTask(
+            "image-1", 0, AgentTaskType.IMAGE_GENERATION, "", "生成图片",
+            List.of());
+
+        TaskEvaluation evaluation = evaluator.evaluate(task,
+            AgentTaskResult.success(task, "图片已生成", List.of()), Map.of());
+
+        assertEquals(TaskDecision.RETRY, evaluation.decision());
+        assertEquals("IMAGE_ATTACHMENT_MISSING", evaluation.code());
     }
 
     private AcceptanceCriterion criterion(

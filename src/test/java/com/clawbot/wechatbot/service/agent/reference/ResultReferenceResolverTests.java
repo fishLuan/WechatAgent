@@ -91,6 +91,28 @@ class ResultReferenceResolverTests {
         assertEquals("REF_PATH_NOT_FOUND", error.code());
     }
 
+    @Test
+    void wrapsScalarRootReferenceAsObjectInput() {
+        AgentTask source = task("search", mapper.createObjectNode(), List.of());
+        ObjectNode input = mapper.createObjectNode();
+        input.put("$ref", "search.output.weather_info");
+        AgentTask target = task("voice", input, List.of("search"));
+        AgentExecutionState state = new AgentExecutionState(
+            "查询天气并语音回复", List.of(source, target));
+        ObjectNode output = mapper.createObjectNode()
+            .put("weather_info", "阜阳今天晴，气温30度");
+        state.markRunning(source);
+        state.recordResult(
+            AgentTaskResult.success(source, output.toString(), List.of()),
+            TaskEvaluation.pass(output));
+
+        ResolvedTaskInput resolved = resolver.resolve(target, state);
+
+        assertTrue(resolved.input().isObject());
+        assertEquals("阜阳今天晴，气温30度",
+            resolved.input().path("value").asText());
+    }
+
     private AgentExecutionState verifiedState(AgentTask source, AgentTask target) {
         AgentExecutionState state = new AgentExecutionState(
             "请求", List.of(source, target));

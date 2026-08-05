@@ -31,6 +31,11 @@ public final class ResultReferenceResolver {
         int[] referenceCount = {0};
         JsonNode resolved = resolveNode(
             task.input(), state, task, "$", 0, referenceCount, lineage);
+        if (!resolved.isObject()) {
+            ObjectNode wrapped = mapper.createObjectNode();
+            wrapped.set("value", resolved);
+            resolved = wrapped;
+        }
         try {
             if (mapper.writeValueAsString(resolved).length()
                 > policy.maxResolvedInputChars()) {

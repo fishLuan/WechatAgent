@@ -204,6 +204,26 @@ class LlmTaskPlannerTests {
     }
 
     @Test
+    void removesScalarRootReferenceFromVoiceDependencyInput() throws Exception {
+        LlmTaskPlanner planner = planner(5);
+
+        List<AgentTask> tasks = planner.parseTasks(
+            "用语音回复阜阳天气",
+            """
+                {"tasks":[
+                  {"id":"weather","type":"CHAT_TOOL","instruction":"查询阜阳天气","input":{},"depends_on":[]},
+                  {"id":"voice","type":"SKILL","skill_name":"voice-reply","instruction":"语音回复天气","input":{"$ref":"weather.output.weather_info"},"depends_on":["weather"]}
+                ]}
+                """);
+
+        assertEquals(2, tasks.size());
+        assertEquals("voice-reply", tasks.get(1).skillName());
+        assertTrue(tasks.get(1).input().isObject());
+        assertTrue(tasks.get(1).input().isEmpty());
+        assertEquals(List.of("task-1"), tasks.get(1).dependencies());
+    }
+
+    @Test
     void fallsBackToChatTaskForInvalidPlannerOutput() throws Exception {
         LlmTaskPlanner planner = planner(5);
 

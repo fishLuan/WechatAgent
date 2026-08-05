@@ -15,9 +15,13 @@ import java.util.List;
 public final class VoiceReplySkill implements SkillExecutor {
     public static final String EXECUTOR_NAME = "voice-reply";
     private final SpeechSynthesisService speech;
+    private final VoiceReplyContextStore contexts;
 
-    public VoiceReplySkill(SpeechSynthesisService speech) {
+    public VoiceReplySkill(
+        SpeechSynthesisService speech, VoiceReplyContextStore contexts
+    ) {
         this.speech = speech;
+        this.contexts = contexts;
     }
 
     @Override
@@ -33,9 +37,10 @@ public final class VoiceReplySkill implements SkillExecutor {
         }
         String text = resolveText(request);
         if (text.isBlank()) {
-            return SkillResult.failure(
-                "No text is available for speech synthesis; generate or provide it first");
+            return SkillResult.success(
+                "请告诉我要朗读的内容，或者先让我查询、创作一段内容，再说“男声回复”或“女声回复”。");
         }
+        saveContext(request.userId(), text);
         String voice = selectVoice(request.instruction());
         byte[] bytes = speech.synthesize(text, voice);
         String extension = speech.getFileExtension();
@@ -50,6 +55,10 @@ public final class VoiceReplySkill implements SkillExecutor {
 
     private String resolveText(SkillRequest request) {
         if (!request.dependencyText().isBlank()) return request.dependencyText();
+        String structured = firstText(
+            request.resolvedInput().path("text").asText(""),
+            request.resolvedInput().path("value").asText(""));
+        if (!structured.isBlank()) return structured;
         String instruction = request.instruction();
         for (String separator : List.of("：", ":")) {
             int index = instruction.indexOf(separator);
@@ -57,7 +66,27 @@ public final class VoiceReplySkill implements SkillExecutor {
                 return instruction.substring(index + separator.length()).trim();
             }
         }
+        try {
+            return contexts.find(request.userId()).orElse("");
+        } catch (Exception error) {
+            System.err.println("[VOICE-CONTEXT] 读取最近朗读内容失败：" + error.getMessage());
+            return "";
+        }
+    }
+
+    private String firstText(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) return value.trim();
+        }
         return "";
+    }
+
+    private void saveContext(String userId, String text) {
+        try {
+            contexts.save(userId, text);
+        } catch (Exception error) {
+            System.err.println("[VOICE-CONTEXT] 保存最近朗读内容失败：" + error.getMessage());
+        }
     }
 
     private String selectVoice(String instruction) {

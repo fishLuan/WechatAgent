@@ -20,7 +20,8 @@ class VoiceReplySkillTests {
         when(speech.synthesize("天气晴朗", "Ethan"))
             .thenReturn(new byte[] {1, 2});
         when(speech.getFileExtension()).thenReturn("mp3");
-        VoiceReplySkill skill = new VoiceReplySkill(speech);
+        VoiceReplyContextStore contexts = mock(VoiceReplyContextStore.class);
+        VoiceReplySkill skill = new VoiceReplySkill(speech, contexts);
 
         SkillResult result = skill.execute(
             new SkillDefinition(

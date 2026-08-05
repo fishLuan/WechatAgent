@@ -4,6 +4,7 @@ import com.clawbot.wechatbot.service.agent.AcceptanceCriterion;
 import com.clawbot.wechatbot.service.agent.AgentAttachment;
 import com.clawbot.wechatbot.service.agent.AgentTask;
 import com.clawbot.wechatbot.service.agent.AgentTaskResult;
+import com.clawbot.wechatbot.service.agent.AgentTaskType;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -45,6 +46,9 @@ public final class DefaultTaskAcceptanceEvaluator
         }
 
         JsonNode output = normalizeOutput(result);
+        if (task.type() == AgentTaskType.IMAGE_GENERATION) {
+            return evaluateGeneratedImage(result, output);
+        }
         List<String> failures = new ArrayList<>();
         validateExpectedOutput(task.expectedOutput(), output, "$", failures);
         for (AcceptanceCriterion criterion : task.acceptanceCriteria()) {
@@ -54,14 +58,33 @@ public final class DefaultTaskAcceptanceEvaluator
         }
 
         if (!failures.isEmpty()) {
+            boolean schemaMismatch = failures.stream()
+                .allMatch(failure -> failure.contains("不存在"));
             return failure(
                 TaskDecision.REPLAN,
-                "TASK_ACCEPTANCE_FAILED",
+                schemaMismatch
+                    ? "TASK_OUTPUT_SCHEMA_MISMATCH"
+                    : "TASK_ACCEPTANCE_FAILED",
                 "任务结果未满足 " + failures.size() + " 项验收要求",
                 failures,
                 "调整当前任务参数、补充前置任务或局部重规划");
         }
         return TaskEvaluation.pass(output);
+    }
+
+    private TaskEvaluation evaluateGeneratedImage(
+        AgentTaskResult result, JsonNode output
+    ) {
+        boolean hasImage = result.attachments().stream().anyMatch(attachment ->
+            attachment.type() == AgentAttachment.AttachmentType.IMAGE
+                && attachment.content().length > 0);
+        if (hasImage) return TaskEvaluation.pass(output);
+        return failure(
+            TaskDecision.RETRY,
+            "IMAGE_ATTACHMENT_MISSING",
+            "图片生成任务没有返回有效图片附件",
+            List.of("$.attachments 中不存在有效 IMAGE 附件"),
+            "检查图片生成服务返回内容后重试当前任务");
     }
 
     private JsonNode normalizeOutput(AgentTaskResult result) {

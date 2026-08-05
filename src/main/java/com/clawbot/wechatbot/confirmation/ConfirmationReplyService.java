@@ -2,6 +2,9 @@ package com.clawbot.wechatbot.confirmation;
 
 import com.clawbot.wechatbot.service.agent.AgentRequestContext;
 import com.clawbot.wechatbot.service.agent.AgentRequestContextHolder;
+import com.clawbot.wechatbot.service.agent.AgentResponse;
+import com.clawbot.wechatbot.service.agent.checkpoint.AgentCheckpointRecoveryRunner;
+import com.clawbot.wechatbot.base.MessageSender;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.clawbot.wechatbot.tools.ToolExecutionOutcome;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,12 +23,18 @@ public class ConfirmationReplyService {
     private final FunctionToolRegistry tools;
     private final AgentRequestContextHolder contexts;
     private final ObjectMapper mapper;
+    private final AgentCheckpointRecoveryRunner recovery;
+    private final MessageSender sender;
 
     public ConfirmationReplyService(ConfirmationService confirmations,
                                     @Lazy FunctionToolRegistry tools,
-                                    AgentRequestContextHolder contexts, ObjectMapper mapper) {
+                                    AgentRequestContextHolder contexts, ObjectMapper mapper,
+                                    AgentCheckpointRecoveryRunner recovery,
+                                    MessageSender sender) {
         this.confirmations = confirmations; this.tools = tools; this.contexts = contexts;
         this.mapper = mapper;
+        this.recovery = recovery;
+        this.sender = sender;
     }
 
     public ConfirmationReply handle(String userId, Long messageId, String text) throws Exception {
@@ -46,6 +55,9 @@ public class ConfirmationReplyService {
             if (!ID.matcher(normalized).find()) return ConfirmationReply.notHandled();
             return new ConfirmationReply(true, false,
                 "没有找到该待确认任务，可能已经完成或超过30分钟有效期。", "");
+        }
+        if ("__agent_checkpoint_recovery__".equals(pending.getToolName())) {
+            return handleRecovery(pending, cancel, modify);
         }
         if (cancel) {
             confirmations.status(pending, ConfirmationStatus.REJECTED, "用户取消");
@@ -75,6 +87,46 @@ public class ConfirmationReplyService {
         } catch (Exception exception) {
             confirmations.status(pending, ConfirmationStatus.FAILED, exception.getMessage());
             throw exception;
+        }
+    }
+
+    private ConfirmationReply handleRecovery(
+        PendingConfirmation pending, boolean cancel, boolean modify
+    ) throws Exception {
+        String executionId = mapper.readTree(pending.getArgumentsJson())
+            .path("execution_id").asText();
+        if (modify) {
+            return new ConfirmationReply(true, false,
+                "这个恢复任务不能修改参数。请回复“确认”重新执行，或回复“取消”终止任务。", "");
+        }
+        if (cancel) {
+            recovery.cancelRecovery(executionId);
+            confirmations.status(pending, ConfirmationStatus.REJECTED, "用户取消恢复");
+            return new ConfirmationReply(true, false,
+                "已取消之前中断的任务，不会重新执行。", "");
+        }
+        confirmations.status(pending, ConfirmationStatus.CONFIRMED, "用户确认重新执行");
+        confirmations.status(pending, ConfirmationStatus.RESUMING, "正在恢复执行");
+        try {
+            AgentResponse response = recovery.resumeConfirmed(executionId);
+            response.attachments().forEach(attachment -> {
+                if (attachment.type()
+                    == com.clawbot.wechatbot.service.agent.AgentAttachment.AttachmentType.IMAGE) {
+                    sender.sendImage(pending.getUserId(), attachment.content(),
+                        attachment.fileName());
+                } else {
+                    sender.sendFile(pending.getUserId(), attachment.content(),
+                        attachment.fileName(), attachment.caption());
+                }
+            });
+            confirmations.status(pending, ConfirmationStatus.SUCCEEDED,
+                response.text());
+            return new ConfirmationReply(true, false,
+                "已按你的确认恢复执行。\n\n" + response.text(), "");
+        } catch (Exception error) {
+            confirmations.status(pending, ConfirmationStatus.FAILED,
+                error.getMessage());
+            throw error;
         }
     }
 
