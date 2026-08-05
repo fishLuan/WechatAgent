@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.feature.bilibili.application.BilibiliCatalogCommandService;
+import com.clawbot.wechatbot.feature.bilibili.application.BilibiliTitleSearchService;
 import com.clawbot.wechatbot.feature.bilibili.application.BilibiliUpdateQueryService;
 import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
@@ -34,8 +35,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 
 class BilibiliCommandHandlerTests {
     private BilibiliSubscriptionService subscriptionService;
@@ -48,7 +47,6 @@ class BilibiliCommandHandlerTests {
     private BilibiliSchedulePort schedulePort;
     private BilibiliPreferenceCommandService preferenceCommands;
     private BilibiliContentRepository contentRepository;
-    private com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentCrawler contentCrawler;
     private BilibiliCommandHandler handler;
 
     @BeforeEach
@@ -64,13 +62,12 @@ class BilibiliCommandHandlerTests {
         preferenceCommands = new BilibiliPreferenceCommandService(
             preferenceService, schedulePort);
         contentRepository = mock(BilibiliContentRepository.class);
-        contentCrawler = mock(
-            com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentCrawler.class);
         BilibiliProperties properties = new BilibiliProperties();
+        BilibiliTitleSearchService titleSearch = new BilibiliTitleSearchService(
+            contentRepository, contentSource, properties);
         BilibiliCatalogCommandService catalogCommands = new BilibiliCatalogCommandService(
-            subscriptionService, recommendationService, historyService, contentSource,
-            properties, pendingSearchResults, contentRepository,
-            contentCrawler);
+            subscriptionService, recommendationService, historyService, titleSearch,
+            pendingSearchResults);
         BilibiliUpdateQueryService updateQueries = new BilibiliUpdateQueryService(
             contentRepository, contentSource, historyService, preferenceService);
         handler = new BilibiliCommandHandler(
@@ -144,36 +141,6 @@ class BilibiliCommandHandlerTests {
         assertTrue(reply.contains(
             "https://www.bilibili.com/bangumi/play/ss38729"));
         verify(contentSource).searchByTitle("老友记", 5);
-        verify(contentCrawler).storeDiscovered(List.of(content));
-    }
-
-    @Test
-    void searchesMongoBeforeCallingBilibili() throws Exception {
-        BilibiliContent local = content("media-jojo", "ss-jojo",
-            "JOJO的奇妙冒险", false);
-        when(contentRepository
-            .findTop20ByTitleContainingIgnoreCaseOrderByRatingDesc("jojo的奇妙冒险"))
-            .thenReturn(List.of(local));
-
-        String reply = handler.handle("user-1", "搜索 jojo的奇妙冒险");
-
-        assertTrue(reply.contains("JOJO的奇妙冒险"));
-        verify(contentSource, never()).searchByTitle(anyString(), anyInt());
-    }
-
-    @Test
-    void suggestsLocalTitleWhenUserHasOneWrongCharacter() throws Exception {
-        BilibiliContent local = content("media-kimetsu", "ss-kimetsu",
-            "鬼灭之刃", false);
-        when(contentRepository
-            .findTop20ByTitleContainingIgnoreCaseOrderByRatingDesc("鬼面之刃"))
-            .thenReturn(List.of());
-        when(contentRepository.findAll()).thenReturn(List.of(local));
-
-        String reply = handler.handle("user-1", "搜索 鬼面之刃");
-
-        assertTrue(reply.contains("鬼灭之刃"));
-        verify(contentSource, never()).searchByTitle(anyString(), anyInt());
     }
 
     @Test

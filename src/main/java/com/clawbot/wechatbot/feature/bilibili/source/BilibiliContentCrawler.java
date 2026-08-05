@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Objects;
 
 /** 自动抓取 B 站候选内容并写入 bilibili_content 集合。 */
 @Service
@@ -40,6 +41,7 @@ public class BilibiliContentCrawler {
             stats.candidateCount,
             stats.insertedCount,
             stats.updatedCount,
+            stats.unchangedCount,
             typeResults,
             failures);
     }
@@ -52,11 +54,12 @@ public class BilibiliContentCrawler {
     public StoredContents crawlAndStoreWithStats(ContentType contentType, int limit)
         throws Exception {
         if (contentType == null || limit < 1 || contentType == ContentType.UPLOADER) {
-            return new StoredContents(List.of(), 0, 0, 0);
+            return new StoredContents(List.of(), 0, 0, 0, 0);
         }
         List<BilibiliContent> saved = new ArrayList<>();
         int inserted = 0;
         int updated = 0;
+        int unchanged = 0;
         List<BilibiliContent> candidates =
             contentSource.findCandidates(contentType, limit);
         int enriched = 0;
@@ -68,9 +71,11 @@ public class BilibiliContentCrawler {
             StoredContent stored = saveSnapshot(candidate);
             saved.add(stored.content());
             if (stored.inserted()) inserted++;
-            else updated++;
+            else if (stored.changed()) updated++;
+            else unchanged++;
         }
-        return new StoredContents(saved, candidates.size(), inserted, updated);
+        return new StoredContents(
+            saved, candidates.size(), inserted, updated, unchanged);
     }
 
     /** 保存用户在线搜索发现的作品，并复用候选池的幂等更新规则。 */
@@ -125,18 +130,20 @@ public class BilibiliContentCrawler {
     ) {
         try {
             StoredContents stored = crawlAndStoreWithStats(
-                contentType, properties.getCatalogSizePerType());
+                contentType, properties.getCandidateCrawlBatchSize());
             stats.candidateCount += stored.candidateCount();
             stats.insertedCount += stored.insertedCount();
             stats.updatedCount += stored.updatedCount();
+            stats.unchangedCount += stored.unchangedCount();
             typeResults.add(new TypeCrawlResult(
                 contentType,
                 stored.candidateCount(),
                 stored.insertedCount(),
-                stored.updatedCount()));
+                stored.updatedCount(),
+                stored.unchangedCount()));
         } catch (Exception e) {
             failures.add(contentType + ": " + e.getMessage());
-            typeResults.add(new TypeCrawlResult(contentType, 0, 0, 0));
+            typeResults.add(new TypeCrawlResult(contentType, 0, 0, 0, 0));
         }
     }
 
@@ -153,14 +160,34 @@ public class BilibiliContentCrawler {
                 incoming.getContentType(), incoming.getContentId());
         boolean inserted = existing.isEmpty();
         BilibiliContent target = existing.orElse(incoming);
+        boolean changed = inserted || hasMutableChanges(incoming, target);
         if (inserted && target.getCreatedAt() == null) {
             target.setCreatedAt(now);
         }
         if (target != incoming) copyMutableFields(incoming, target);
-        target.setUpdatedAt(now);
+        if (changed) target.setUpdatedAt(now);
         target.setLastFetchedAt(
             incoming.getLastFetchedAt() == null ? now : incoming.getLastFetchedAt());
-        return new StoredContent(contentRepository.save(target), inserted);
+        return new StoredContent(
+            contentRepository.save(target), inserted, changed);
+    }
+
+    private boolean hasMutableChanges(
+        BilibiliContent source, BilibiliContent target
+    ) {
+        return !Objects.equals(source.getSeasonId(), target.getSeasonId())
+            || !Objects.equals(source.getTitle(), target.getTitle())
+            || !Objects.equals(source.getDescription(), target.getDescription())
+            || !Objects.equals(source.getGenres(), target.getGenres())
+            || !Objects.equals(source.getRating(), target.getRating())
+            || !Objects.equals(source.getViewCount(), target.getViewCount())
+            || !Objects.equals(source.getCoverUrl(), target.getCoverUrl())
+            || !Objects.equals(source.getPageUrl(), target.getPageUrl())
+            || !Objects.equals(source.getLatestEpisodeId(), target.getLatestEpisodeId())
+            || !Objects.equals(source.getLatestEpisodeTitle(), target.getLatestEpisodeTitle())
+            || !Objects.equals(source.getLatestEpisodeNumber(), target.getLatestEpisodeNumber())
+            || !Objects.equals(source.getLatestEpisodePubTime(), target.getLatestEpisodePubTime())
+            || source.isFinished() != target.isFinished();
     }
 
     private void copyMutableFields(BilibiliContent source, BilibiliContent target) {
@@ -192,16 +219,20 @@ public class BilibiliContentCrawler {
         private int candidateCount;
         private int insertedCount;
         private int updatedCount;
+        private int unchangedCount;
     }
 
-    public record StoredContent(BilibiliContent content, boolean inserted) {
+    public record StoredContent(
+        BilibiliContent content, boolean inserted, boolean changed
+    ) {
     }
 
     public record StoredContents(
         List<BilibiliContent> contents,
         int candidateCount,
         int insertedCount,
-        int updatedCount
+        int updatedCount,
+        int unchangedCount
     ) {
         public StoredContents {
             contents = contents == null ? List.of() : List.copyOf(contents);
@@ -212,10 +243,11 @@ public class BilibiliContentCrawler {
         ContentType contentType,
         int candidateCount,
         int insertedCount,
-        int updatedCount
+        int updatedCount,
+        int unchangedCount
     ) {
         public int savedCount() {
-            return insertedCount + updatedCount;
+            return insertedCount + updatedCount + unchangedCount;
         }
     }
 
@@ -223,6 +255,7 @@ public class BilibiliContentCrawler {
         int candidateCount,
         int insertedCount,
         int updatedCount,
+        int unchangedCount,
         List<TypeCrawlResult> typeResults,
         List<String> failures
     ) {
@@ -232,7 +265,7 @@ public class BilibiliContentCrawler {
         }
 
         public int savedCount() {
-            return insertedCount + updatedCount;
+            return insertedCount + updatedCount + unchangedCount;
         }
 
         public boolean hasFailures() {

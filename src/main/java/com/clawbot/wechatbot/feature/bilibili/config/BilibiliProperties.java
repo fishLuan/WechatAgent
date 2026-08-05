@@ -12,9 +12,11 @@ import java.time.LocalTime;
 @ConfigurationProperties(prefix = "clawbot.bilibili")
 public class BilibiliProperties {
     private boolean enabled;
-    private int checkIntervalMinutes = 30;
-    private int catalogRefreshMinutes = 360;
-    private int catalogSizePerType = 50;
+    private int subscriptionCheckIntervalMinutes = 30;
+    private int candidateCrawlIntervalMinutes = 360;
+    private int candidateCrawlInitialDelayMinutes = 2;
+    private int candidateCrawlBatchSize = 20;
+    private long minRequestGapMillis = 2500;
     private int requestTimeoutSeconds = 15;
     private int maxRetries = 2;
     private LocalTime defaultPushTime = LocalTime.of(20, 0);
@@ -24,13 +26,25 @@ public class BilibiliProperties {
     private int movieRecommendationCount = 3;
     private double movieMinimumRating = 8.0;
     private int searchResultCount = 5;
+    private String cookie = "";
+    private String userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+    private int searchCacheMinutes = 30;
+    private int searchCircuitBreakerMinutes = 30;
     private Rag rag = new Rag();
 
     @PostConstruct
     void validate() {
-        requirePositive(checkIntervalMinutes, "check-interval-minutes");
-        requirePositive(catalogRefreshMinutes, "catalog-refresh-minutes");
-        requirePositive(catalogSizePerType, "catalog-size-per-type");
+        requirePositive(subscriptionCheckIntervalMinutes,
+            "subscription-check-interval-minutes");
+        requirePositive(candidateCrawlIntervalMinutes,
+            "candidate-crawl-interval-minutes");
+        requirePositive(candidateCrawlInitialDelayMinutes,
+            "candidate-crawl-initial-delay-minutes");
+        requirePositive(candidateCrawlBatchSize, "candidate-crawl-batch-size");
+        if (minRequestGapMillis < 100) {
+            throw invalid("min-request-gap-millis", "不能小于 100");
+        }
         requirePositive(requestTimeoutSeconds, "request-timeout-seconds");
         if (maxRetries < 0) {
             throw invalid("max-retries", "不能小于 0");
@@ -39,8 +53,13 @@ public class BilibiliProperties {
         requireRating(defaultMinimumRating, "default-minimum-rating");
         requirePositive(movieRecommendationCount, "movie-recommendation-count");
         requirePositive(searchResultCount, "search-result-count");
-        requireRating(movieMinimumRating, "movie-minimum-rating");
+        requirePositive(searchCacheMinutes, "search-cache-minutes");
+        requirePositive(searchCircuitBreakerMinutes, "search-circuit-breaker-minutes");
         rag.validate();
+        if (userAgent == null || userAgent.isBlank()) {
+            throw invalid("user-agent", "不能为空");
+        }
+        requireRating(movieMinimumRating, "movie-minimum-rating");
         if (defaultPushTime == null) {
             throw invalid("default-push-time", "不能为空");
         }
@@ -81,12 +100,30 @@ public class BilibiliProperties {
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
-    public int getCheckIntervalMinutes() { return checkIntervalMinutes; }
-    public void setCheckIntervalMinutes(int value) { this.checkIntervalMinutes = value; }
-    public int getCatalogRefreshMinutes() { return catalogRefreshMinutes; }
-    public void setCatalogRefreshMinutes(int value) { this.catalogRefreshMinutes = value; }
-    public int getCatalogSizePerType() { return catalogSizePerType; }
-    public void setCatalogSizePerType(int value) { this.catalogSizePerType = value; }
+    public int getSubscriptionCheckIntervalMinutes() {
+        return subscriptionCheckIntervalMinutes;
+    }
+    public void setSubscriptionCheckIntervalMinutes(int value) {
+        this.subscriptionCheckIntervalMinutes = value;
+    }
+    public int getCandidateCrawlIntervalMinutes() {
+        return candidateCrawlIntervalMinutes;
+    }
+    public void setCandidateCrawlIntervalMinutes(int value) {
+        this.candidateCrawlIntervalMinutes = value;
+    }
+    public int getCandidateCrawlInitialDelayMinutes() {
+        return candidateCrawlInitialDelayMinutes;
+    }
+    public void setCandidateCrawlInitialDelayMinutes(int value) {
+        this.candidateCrawlInitialDelayMinutes = value;
+    }
+    public int getCandidateCrawlBatchSize() { return candidateCrawlBatchSize; }
+    public void setCandidateCrawlBatchSize(int value) {
+        this.candidateCrawlBatchSize = value;
+    }
+    public long getMinRequestGapMillis() { return minRequestGapMillis; }
+    public void setMinRequestGapMillis(long value) { this.minRequestGapMillis = value; }
     public int getRequestTimeoutSeconds() { return requestTimeoutSeconds; }
     public void setRequestTimeoutSeconds(int value) { this.requestTimeoutSeconds = value; }
     public int getMaxRetries() { return maxRetries; }
@@ -109,16 +146,24 @@ public class BilibiliProperties {
     public void setMovieMinimumRating(double value) { this.movieMinimumRating = value; }
     public int getSearchResultCount() { return searchResultCount; }
     public void setSearchResultCount(int value) { this.searchResultCount = value; }
+    public String getCookie() { return cookie; }
+    public void setCookie(String cookie) { this.cookie = cookie == null ? "" : cookie.trim(); }
+    public String getUserAgent() { return userAgent; }
+    public void setUserAgent(String value) {
+        this.userAgent = value == null ? "" : value.trim();
+    }
+    public int getSearchCacheMinutes() { return searchCacheMinutes; }
+    public void setSearchCacheMinutes(int value) { this.searchCacheMinutes = value; }
+    public int getSearchCircuitBreakerMinutes() { return searchCircuitBreakerMinutes; }
+    public void setSearchCircuitBreakerMinutes(int value) {
+        this.searchCircuitBreakerMinutes = value;
+    }
     public Rag getRag() { return rag; }
     public void setRag(Rag rag) { this.rag = rag == null ? new Rag() : rag; }
 
     public static class Rag {
         private Vector vector = new Vector();
-
-        void validate() {
-            vector.validate();
-        }
-
+        void validate() { vector.validate(); }
         public Vector getVector() { return vector; }
         public void setVector(Vector vector) {
             this.vector = vector == null ? new Vector() : vector;
@@ -127,10 +172,7 @@ public class BilibiliProperties {
 
     public static class Vector {
         private boolean enabled;
-
-        void validate() {
-        }
-
+        void validate() { }
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
     }

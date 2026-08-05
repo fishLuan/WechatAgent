@@ -79,15 +79,16 @@ class ApplicationTests {
 
     @Test
     void contextLoads() {
-        assertEquals(13, toolRegistry.size());
+        assertEquals(14, toolRegistry.size());
         assertEquals(5, handlers.size());
         assertTrue(handlers.stream().anyMatch(DocumentMessageHandler.class::isInstance));
         assertEquals(5, agentTaskHandlers.size());
-        assertEquals(4, skillRegistry.size());
+        assertEquals(5, skillRegistry.size());
         assertTrue(skillRegistry.contains("bilibili"));
         assertTrue(skillRegistry.contains("document-generation"));
         assertTrue(skillRegistry.contains("voice-reply"));
         assertTrue(skillRegistry.contains("excel-operation"));
+        assertTrue(skillRegistry.contains("weread"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name").contains("convert_currency"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name")
             .contains("calculate_bazi_fortune"));

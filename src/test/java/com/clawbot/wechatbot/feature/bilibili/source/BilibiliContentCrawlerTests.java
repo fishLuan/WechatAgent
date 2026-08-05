@@ -110,4 +110,29 @@ class BilibiliContentCrawlerTests {
         assertFalse(result.failures().isEmpty());
         assertTrue(result.failures().get(0).contains("BANGUMI"));
     }
+
+    @Test
+    void countsExistingIdenticalContentAsUnchanged() throws Exception {
+        BilibiliContentSource source = mock(BilibiliContentSource.class);
+        BilibiliContentRepository repository = mock(BilibiliContentRepository.class);
+        BilibiliContent existing =
+            new BilibiliContent(ContentType.BANGUMI, "media-1", "魁拔");
+        BilibiliContent incoming =
+            new BilibiliContent(ContentType.BANGUMI, "media-1", "魁拔");
+        when(source.findCandidates(ContentType.BANGUMI, 1))
+            .thenReturn(List.of(incoming));
+        when(repository.findByContentTypeAndContentId(
+            ContentType.BANGUMI, "media-1")).thenReturn(Optional.of(existing));
+        when(repository.save(any(BilibiliContent.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        BilibiliContentCrawler crawler = new BilibiliContentCrawler(
+            source, repository, new BilibiliProperties());
+
+        BilibiliContentCrawler.StoredContents result =
+            crawler.crawlAndStoreWithStats(ContentType.BANGUMI, 1);
+
+        assertEquals(0, result.insertedCount());
+        assertEquals(0, result.updatedCount());
+        assertEquals(1, result.unchangedCount());
+    }
 }

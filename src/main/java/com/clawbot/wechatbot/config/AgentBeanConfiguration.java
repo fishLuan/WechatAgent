@@ -5,12 +5,26 @@ import com.clawbot.wechatbot.service.VisionService;
 import com.clawbot.wechatbot.service.agent.*;
 import com.clawbot.wechatbot.service.agent.guard.AgentExecutionGuard;
 import com.clawbot.wechatbot.service.agent.guard.AgentGuardPolicy;
+import com.clawbot.wechatbot.service.agent.validation.ToolResultValidator;
+import com.clawbot.wechatbot.service.agent.validation.ToolValidationPipeline;
+import com.clawbot.wechatbot.service.agent.acceptance.DefaultTaskAcceptanceEvaluator;
+import com.clawbot.wechatbot.service.agent.acceptance.TaskAcceptanceEvaluator;
+import com.clawbot.wechatbot.service.agent.replan.LlmTaskReplanner;
+import com.clawbot.wechatbot.service.agent.replan.PlanMutationApplier;
+import com.clawbot.wechatbot.service.agent.replan.PlanMutationValidator;
+import com.clawbot.wechatbot.service.agent.replan.TaskReplanner;
+import com.clawbot.wechatbot.service.agent.replan.AgentReplanPolicy;
+import com.clawbot.wechatbot.service.agent.reference.ReferencePolicy;
+import com.clawbot.wechatbot.service.agent.reference.ResultReferenceResolver;
 import com.clawbot.wechatbot.service.client.DeepSeekClient;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
 import com.clawbot.wechatbot.service.longform.LongFormGenerationPolicy;
 import com.clawbot.wechatbot.skills.SkillDefinitionLoader;
 import com.clawbot.wechatbot.skills.SkillExecutor;
 import com.clawbot.wechatbot.skills.SkillManager;
+import com.clawbot.wechatbot.skills.validation.CompositeTaskAcceptanceEvaluator;
+import com.clawbot.wechatbot.skills.validation.SkillResultValidator;
+import com.clawbot.wechatbot.skills.validation.SkillResultValidatorRegistry;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;
@@ -38,16 +52,92 @@ public class AgentBeanConfiguration {
     }
 
     @Bean
+    ToolValidationPipeline toolValidationPipeline(
+        ObjectMapper mapper, List<ToolResultValidator> validators, BotConfig config
+    ) {
+        return new ToolValidationPipeline(
+            mapper, validators, config.getAgentToolValidationMinConfidence());
+    }
+
+    @Bean
+    SkillResultValidatorRegistry skillResultValidatorRegistry(
+        List<SkillResultValidator> validators
+    ) {
+        return new SkillResultValidatorRegistry(validators);
+    }
+
+    @Bean
+    TaskAcceptanceEvaluator taskAcceptanceEvaluator(
+        ObjectMapper mapper, SkillManager skills,
+        SkillResultValidatorRegistry validators
+    ) {
+        return new CompositeTaskAcceptanceEvaluator(
+            new DefaultTaskAcceptanceEvaluator(mapper), skills, validators);
+    }
+
+    @Bean
+    TaskReplanner taskReplanner(
+        DeepSeekClient client, SkillManager skills
+    ) {
+        return new LlmTaskReplanner(client, skills);
+    }
+
+    @Bean
+    PlanMutationValidator planMutationValidator(
+        SkillManager skills, BotConfig config, ReferencePolicy referencePolicy
+    ) {
+        return new PlanMutationValidator(
+            skills,
+            config.getAgentReplanMaxMutations(),
+            config.getAgentReplanMaxGeneratedTasks(),
+            config.getAgentReplanMaxTotalTasks(),
+            referencePolicy);
+    }
+
+    @Bean
+    PlanMutationApplier planMutationApplier(PlanMutationValidator validator) {
+        return new PlanMutationApplier(validator);
+    }
+
+    @Bean
+    AgentReplanPolicy agentReplanPolicy(BotConfig config) {
+        return new AgentReplanPolicy(
+            config.isAgentReplanEnabled(),
+            config.getAgentReplanMaxCount(),
+            config.getAgentReplanMaxRetriesPerTask(),
+            config.getAgentReplanMaxTotalTaskExecutions(),
+            config.getAgentReplanMaxTotalTasks(),
+            Duration.ofSeconds(config.getAgentReplanTimeoutSeconds()));
+    }
+
+    @Bean
+    ReferencePolicy referencePolicy(BotConfig config) {
+        return new ReferencePolicy(
+            config.getAgentReferenceMaxPerTask(),
+            config.getAgentReferenceMaxDepth(),
+            config.getAgentReferenceMaxPathLength(),
+            config.getAgentReferenceMaxResolvedInputChars());
+    }
+
+    @Bean
+    ResultReferenceResolver resultReferenceResolver(
+        ObjectMapper mapper, ReferencePolicy policy
+    ) {
+        return new ResultReferenceResolver(mapper, policy);
+    }
+
+    @Bean
     DeepSeekChatService singleTaskChatService(
         DeepSeekClient client, FunctionToolRegistry registry, BotConfig config,
-        AgentExecutionGuard executionGuard
+        AgentExecutionGuard executionGuard,
+        ToolValidationPipeline validationPipeline
     ) {
         return new DeepSeekChatService(client, registry, config.getSystemPrompt(),
             config.getDeepSeekMaxToolRounds(), executionGuard,
             new LongFormGenerationPolicy(config.isLongFormEnabled(),
                 config.getLongFormMinTargetChars(), config.getLongFormMaxTargetChars(),
                 config.getLongFormTolerancePercent(), config.getLongFormMaxContinuationRounds(),
-                config.getLongFormMaxTotalChars()));
+                config.getLongFormMaxTotalChars()), validationPipeline);
     }
 
     @Bean
@@ -78,11 +168,18 @@ public class AgentBeanConfiguration {
     @Bean(destroyMethod = "close")
     AgentOrchestrator agentOrchestrator(
         DeepSeekChatService chat, TaskPlanner planner, List<AgentTaskHandler> handlers,
-        AgentRequestContextHolder context, BotConfig config
+        AgentRequestContextHolder context, BotConfig config,
+        TaskAcceptanceEvaluator acceptanceEvaluator,
+        TaskReplanner replanner,
+        PlanMutationApplier mutationApplier,
+        AgentReplanPolicy replanPolicy,
+        ResultReferenceResolver referenceResolver
     ) {
         return new AgentOrchestrator(chat, planner, handlers, config.isAgentEnabled(),
             config.getAgentMaxOuterRounds(), config.getAgentMaxTasksPerBatch(),
             config.getAgentMaxParallelism(),
-            Duration.ofSeconds(config.getAgentExecutionTimeoutSeconds()), context);
+            Duration.ofSeconds(config.getAgentExecutionTimeoutSeconds()), context,
+            acceptanceEvaluator, replanner, mutationApplier, replanPolicy,
+            referenceResolver);
     }
 }

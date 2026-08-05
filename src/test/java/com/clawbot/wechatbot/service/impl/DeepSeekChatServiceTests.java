@@ -79,6 +79,39 @@ class DeepSeekChatServiceTests {
     }
 
     @Test
+    void doesNotFeedMismatchedToolResultIntoFollowingSteps() throws Exception {
+        FakeDeepSeekClient client = new FakeDeepSeekClient();
+        client.enqueue(toolCallResponse(client.mapper()));
+        client.enqueue(textResponse(client.mapper(), "天气结果不可信，已停止生成行程。"));
+        FunctionTool weather = new FunctionTool() {
+            @Override public String name() { return "get_weather"; }
+            @Override public JsonNode definition() {
+                ObjectNode function = client.mapper().createObjectNode();
+                function.put("name", name());
+                ObjectNode definition = client.mapper().createObjectNode();
+                definition.put("type", "function");
+                definition.set("function", function);
+                return definition;
+            }
+            @Override public String execute(JsonNode arguments) {
+                return "{\"success\":true,\"query_city\":\"上海\","
+                    + "\"weather\":\"晴\"}";
+            }
+        };
+        DeepSeekChatService service = new DeepSeekChatService(
+            client, new FunctionToolRegistry(client.mapper(), List.of(weather)),
+            "测试系统提示词", 3, guard(client.mapper()));
+
+        String answer = service.chat("查询杭州天气并生成行程", "");
+
+        assertEquals("天气结果不可信，已停止生成行程。", answer);
+        String messages = client.messagesAtCall(2).toString();
+        assertTrue(messages.contains("TOOL_RESULT_ARGUMENT_MISMATCH"));
+        assertTrue(messages.contains("discarded_untrusted_result"));
+        assertTrue(!messages.contains("上海"));
+    }
+
+    @Test
     void blocksRepeatedSuccessfulToolCallAndForcesFinalResponse() throws Exception {
         AtomicInteger executions = new AtomicInteger();
         FakeDeepSeekClient client = new FakeDeepSeekClient();

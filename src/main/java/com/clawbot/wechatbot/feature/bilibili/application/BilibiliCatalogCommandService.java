@@ -1,6 +1,5 @@
 package com.clawbot.wechatbot.feature.bilibili.application;
 
-import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
 import com.clawbot.wechatbot.feature.bilibili.messaging.BilibiliMessageFormatter;
 import com.clawbot.wechatbot.feature.bilibili.messaging.PendingSearchResultStore;
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
@@ -9,17 +8,12 @@ import com.clawbot.wechatbot.feature.bilibili.model.RecommendedContent;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionResult;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliRecommendationService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.RecommendationHistoryService;
-import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
-import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentCrawler;
-import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliContentRepository;
 import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Locale;
-import java.util.ArrayList;
-import java.util.Comparator;
 
 /** 编排作品搜索、搜索结果选择、订阅和观看状态标记。 */
 @Service
@@ -27,30 +21,21 @@ public final class BilibiliCatalogCommandService {
     private final BilibiliSubscriptionService subscriptions;
     private final BilibiliRecommendationService recommendations;
     private final RecommendationHistoryService history;
-    private final BilibiliContentSource contentSource;
-    private final BilibiliProperties properties;
+    private final BilibiliTitleSearchService titleSearch;
     private final PendingSearchResultStore pendingSearchResults;
-    private final BilibiliContentRepository contentRepository;
-    private final BilibiliContentCrawler contentCrawler;
 
     public BilibiliCatalogCommandService(
         @Lazy BilibiliSubscriptionService subscriptions,
         @Lazy BilibiliRecommendationService recommendations,
         RecommendationHistoryService history,
-        BilibiliContentSource contentSource,
-        BilibiliProperties properties,
-        PendingSearchResultStore pendingSearchResults,
-        BilibiliContentRepository contentRepository,
-        BilibiliContentCrawler contentCrawler
+        BilibiliTitleSearchService titleSearch,
+        PendingSearchResultStore pendingSearchResults
     ) {
         this.subscriptions = subscriptions;
         this.recommendations = recommendations;
         this.history = history;
-        this.contentSource = contentSource;
-        this.properties = properties;
+        this.titleSearch = titleSearch;
         this.pendingSearchResults = pendingSearchResults;
-        this.contentRepository = contentRepository;
-        this.contentCrawler = contentCrawler;
     }
 
     public String subscribeByIndex(String userId, Integer index, ContentType ignoredType) {
@@ -140,65 +125,7 @@ public final class BilibiliCatalogCommandService {
 
     private List<BilibiliContent> search(String title) throws Exception {
         if (!hasText(title)) return List.of();
-        String keyword = title.trim();
-        int limit = properties.getSearchResultCount();
-        List<BilibiliContent> local = searchLocal(keyword, limit);
-        if (!local.isEmpty()) {
-            System.out.println("[BILIBILI-SEARCH] keyword=" + keyword
-                + " source=MONGO matches=" + local.size());
-            return local;
-        }
-        try {
-            List<BilibiliContent> online = contentSource.searchByTitle(keyword, limit);
-            List<BilibiliContent> saved = contentCrawler.storeDiscovered(online);
-            System.out.println("[BILIBILI-SEARCH] keyword=" + keyword
-                + " source=WBI matches=" + online.size() + " stored=" + saved.size());
-            return saved.isEmpty() ? online : saved;
-        } catch (Exception error) {
-            throw new IllegalStateException(
-                "本地没有匹配作品，B站在线搜索暂时受限，请稍后再试", error);
-        }
-    }
-
-    private List<BilibiliContent> searchLocal(String keyword, int limit) {
-        List<BilibiliContent> direct = contentRepository
-            .findTop20ByTitleContainingIgnoreCaseOrderByRatingDesc(keyword);
-        if (!direct.isEmpty()) return direct.stream().limit(limit).toList();
-
-        String requested = normalizedTitle(keyword);
-        List<BilibiliContent> similar = new ArrayList<>();
-        for (BilibiliContent content : contentRepository.findAll()) {
-            if (content.getContentType() == ContentType.UPLOADER) continue;
-            String candidate = normalizedTitle(content.getTitle());
-            if (candidate.contains(requested) || requested.contains(candidate)
-                || similarity(requested, candidate) >= 0.72) {
-                similar.add(content);
-            }
-        }
-        similar.sort(Comparator
-            .comparingDouble((BilibiliContent item) ->
-                similarity(requested, normalizedTitle(item.getTitle()))).reversed()
-            .thenComparing(item -> item.getRating() == null ? 0.0 : item.getRating(),
-                Comparator.reverseOrder()));
-        return similar.stream().limit(limit).toList();
-    }
-
-    private double similarity(String left, String right) {
-        if (left.isEmpty() || right.isEmpty()) return 0.0;
-        int[] previous = new int[right.length() + 1];
-        for (int j = 0; j <= right.length(); j++) previous[j] = j;
-        for (int i = 1; i <= left.length(); i++) {
-            int[] current = new int[right.length() + 1];
-            current[0] = i;
-            for (int j = 1; j <= right.length(); j++) {
-                int cost = left.charAt(i - 1) == right.charAt(j - 1) ? 0 : 1;
-                current[j] = Math.min(Math.min(current[j - 1] + 1, previous[j] + 1),
-                    previous[j - 1] + cost);
-            }
-            previous = current;
-        }
-        return 1.0 - (double) previous[right.length()]
-            / Math.max(left.length(), right.length());
+        return titleSearch.search(title.trim());
     }
 
     private BilibiliContent uniqueExactMatch(String requestedTitle, List<BilibiliContent> matches) {

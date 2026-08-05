@@ -12,37 +12,36 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ThreadLocalRandom;
 
 /** 带超时、重试和基础限流的 B 站公开页面/API 客户端。 */
 @Component
 public class BilibiliHttpClient {
     private static final String BILIBILI_HOME = "https://www.bilibili.com";
-    private static final String USER_AGENT =
+    private static final String DEFAULT_USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
-    private static final long MIN_REQUEST_GAP_MILLIS = 1_500;
-    private static final long REQUEST_JITTER_MILLIS = 1_500;
-    private static final long BLOCKED_COOLDOWN_MILLIS = Duration.ofMinutes(10).toMillis();
 
     private final HttpClient httpClient;
     private final Duration requestTimeout;
     private final int maxRetries;
+    private final String configuredCookie;
+    private final String configuredUserAgent;
+    private final Duration searchCircuitBreakerDuration;
+    private final long minRequestGapMillis;
     private boolean anonymousSessionInitialized;
     private long lastRequestAt;
-    private final ConcurrentHashMap<String, Long> blockedUntil = new ConcurrentHashMap<>();
+    private volatile long searchCircuitOpenUntil;
 
     @Autowired
     public BilibiliHttpClient(BilibiliProperties properties) {
         this(
-            HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(properties.getRequestTimeoutSeconds()))
-                .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ORIGINAL_SERVER))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build(),
+            buildHttpClient(properties),
             Duration.ofSeconds(properties.getRequestTimeoutSeconds()),
-            properties.getMaxRetries()
+            properties.getMaxRetries(),
+            properties.getCookie(),
+            properties.getUserAgent(),
+            Duration.ofMinutes(properties.getSearchCircuitBreakerMinutes()),
+            properties.getMinRequestGapMillis()
         );
     }
 
@@ -51,17 +50,42 @@ public class BilibiliHttpClient {
         Duration requestTimeout,
         int maxRetries
     ) {
+        this(httpClient, requestTimeout, maxRetries, "", DEFAULT_USER_AGENT,
+            Duration.ofMinutes(30), 350);
+    }
+
+    protected BilibiliHttpClient(
+        HttpClient httpClient,
+        Duration requestTimeout,
+        int maxRetries,
+        String configuredCookie,
+        Duration searchCircuitBreakerDuration
+    ) {
+        this(httpClient, requestTimeout, maxRetries, configuredCookie,
+            DEFAULT_USER_AGENT,
+            searchCircuitBreakerDuration, 350);
+    }
+
+    protected BilibiliHttpClient(
+        HttpClient httpClient,
+        Duration requestTimeout,
+        int maxRetries,
+        String configuredCookie,
+        String configuredUserAgent,
+        Duration searchCircuitBreakerDuration,
+        long minRequestGapMillis
+    ) {
         this.httpClient = httpClient;
         this.requestTimeout = requestTimeout;
         this.maxRetries = Math.max(0, maxRetries);
+        this.configuredCookie = sanitizeCookie(configuredCookie);
+        this.configuredUserAgent = sanitizeHeader(
+            configuredUserAgent, "BILIBILI_USER_AGENT");
+        this.searchCircuitBreakerDuration = searchCircuitBreakerDuration;
+        this.minRequestGapMillis = Math.max(100, minRequestGapMillis);
     }
 
     public String getText(String url) throws Exception {
-        String endpoint = endpointKey(url);
-        Long cooldownUntil = blockedUntil.get(endpoint);
-        if (cooldownUntil != null && cooldownUntil > System.currentTimeMillis()) {
-            throw new IllegalStateException("B站接口处于熔断冷却期: " + endpoint);
-        }
         Exception lastFailure = null;
         for (int attempt = 0; attempt <= maxRetries; attempt++) {
             throttle();
@@ -71,21 +95,31 @@ public class BilibiliHttpClient {
                     request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
                 int status = response.statusCode();
                 if (status >= 200 && status < 300) {
-                    blockedUntil.remove(endpoint);
+                    if (isPermissionLimitedBody(response.body())) {
+                        throw new BilibiliAccessLimitedException(
+                            "B站接口触发访问限制（412/风控）");
+                    }
+                    if (isSearchUrl(url) && !looksLikeJson(response.body())) {
+                        throw new IllegalStateException(
+                            "B站搜索接口返回非JSON响应，HTTP=" + status
+                                + "，Content-Type=" + contentType(response)
+                                + "，响应类型=" + responseType(response.body()));
+                    }
                     return response.body();
                 }
                 if (status == 403 || status == 412 || status == 429) {
-                    blockedUntil.put(endpoint,
-                        System.currentTimeMillis() + BLOCKED_COOLDOWN_MILLIS);
-                    throw new PermissionLimitedException("B站请求受限，HTTP " + status);
+                    throw new BilibiliAccessLimitedException(
+                        "B站接口触发访问限制，HTTP " + status);
                 }
-                if (status < 500) {
+                if (status != 429 && status < 500) {
                     throw new IllegalStateException("B站请求失败，HTTP " + status);
                 }
                 lastFailure = new IllegalStateException("B站请求失败，HTTP " + status);
             } catch (Exception e) {
+                if (e instanceof BilibiliAccessLimitedException limited) {
+                    throw limited;
+                }
                 lastFailure = e;
-                if (e instanceof PermissionLimitedException) throw e;
             }
             Thread.sleep(Math.min(1000L * (attempt + 1), 3000L));
         }
@@ -93,12 +127,19 @@ public class BilibiliHttpClient {
     }
 
     public String getAnonymousSearchText(String url) throws Exception {
+        rejectWhenSearchCircuitIsOpen();
         initializeAnonymousSession();
         try {
-            String body = getText(url);
-            return isPermissionLimitedBody(body) ? null : body;
+            return getText(url);
         } catch (Exception e) {
-            if (isPermissionLimitedError(e)) return null;
+            if (e instanceof BilibiliAccessLimitedException
+                || isPermissionLimitedError(e)) {
+                System.err.println("[BILIBILI] 搜索请求触发明确访问限制："
+                    + e.getClass().getSimpleName() + "，原因=" + e.getMessage());
+                openSearchCircuit();
+                throw new BilibiliAccessLimitedException(
+                    "B站实时搜索暂时受限，已暂停请求以避免继续触发风控", e);
+            }
             throw e;
         }
     }
@@ -116,20 +157,26 @@ public class BilibiliHttpClient {
     }
 
     private HttpRequest browserGet(String url) {
-        return HttpRequest.newBuilder()
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
             .uri(URI.create(url))
             .timeout(requestTimeout)
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", configuredUserAgent)
             .header("Accept", "application/json,text/html;q=0.9,*/*;q=0.8")
             .header("Accept-Language", "zh-CN,zh;q=0.9")
             .header("Referer", "https://www.bilibili.com")
-            .header("Origin", "https://www.bilibili.com")
-            .GET()
-            .build();
+            .header("Origin", "https://www.bilibili.com");
+        if (!configuredCookie.isBlank()) {
+            builder.header("Cookie", configuredCookie);
+        }
+        return builder.GET().build();
     }
 
     private synchronized void initializeAnonymousSession() {
         if (anonymousSessionInitialized) return;
+        if (!configuredCookie.isBlank()) {
+            anonymousSessionInitialized = true;
+            return;
+        }
         try {
             throttle();
             HttpRequest request = browserGet(BILIBILI_HOME);
@@ -146,7 +193,37 @@ public class BilibiliHttpClient {
         if (body == null || body.isBlank()) return true;
         return body.contains("\"code\":-412")
             || body.contains("\"code\":-352")
-            || body.contains("\"code\":-403");
+            || body.contains("\"code\":-403")
+            || body.contains("\"errcode\":-14")
+            || body.toLowerCase().contains("session timeout")
+            || body.contains("错误号: 412")
+            || body.contains("错误：412")
+            || body.contains("security control policy");
+    }
+
+    private boolean isSearchUrl(String url) {
+        return url != null && url.contains("/x/web-interface/search/type");
+    }
+
+    private boolean looksLikeJson(String body) {
+        if (body == null) return false;
+        String trimmed = body.stripLeading();
+        return trimmed.startsWith("{") || trimmed.startsWith("[");
+    }
+
+    private String responseType(String body) {
+        if (body == null || body.isBlank()) return "EMPTY";
+        String trimmed = body.stripLeading().toLowerCase();
+        if (trimmed.startsWith("<!doctype html") || trimmed.startsWith("<html")) {
+            return "HTML";
+        }
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) return "JSON";
+        return "TEXT";
+    }
+
+    private String contentType(HttpResponse<String> response) {
+        if (response.headers() == null) return "unknown";
+        return response.headers().firstValue("Content-Type").orElse("unknown");
     }
 
     private boolean isPermissionLimitedError(Exception e) {
@@ -159,25 +236,52 @@ public class BilibiliHttpClient {
 
     private synchronized void throttle() throws InterruptedException {
         long now = System.currentTimeMillis();
-        long targetGap = MIN_REQUEST_GAP_MILLIS
-            + ThreadLocalRandom.current().nextLong(REQUEST_JITTER_MILLIS + 1);
-        long wait = targetGap - (now - lastRequestAt);
+        long wait = minRequestGapMillis - (now - lastRequestAt);
         if (wait > 0) Thread.sleep(wait);
         lastRequestAt = System.currentTimeMillis();
     }
 
-    private String endpointKey(String url) {
-        try {
-            URI uri = URI.create(url);
-            return uri.getHost() + uri.getPath();
-        } catch (Exception ignored) {
-            return url;
-        }
+    private void rejectWhenSearchCircuitIsOpen() {
+        long remaining = searchCircuitOpenUntil - System.currentTimeMillis();
+        if (remaining <= 0) return;
+        long minutes = Math.max(1, (remaining + 59_999L) / 60_000L);
+        throw new BilibiliAccessLimitedException(
+            "B站实时搜索处于风控熔断期，约 " + minutes + " 分钟后重试");
     }
 
-    private static final class PermissionLimitedException extends IllegalStateException {
-        private PermissionLimitedException(String message) {
-            super(message);
+    private void openSearchCircuit() {
+        searchCircuitOpenUntil = System.currentTimeMillis()
+            + searchCircuitBreakerDuration.toMillis();
+    }
+
+    private static String sanitizeCookie(String cookie) {
+        if (cookie == null || cookie.isBlank()) return "";
+        String value = cookie.trim();
+        if (value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0) {
+            throw new IllegalArgumentException("BILIBILI_COOKIE 不能包含换行符");
         }
+        return value;
+    }
+
+    private static String sanitizeHeader(String value, String name) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(name + " 不能为空");
+        }
+        String sanitized = value.trim();
+        if (sanitized.indexOf('\r') >= 0 || sanitized.indexOf('\n') >= 0) {
+            throw new IllegalArgumentException(name + " 不能包含换行符");
+        }
+        return sanitized;
+    }
+
+    private static HttpClient buildHttpClient(BilibiliProperties properties) {
+        HttpClient.Builder builder = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(properties.getRequestTimeoutSeconds()))
+            .followRedirects(HttpClient.Redirect.NORMAL);
+        if (properties.getCookie() == null || properties.getCookie().isBlank()) {
+            builder.cookieHandler(
+                new CookieManager(null, CookiePolicy.ACCEPT_ORIGINAL_SERVER));
+        }
+        return builder.build();
     }
 }

@@ -29,9 +29,12 @@ public final class SkillTaskHandler implements AgentTaskHandler {
         throws Exception {
         SkillResult result = skills.execute(task.skillName(), new SkillRequest(
             requestContextHolder.currentUserId(), task.instruction(),
-            context.history(), context.supportingContext(), context.dependencyText()));
+            context.history(), context.supportingContext(), context.dependencyText(),
+            context.resolvedInput(), context.lineage()));
         return result.success()
-            ? AgentTaskResult.success(task, result.text(), result.attachments())
+            ? (result.hasMultipleTexts()
+                ? AgentTaskResult.successMulti(task, result.texts())
+                : AgentTaskResult.success(task, result.text(), result.attachments()))
             : AgentTaskResult.failure(task, result.text());
     }
 }

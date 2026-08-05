@@ -7,6 +7,7 @@ import com.clawbot.wechatbot.tools.bazitool.BaziFortuneTool;
 import com.clawbot.wechatbot.tools.calculatezodiacinfotool.CalculateZodiacInfoTool;
 import com.clawbot.wechatbot.tools.currenttimetool.CurrentTimeTool;
 import com.clawbot.wechatbot.tools.exchangeratetool.ExchangeRateTool;
+import com.clawbot.wechatbot.tools.getrouteweathertool.GetRouteWeatherTool;
 import com.clawbot.wechatbot.tools.idcardtool.IdCardTool;
 import com.clawbot.wechatbot.tools.pathplantool.PathPlanTool;
 import com.clawbot.wechatbot.tools.searchWeatherTool.AmapWeatherTool;
@@ -35,6 +36,13 @@ public class ToolBeanConfiguration {
         return new AmapWeatherTool(
             config.getAmapWeatherApiKey(), config.getAmapWeatherEndpoint(),
             config.getAmapConnectTimeoutSeconds(), config.getAmapRequestTimeoutSeconds());
+    }
+
+    @Bean
+    GetRouteWeatherTool getRouteWeatherTool(PathPlanTool pathPlanTool,
+                                            AmapWeatherTool amapWeatherTool,
+                                            ObjectMapper mapper) {
+        return new GetRouteWeatherTool(pathPlanTool, amapWeatherTool, mapper);
     }
 
     @Bean
@@ -93,7 +101,12 @@ public class ToolBeanConfiguration {
     @Bean CalculateZodiacInfoTool calculateZodiacInfoTool(ObjectMapper mapper) {
         return new CalculateZodiacInfoTool(mapper);
     }
-    @Bean FunctionToolRegistry functionToolRegistry(ObjectMapper mapper, List<FunctionTool> tools) {
-        return new FunctionToolRegistry(mapper, tools);
+    @Bean FunctionToolRegistry functionToolRegistry(
+        ObjectMapper mapper, List<FunctionTool> tools,
+        com.clawbot.wechatbot.confirmation.ConfirmationService confirmations,
+        com.clawbot.wechatbot.confirmation.RiskPolicy riskPolicy,
+        com.clawbot.wechatbot.service.agent.AgentRequestContextHolder requestContextHolder
+    ) {
+        return new FunctionToolRegistry(mapper, tools, confirmations, riskPolicy, requestContextHolder);
     }
 }
