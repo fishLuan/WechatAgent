@@ -53,16 +53,19 @@ public final class KnowledgeAddHandler implements ExcelOperationHandler {
             return OperationResult.failure(
                 "❌ 缺少知识内容，示例：添加知识：字段映射 营收→营业收入");
         }
-        // 字段映射存标准列名；业务规则存规则文本；操作示例/模板存示例内容
+        // 字段映射存标准列名；业务规则存规则文本；操作示例/模板存示例内容；同触发词重复添加时更新既有条目
+        ExcelRagService.AddResult result;
         if (CATEGORY_FIELD_MAPPING.equals(category)) {
-            excelRagService.add(category, keywords, value, null, null);
+            result = excelRagService.upsert(category, keywords, value, null, null);
         } else if (CATEGORY_BUSINESS_RULE.equals(category)) {
-            excelRagService.add(category, keywords, null, value, null);
+            result = excelRagService.upsert(category, keywords, null, value, null);
         } else {
-            excelRagService.add(category, keywords, null, null, value);
+            result = excelRagService.upsert(category, keywords, null, null, value);
         }
-        return OperationResult.success("✅ 已添加知识：" + ExcelRagKnowledge.labelOf(category)
-            + " " + String.join("、", keywords) + "→" + value);
+        return OperationResult.success(
+            (result.updated() ? "✅ 已更新知识：" : "✅ 已添加知识：")
+                + ExcelRagKnowledge.labelOf(category)
+                + " " + String.join("、", keywords) + "→" + value);
     }
 
     /** 分隔符定位：箭头或等号，取更靠左的一个（「营收→营业收入」取箭头，「毛利润=…」取等号）。 */

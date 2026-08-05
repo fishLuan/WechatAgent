@@ -548,6 +548,8 @@ class ExcelOperationSkillTests {
         ExcelService excelService = mock(ExcelService.class);
         when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(existingTable());
         ExcelRagService ragService = mock(ExcelRagService.class);
+        when(ragService.upsert(anyString(), anyList(), any(), any(), any()))
+            .thenReturn(new ExcelRagService.AddResult(null, false));
         ExcelOperationSkill skill = new ExcelOperationSkill(excelService, ragService);
 
         SkillResult result = skill.execute(definition,
@@ -559,7 +561,7 @@ class ExcelOperationSkillTests {
         assertTrue(result.text().contains("营业额→营业收入"));
         // 纯文字回复，不导出附件、不保存表格
         assertTrue(result.attachments().isEmpty());
-        verify(ragService).add(eq("FIELD_MAPPING"), anyList(), eq("营业收入"), isNull(), isNull());
+        verify(ragService).upsert(eq("FIELD_MAPPING"), anyList(), eq("营业收入"), isNull(), isNull());
         verify(excelService, never()).save(any());
     }
 

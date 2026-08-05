@@ -20,9 +20,9 @@ public final class KnowledgeAliasResolver {
     public record ResolvedPlan(ExcelPlan plan, List<String> notes) {
     }
 
-    /** 需要别名解析的列类参数 key（与校验器的列存在性校验保持一致）。 */
+    /** 需要别名解析的列类参数 key（覆盖排序/分组/汇总/图表等操作的列参数）。 */
     private static final List<String> COLUMN_PARAM_KEYS =
-        List.of("column", "groupColumn", "valueColumn");
+        List.of("column", "groupColumn", "valueColumn", "categoryColumn");
 
     private final ExcelRagService excelRagService;
 

@@ -75,6 +75,22 @@ class KnowledgeAliasResolverTests {
         assertEquals(List.of("📚 已按知识库将「营业额」映射为「营业收入」"), resolved.notes());
     }
 
+    /** CHART 的分类列同样走知识库别名解析（valueColumn 已覆盖）。 */
+    @Test
+    void resolvesChartCategoryColumnAlias() {
+        when(ragService.resolveColumnAlias("营业额")).thenReturn("营业收入");
+        ExcelPlan plan = new ExcelPlan("user-1", List.of(
+            op(ExcelOperationType.CHART, Map.of(
+                "chartType", "BAR", "categoryColumn", "营业额", "valueColumn", "销售额"))));
+
+        KnowledgeAliasResolver.ResolvedPlan resolved = resolver.resolve(plan, table());
+
+        ExcelOperation resolvedOp = resolved.plan().operations().get(0);
+        assertEquals("营业收入", resolvedOp.param("categoryColumn"));
+        assertEquals("销售额", resolvedOp.param("valueColumn"));
+        assertEquals(List.of("📚 已按知识库将「营业额」映射为「营业收入」"), resolved.notes());
+    }
+
     @Test
     void withoutRagServicePlanIsUnchanged() {
         KnowledgeAliasResolver nullResolver = new KnowledgeAliasResolver(null);

@@ -117,6 +117,8 @@ class ExcelOperationExecutorTests {
     @Test
     void knowledgeAddHandlerWritesToRagServiceWithoutAttachment() throws Exception {
         ExcelTable table = existingTable();
+        when(ragService.upsert(anyString(), anyList(), any(), any(), any()))
+            .thenReturn(new ExcelRagService.AddResult(null, false));
 
         OperationResult result = executor.execute(plan(
             op(1, ExcelOperationType.KNOWLEDGE_ADD,
@@ -126,7 +128,7 @@ class ExcelOperationExecutorTests {
         assertTrue(result.text().contains("已添加知识"));
         assertTrue(result.text().contains("字段映射"));
         assertNull(result.attachment());
-        verify(ragService).add(eq("FIELD_MAPPING"), anyList(), eq("营业收入"), isNull(), isNull());
+        verify(ragService).upsert(eq("FIELD_MAPPING"), anyList(), eq("营业收入"), isNull(), isNull());
         verify(excelService, never()).save(table);
     }
 

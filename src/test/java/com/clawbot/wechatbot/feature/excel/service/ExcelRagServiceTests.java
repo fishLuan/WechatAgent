@@ -79,6 +79,32 @@ class ExcelRagServiceTests {
     }
 
     @Test
+    void upsertUpdatesExistingEntryInsteadOfDuplicating() {
+        FakeRagRepository fake = new FakeRagRepository();
+        ExcelRagService service = new ExcelRagService(fake);
+        service.add(CATEGORY_FIELD_MAPPING, List.of("营收", "营业收入"), "营业收入", null, null);
+
+        ExcelRagService.AddResult result = service.upsert(CATEGORY_FIELD_MAPPING,
+            List.of("营收", "营业额"), "新标准列", null, null);
+
+        assertTrue(result.updated());
+        assertEquals(1, fake.count());
+        assertEquals("新标准列", service.resolveColumnAlias("营收"));
+    }
+
+    @Test
+    void upsertCreatesNewEntryWhenKeywordAbsent() {
+        FakeRagRepository fake = new FakeRagRepository();
+        ExcelRagService service = new ExcelRagService(fake);
+
+        ExcelRagService.AddResult result = service.upsert(CATEGORY_FIELD_MAPPING,
+            List.of("营业额"), "营业收入", null, null);
+
+        assertFalse(result.updated());
+        assertEquals(1, fake.count());
+    }
+
+    @Test
     void listReturnsNewestFirstWithLimit() {
         FakeRagRepository fake = new FakeRagRepository();
         ExcelRagService service = new ExcelRagService(fake);
@@ -125,6 +151,18 @@ class ExcelRagServiceTests {
         assertEquals(5, fake.count());
     }
 
+    @Test
+    void deleteByKeywordUsesExactMatchOnly() {
+        FakeRagRepository fake = new FakeRagRepository();
+        ExcelRagService service = seededService(fake);
+        // 「销售」不是任何触发词本身，不应误删「销售额/销售金额」条目
+        assertFalse(service.deleteByKeyword("销售"));
+        assertEquals(5, fake.count());
+        // 精确触发词「销售额」删除对应条目
+        assertTrue(service.deleteByKeyword("销售额"));
+        assertEquals(4, fake.count());
+    }
+
     // ============================
     // 列别名解析
     // ============================
@@ -138,6 +176,25 @@ class ExcelRagServiceTests {
         assertEquals("营业收入", service.resolveColumnAlias("收入"));
         assertEquals("销售额", service.resolveColumnAlias("金额"));
         assertEquals("销售额", service.resolveColumnAlias("销售额"));
+    }
+
+    @Test
+    void resolveColumnAliasPrefersShortestContainingKeyword() {
+        ExcelRagService service = seededService(new FakeRagRepository());
+        // 「销售」同时被「销售额」(3字)与「销售收入」(4字)包含 → 应命中「销售额」
+        assertEquals("销售额", service.resolveColumnAlias("销售"));
+        // 「收入」只被「营业收入」「销售收入」包含 → 按插入顺序取「营业收入」
+        assertEquals("营业收入", service.resolveColumnAlias("收入"));
+    }
+
+    @Test
+    void findRulesHitsBusinessRuleByKeyword() {
+        ExcelRagService service = seededService(new FakeRagRepository());
+
+        List<ExcelRagKnowledge> hits = service.findRules("帮我算一下毛利润");
+
+        assertFalse(hits.isEmpty());
+        assertEquals("毛利润 = 营业收入 - 营业成本", hits.get(0).getRule());
     }
 
     @Test

@@ -6,6 +6,7 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 import static com.clawbot.wechatbot.feature.excel.model.ExcelRagKnowledge.CATEGORY_BUSINESS_RULE;
@@ -48,6 +49,36 @@ public class ExcelRagService {
             new ExcelRagKnowledge(category, keywords, standardField, rule, example));
     }
 
+    /** 添加知识结果：保存后的实体 + 是否更新了既有条目。 */
+    public record AddResult(ExcelRagKnowledge knowledge, boolean updated) {
+    }
+
+    /**
+     * 添加或更新知识：同类别下首个触发词已存在时更新该条目（避免重复堆积），否则新增。
+     * 更新时以新内容整体替换，并保留原创建时间。
+     */
+    public AddResult upsert(String category, List<String> keywords, String standardField,
+                            String rule, String example) {
+        if (keywords == null || keywords.isEmpty()) {
+            throw new IllegalArgumentException("知识触发词不能为空");
+        }
+        String first = keywords.get(0);
+        for (ExcelRagKnowledge existing : repository.findAll()) {
+            if (!category.equals(existing.getCategory())) {
+                continue;
+            }
+            if (existing.getKeywords().contains(first)) {
+                existing.setKeywords(keywords);
+                existing.setStandardField(standardField);
+                existing.setRule(rule);
+                existing.setExample(example);
+                return new AddResult(repository.save(existing), true);
+            }
+        }
+        return new AddResult(repository.save(
+            new ExcelRagKnowledge(category, keywords, standardField, rule, example)), false);
+    }
+
     /** 最近若干条知识（最新在前）。 */
     public List<ExcelRagKnowledge> list(int limit) {
         return repository.findAllByOrderByCreatedAtDesc().stream().limit(limit).toList();
@@ -58,40 +89,51 @@ public class ExcelRagService {
         return repository.count();
     }
 
-    /** 删除触发词命中该关键词的知识，返回是否删除了条目。 */
+    /**
+     * 删除触发词**完全等于** keyword 的知识（精确匹配，避免"销售"误删"销售额"条目）；
+     * 返回是否删除了条目。
+     */
     public boolean deleteByKeyword(String keyword) {
-        List<ExcelRagKnowledge> matched = repository.findByKeywordsContaining(keyword);
-        if (matched.isEmpty()) {
+        List<ExcelRagKnowledge> exact = repository.findByKeywordsContaining(keyword).stream()
+            .filter(knowledge -> knowledge.getKeywords().contains(keyword))
+            .toList();
+        if (exact.isEmpty()) {
             return false;
         }
-        repository.deleteAll(matched);
+        repository.deleteAll(exact);
         return true;
     }
 
     /**
-     * 列别名解析：遍历字段映射知识，触发词与 term 相等或互相包含时返回其标准列名；
+     * 列别名解析：精确匹配优先；互相包含时取**最短**触发词（"销售"命中"销售额"而非"销售收入"）；
      * 未命中返回 null（供计划执行前把别名替换为表内真实列名）。
      */
     public String resolveColumnAlias(String term) {
         if (term == null || term.isBlank()) {
             return null;
         }
+        String best = null;
+        int bestScore = Integer.MAX_VALUE;
         for (ExcelRagKnowledge knowledge : repository.findAll()) {
             if (!CATEGORY_FIELD_MAPPING.equals(knowledge.getCategory())) {
                 continue;
             }
-            for (String keyword : knowledge.getKeywords()) {
-                if (matches(keyword, term)) {
-                    return knowledge.getStandardField();
-                }
+            String match = bestKeywordMatch(knowledge.getKeywords(), term);
+            if (match == null) {
+                continue;
+            }
+            int score = match.equals(term) ? 0 : match.length();
+            if (score < bestScore) {
+                bestScore = score;
+                best = knowledge.getStandardField();
             }
         }
-        return null;
+        return best;
     }
 
     /**
-     * 规则命中：返回触发词与匹配文本命中（互相包含）的非字段映射知识（业务规则/操作示例），
-     * 供成功回复前标注。
+     * 规则命中：返回触发词与匹配文本命中的非字段映射知识（业务规则/操作示例），
+     * 精确命中优先、其次按触发词长度排序，供成功回复前标注。
      */
     public List<ExcelRagKnowledge> findRules(String text) {
         if (text == null || text.isBlank()) {
@@ -102,18 +144,28 @@ public class ExcelRagService {
             if (CATEGORY_FIELD_MAPPING.equals(knowledge.getCategory())) {
                 continue;
             }
-            for (String keyword : knowledge.getKeywords()) {
-                if (matches(keyword, text)) {
-                    hits.add(knowledge);
-                    break;
-                }
+            if (bestKeywordMatch(knowledge.getKeywords(), text) != null) {
+                hits.add(knowledge);
             }
         }
+        // 精确命中（触发词=文本）排在包含命中之前；同级别保持原顺序
+        hits.sort(Comparator.comparingInt(
+            knowledge -> bestKeywordMatch(knowledge.getKeywords(), text).equals(text) ? 0 : 1));
         return hits;
     }
 
-    /** 包含匹配：相等或互相包含（与列定位的模糊匹配口径一致）。 */
-    private static boolean matches(String a, String b) {
-        return a.equals(b) || a.contains(b) || b.contains(a);
+    /** 取最佳命中触发词：精确匹配优先，其次互相包含中较短者（"销售"倾向"销售额"）；无命中返回 null。 */
+    private static String bestKeywordMatch(List<String> keywords, String term) {
+        String best = null;
+        for (String keyword : keywords) {
+            if (keyword.equals(term)) {
+                return keyword; // 精确最优
+            }
+            if ((keyword.contains(term) || term.contains(keyword))
+                && (best == null || keyword.length() < best.length())) {
+                best = keyword;
+            }
+        }
+        return best;
     }
 }
