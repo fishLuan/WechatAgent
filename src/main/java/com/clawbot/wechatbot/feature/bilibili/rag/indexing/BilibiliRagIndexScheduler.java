@@ -22,7 +22,7 @@ public class BilibiliRagIndexScheduler {
 
     @Scheduled(
         initialDelayString = "PT45S",
-        fixedDelayString = "#{@bilibiliProperties.checkIntervalMinutes * 60000}"
+        fixedDelayString = "#{@bilibiliProperties.subscriptionCheckIntervalMinutes * 60000}"
     )
     public void synchronizeIndex() {
         System.out.println("[BILIBILI-RAG] 开始同步向量索引...");
