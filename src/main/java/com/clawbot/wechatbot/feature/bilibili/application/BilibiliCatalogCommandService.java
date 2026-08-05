@@ -77,6 +77,14 @@ public final class BilibiliCatalogCommandService {
         }
     }
 
+    public String showSearchResultByIndex(String userId, int index) {
+        if (index < 1) return "❌ 作品编号不正确。";
+        BilibiliContent item = pendingSearchResults.findByItemNumber(userId, index);
+        if (item == null) return "❌ 找不到第 " + index + " 个影视结果，请重新搜索作品。";
+        return BilibiliMessageFormatter.formatSearchResults(
+            item.getTitle(), List.of(item));
+    }
+
     public String markByIndex(String userId, Integer index, String state) {
         if (index == null || index < 1) return "❌ 要标记的编号不正确。";
         RecommendedContent item = recommendations.findPendingItem(userId, index);

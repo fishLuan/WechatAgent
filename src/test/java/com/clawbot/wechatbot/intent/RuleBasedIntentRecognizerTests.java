@@ -22,7 +22,7 @@ class RuleBasedIntentRecognizerTests {
     @Test
     void recognizesSearchUrlAndIndexIntents() {
         assertEquals(
-            IntentType.BILIBILI_SEARCH_TITLE,
+            IntentType.CONTENT_SEARCH_AMBIGUOUS,
             recognizer.recognize("搜索 老友记").type());
         assertEquals(
             IntentType.BILIBILI_SUBSCRIBE_URL,
@@ -74,6 +74,20 @@ class RuleBasedIntentRecognizerTests {
     @Test
     void doesNotTreatGenericViewingRequestAsBilibiliFeedback() {
         assertFalse(recognizer.recognize("我想看杭州天气").isBilibiliIntent());
-        assertFalse(recognizer.recognize("我想看一些电影").isBilibiliIntent());
+        assertTrue(recognizer.recognize("我想看一些电影").isBilibiliIntent());
+    }
+
+    @Test
+    void separatesBookAndVideoDomains() {
+        assertEquals(IntentType.WEREAD_QUERY,
+            recognizer.recognize("帮我搜一下三体这本书").type());
+        assertEquals(IntentType.BILIBILI_SEARCH_TITLE,
+            recognizer.recognize("搜百日成王动漫").type());
+        assertEquals("百日成王",
+            recognizer.recognize("搜百日成王动漫").slot("title"));
+        assertEquals(IntentType.BILIBILI_RECOMMEND,
+            recognizer.recognize("哈哈 想看动漫").type());
+        assertEquals(IntentType.CONTENT_SEARCH_AMBIGUOUS,
+            recognizer.recognize("搜三体").type());
     }
 }

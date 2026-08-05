@@ -80,7 +80,7 @@ class ApplicationTests {
     @Test
     void contextLoads() {
         assertEquals(14, toolRegistry.size());
-        assertEquals(5, handlers.size());
+        assertEquals(7, handlers.size());
         assertTrue(handlers.stream().anyMatch(DocumentMessageHandler.class::isInstance));
         assertEquals(5, agentTaskHandlers.size());
         assertEquals(5, skillRegistry.size());

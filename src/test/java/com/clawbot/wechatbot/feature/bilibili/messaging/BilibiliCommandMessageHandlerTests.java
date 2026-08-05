@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.intent.RuleBasedIntentRecognizer;
+import com.clawbot.wechatbot.intent.ConversationDomainStore;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
@@ -28,7 +29,8 @@ class BilibiliCommandMessageHandlerTests {
             new BilibiliCommandMessageHandler(
                 commandHandler,
                 gateway,
-                new RuleBasedIntentRecognizer());
+                new RuleBasedIntentRecognizer(),
+                new ConversationDomainStore());
         WeixinMessage message =
             message("我想订阅紫罗兰的永恒花园");
 
@@ -52,7 +54,8 @@ class BilibiliCommandMessageHandlerTests {
             new BilibiliCommandMessageHandler(
                 commandHandler,
                 gateway,
-                new RuleBasedIntentRecognizer());
+                new RuleBasedIntentRecognizer(),
+                new ConversationDomainStore());
         WeixinMessage message =
             message("我已经看过航海王：红发歌姬");
 
@@ -70,13 +73,33 @@ class BilibiliCommandMessageHandlerTests {
             new BilibiliCommandMessageHandler(
                 mock(BilibiliCommandHandler.class),
                 mock(WeChatOutboundGateway.class),
-                new RuleBasedIntentRecognizer());
+                new RuleBasedIntentRecognizer(),
+                new ConversationDomainStore());
 
         assertTrue(handler.canBypassPlanning(message("想看治愈冒险动漫")));
         assertFalse(handler.canBypassPlanning(message(
             "订阅牧神记，然后设置电影推送时间20:00")));
         assertFalse(handler.canBypassPlanning(message(
             "每天20:00给我推送动漫推荐")));
+    }
+
+    @Test
+    void bareIndexUsesOnlyTheActiveBilibiliDomain() {
+        BilibiliCommandHandler commandHandler = mock(BilibiliCommandHandler.class);
+        WeChatOutboundGateway gateway = mock(WeChatOutboundGateway.class);
+        ConversationDomainStore domains = new ConversationDomainStore();
+        BilibiliCommandMessageHandler handler = new BilibiliCommandMessageHandler(
+            commandHandler, gateway, new RuleBasedIntentRecognizer(), domains);
+        WeixinMessage index = message("1");
+
+        assertFalse(handler.canHandle(index));
+        domains.activate("wechat-user", ConversationDomainStore.Domain.BILIBILI);
+        when(commandHandler.handleSearchResultByIndex("wechat-user", 1))
+            .thenReturn("第一个影视结果");
+
+        assertTrue(handler.canHandle(index));
+        handler.handle(mock(ILinkClient.class), index);
+        verify(gateway).sendText("wechat-user", "第一个影视结果");
     }
 
     private WeixinMessage message(String text) {

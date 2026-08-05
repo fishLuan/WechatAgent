@@ -34,7 +34,7 @@ public final class CompositeTaskAcceptanceEvaluator implements TaskAcceptanceEva
         Map<String, AgentTaskResult> verifiedDependencies
     ) {
         TaskEvaluation base = generic.evaluate(task, result, verifiedDependencies);
-        if (!base.passed() || task.type() != AgentTaskType.SKILL) return base;
+        if (task.type() != AgentTaskType.SKILL) return base;
 
         SkillDefinition definition = skills.definitions().stream()
             .filter(skill -> skill.name().equalsIgnoreCase(task.skillName()))
@@ -45,6 +45,11 @@ public final class CompositeTaskAcceptanceEvaluator implements TaskAcceptanceEva
         }
         SkillValidationDefinition validation = definition.validation();
         if (validation.mode() == SkillValidationMode.GENERIC) return base;
+        if (!base.passed()
+            && (validation.mode() != SkillValidationMode.REQUIRED
+                || !"TASK_ACCEPTANCE_FAILED".equals(base.code()))) {
+            return base;
+        }
 
         List<SkillResultValidator> validators = registry.validatorsFor(
             validation.validator().isBlank() ? definition.name() : validation.validator());
@@ -61,6 +66,7 @@ public final class CompositeTaskAcceptanceEvaluator implements TaskAcceptanceEva
         for (SkillResultValidator validator : validators) {
             TaskEvaluation domain = validator.validate(context);
             if (!domain.passed()) return domain;
+            if (!base.passed()) return domain;
         }
         return base;
     }
