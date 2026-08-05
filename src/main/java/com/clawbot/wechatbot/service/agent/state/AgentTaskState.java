@@ -121,6 +121,29 @@ public final class AgentTaskState {
         status = TaskStatus.REPLAN_REQUIRED;
     }
 
+    void acceptBestEffort(JsonNode output) {
+        requireStatus(TaskStatus.REPLAN_REQUIRED);
+        verifiedOutput = output == null
+            ? JsonNodeFactory.instance.objectNode() : output.deepCopy();
+        lastEvaluation = TaskEvaluation.pass(verifiedOutput);
+        status = TaskStatus.VERIFIED;
+    }
+
+    void restore(
+        TaskStatus restoredStatus, int restoredAttemptCount,
+        int restoredReplanGeneration, AgentTaskResult restoredResult,
+        TaskEvaluation restoredEvaluation, JsonNode restoredVerifiedOutput
+    ) {
+        status = restoredStatus == null ? TaskStatus.PENDING : restoredStatus;
+        attemptCount = Math.max(0, restoredAttemptCount);
+        replanGeneration = Math.max(0, restoredReplanGeneration);
+        lastResult = restoredResult;
+        lastEvaluation = restoredEvaluation;
+        verifiedOutput = restoredVerifiedOutput == null
+            ? JsonNodeFactory.instance.objectNode()
+            : restoredVerifiedOutput.deepCopy();
+    }
+
     private void requireStatus(TaskStatus... allowed) {
         for (TaskStatus candidate : allowed) {
             if (status == candidate) return;

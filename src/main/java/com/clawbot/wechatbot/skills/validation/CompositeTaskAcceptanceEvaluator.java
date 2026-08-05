@@ -47,7 +47,8 @@ public final class CompositeTaskAcceptanceEvaluator implements TaskAcceptanceEva
         if (validation.mode() == SkillValidationMode.GENERIC) return base;
         if (!base.passed()
             && (validation.mode() != SkillValidationMode.REQUIRED
-                || !"TASK_ACCEPTANCE_FAILED".equals(base.code()))) {
+                || !("TASK_ACCEPTANCE_FAILED".equals(base.code())
+                    || "TASK_OUTPUT_SCHEMA_MISMATCH".equals(base.code())))) {
             return base;
         }
 

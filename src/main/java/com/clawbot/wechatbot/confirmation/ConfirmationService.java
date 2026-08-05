@@ -46,6 +46,14 @@ public class ConfirmationService {
         return mongoTemplate.save(pending);
     }
 
+    public PendingConfirmation createRecovery(
+        AgentRequestContext context, String executionId, String summary
+    ) throws Exception {
+        var args = mapper.createObjectNode().put("execution_id", executionId);
+        return create(context, "__agent_checkpoint_recovery__", args,
+            new RiskDecision(true, "HIGH", summary));
+    }
+
     public PendingConfirmation findWaiting(String userId) {
         Query query = Query.query(Criteria.where("userId").is(userId)
             .and("status").is(ConfirmationStatus.WAITING_CONFIRMATION)

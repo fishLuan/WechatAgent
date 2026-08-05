@@ -166,6 +166,36 @@ class AgentOrchestratorTests {
     }
 
     @Test
+    void locallyAcceptsUsableSchemaMismatchWithoutCallingReplanner() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        AtomicInteger replanCalls = new AtomicInteger();
+        ChatService chat = chatService(input -> input.contains("继续处理")
+            ? "后续完成" : "阜阳今天晴，气温30度");
+        AgentTask weather = new AgentTask(
+            "weather", 0, AgentTaskType.CHAT_TOOL, "", "查询阜阳天气",
+            mapper.createObjectNode(),
+            mapper.createObjectNode().put("weather_info", "string"),
+            List.of(), List.of());
+        AgentTask next = new AgentTask(
+            "next", 1, AgentTaskType.CHAT_TOOL, "继续处理", List.of("weather"));
+        TaskReplanner replanner = replanner(request -> {
+            replanCalls.incrementAndGet();
+            return new ReplanResult(List.of(), "不应调用");
+        });
+
+        try (AgentOrchestrator orchestrator = dynamicOrchestrator(
+            chat, ignored -> List.of(weather, next), replanner,
+            new AgentReplanPolicy(true, 1, 1, 10, 10,
+                Duration.ofSeconds(2)))) {
+            AgentResponse response = orchestrator.execute("查询天气后继续处理", "");
+
+            assertEquals(0, replanCalls.get());
+            assertTrue(response.text().contains("阜阳今天晴"));
+            assertTrue(response.text().contains("后续完成"));
+        }
+    }
+
+    @Test
     void dynamicallyReplacesFailedTaskAndContinuesPlan() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         AtomicInteger originalCalls = new AtomicInteger();

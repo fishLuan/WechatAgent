@@ -47,6 +47,28 @@ public class AgentExecutionControlService {
         return session;
     }
 
+    public AgentExecutionSession resume(
+        String executionId, AgentRequestContext context, String request
+    ) {
+        AgentExecutionSession session = new AgentExecutionSession(executionId);
+        String userId = context == null ? "" : context.userId();
+        if (!userId.isBlank()) activeByUser.put(userId, session);
+        AgentRunRecord record = mongoTemplate.findById(executionId, AgentRunRecord.class);
+        long now = System.currentTimeMillis();
+        if (record == null) {
+            record = new AgentRunRecord();
+            record.setId(executionId);
+            record.setUserId(userId);
+            record.setSourceMessageId(context == null ? null : context.messageId());
+            record.setRequest(request);
+            record.setCreatedAt(now);
+        }
+        record.setStatus(AgentRunStatus.RUNNING);
+        record.setUpdatedAt(now);
+        mongoTemplate.save(record);
+        return session;
+    }
+
     public CancelResult cancelCurrent(String userId) {
         AgentExecutionSession session = activeByUser.get(userId);
         if (session == null) return new CancelResult(false, "", null);

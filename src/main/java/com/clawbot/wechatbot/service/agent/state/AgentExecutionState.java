@@ -61,6 +61,24 @@ public final class AgentExecutionState {
         outerRound++;
     }
 
+    public void restoreProgress(
+        int restoredOuterRound, int restoredReplanCount,
+        int restoredTotalTaskExecutions
+    ) {
+        outerRound = Math.max(0, restoredOuterRound);
+        replanCount = Math.max(0, restoredReplanCount);
+        totalTaskExecutions = Math.max(0, restoredTotalTaskExecutions);
+    }
+
+    public void restoreTask(
+        String taskId, TaskStatus status, int attemptCount,
+        int replanGeneration, AgentTaskResult result,
+        TaskEvaluation evaluation, JsonNode verifiedOutput
+    ) {
+        state(taskId).restore(status, attemptCount, replanGeneration,
+            result, evaluation, verifiedOutput);
+    }
+
     public List<AgentTask> readyTasks(int limit) {
         return tasks.values().stream()
             .filter(state -> state.status() == TaskStatus.PENDING)
@@ -269,6 +287,10 @@ public final class AgentExecutionState {
 
     public void requireReplan(String taskId) {
         state(taskId).requireReplan();
+    }
+
+    public void acceptBestEffort(String taskId, JsonNode output) {
+        state(taskId).acceptBestEffort(output);
     }
 
     public void failTask(String taskId, String reason) {

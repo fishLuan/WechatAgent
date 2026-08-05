@@ -60,6 +60,22 @@ public final class LlmTaskPlanner implements TaskPlanner {
             禁止把未知的 ID、日期、金额等值重新猜写到 input。
         """;
 
+    private static final String IMAGE_OUTPUT_RULE = """
+
+        图片生成任务（IMAGE_GENERATION）的真实输出是二进制附件，不是网络链接：
+        - expected_output 必须使用 {}；
+        - acceptance_criteria 必须使用 []；
+        - 禁止要求 image_url、url、图片链接或本地路径字段；
+        - 系统会独立校验返回结果中是否存在有效 IMAGE 附件。
+        """;
+
+    private static final String VOICE_INPUT_RULE = """
+
+        voice-reply 需要朗读前置任务结果时，只在 depends_on 中声明前置任务，
+        input 必须使用 {}。禁止把指向字符串的 $ref 直接作为整个 input；
+        语音 Skill 会从 dependencyText 读取需要合成的文字。
+        """;
+
     private static final SkillCatalog EMPTY_CATALOG = new SkillCatalog() {
         @Override
         public List<SkillDefinition> definitions() {
@@ -103,7 +119,7 @@ public final class LlmTaskPlanner implements TaskPlanner {
             return TaskPlan.accepted(List.of(), maxTasks);
         }
         ArrayNode messages = mapper.createArrayNode();
-        messages.add(message("system", PROMPT
+        messages.add(message("system", PROMPT + IMAGE_OUTPUT_RULE + VOICE_INPUT_RULE
             + "\n动态技能目录：\n" + skillCatalog.plannerCatalog()
             + "\n系统单次安全上限为 " + maxTasks
             + " 项任务。若实际需求超过上限，仍须完整列出，由系统统一拒绝。"));
@@ -205,9 +221,14 @@ public final class LlmTaskPlanner implements TaskPlanner {
                 .filter(java.util.Objects::nonNull)
                 .filter(dependency -> !dependency.equals(id))
                 .distinct().toList();
+            JsonNode canonicalInput = canonicalizeReferences(
+                raw.input(), canonicalIds);
+            if (isVoiceDependencyReference(raw, canonicalInput, dependencies)) {
+                canonicalInput = mapper.createObjectNode();
+            }
             tasks.add(new AgentTask(
                 id, index, raw.type(), raw.skillName(),
-                raw.instruction(), canonicalizeReferences(raw.input(), canonicalIds),
+                raw.instruction(), canonicalInput,
                 raw.expectedOutput(),
                 raw.acceptanceCriteria(), dependencies));
         }
@@ -283,6 +304,16 @@ public final class LlmTaskPlanner implements TaskPlanner {
             return result;
         }
         return node.deepCopy();
+    }
+
+    private boolean isVoiceDependencyReference(
+        RawTask task, JsonNode input, List<String> dependencies
+    ) {
+        return task.type() == AgentTaskType.SKILL
+            && "voice-reply".equalsIgnoreCase(task.skillName())
+            && !dependencies.isEmpty()
+            && input != null && input.isObject() && input.size() == 1
+            && input.path("$ref").isTextual();
     }
 
     private String extractJson(String content) {

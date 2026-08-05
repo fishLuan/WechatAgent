@@ -21,6 +21,12 @@ import com.clawbot.wechatbot.service.agent.reference.ResultReferenceResolver;
 import com.clawbot.wechatbot.service.agent.interrupt.AgentExecutionControlService;
 import com.clawbot.wechatbot.service.agent.interrupt.AgentExecutionSession;
 import com.clawbot.wechatbot.service.agent.interrupt.AgentRunStatus;
+import com.clawbot.wechatbot.service.agent.checkpoint.AgentCheckpointExecutionStatus;
+import com.clawbot.wechatbot.service.agent.checkpoint.AgentCheckpointRecorder;
+import com.clawbot.wechatbot.service.agent.checkpoint.AgentCheckpointStore;
+import com.clawbot.wechatbot.service.agent.checkpoint.AgentExecutionSnapshot;
+import com.clawbot.wechatbot.service.agent.checkpoint.AgentTaskCheckpoint;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
@@ -36,6 +42,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.UUID;
 
 /**
  * 外层 Agent 循环：规划任务、检索处理器、处理依赖、并行执行并汇总文字及附件。
@@ -43,6 +50,9 @@ import java.util.concurrent.TimeoutException;
  * <p>CHAT_TOOL 任务内部仍由 DeepSeekChatService 完成 function-calling 内循环。</p>
  */
 public final class AgentOrchestrator implements AutoCloseable {
+
+    private final UserFacingResultFormatter resultFormatter =
+        new UserFacingResultFormatter(new ObjectMapper());
     private static final String SUPPORTING_CONTEXT_MARKER = "\n用户问题：";
 
     private final ChatService fallbackChatService;
@@ -60,6 +70,7 @@ public final class AgentOrchestrator implements AutoCloseable {
     private final AgentReplanPolicy replanPolicy;
     private final ResultReferenceResolver referenceResolver;
     private AgentExecutionControlService executionControl;
+    private AgentCheckpointStore checkpointStore;
 
     public AgentOrchestrator(
         ChatService fallbackChatService,
@@ -213,6 +224,11 @@ public final class AgentOrchestrator implements AutoCloseable {
         return this;
     }
 
+    public AgentOrchestrator enableCheckpoints(AgentCheckpointStore store) {
+        this.checkpointStore = store;
+        return this;
+    }
+
     public AgentResponse execute(String userText, String history) throws Exception {
         return execute(userText, history, AgentRequestContext.anonymous());
     }
@@ -338,9 +354,37 @@ public final class AgentOrchestrator implements AutoCloseable {
         AgentRequestContext requestContext,
         List<AgentInputAttachment> inputAttachments
     ) throws Exception {
+        return executeTasks(userText, history, input, tasks, deadlineNanos,
+            requestContext, inputAttachments, null);
+    }
+
+    public AgentResponse resume(AgentExecutionSnapshot snapshot) throws Exception {
+        if (snapshot == null || snapshot.execution() == null) {
+            throw new IllegalArgumentException("恢复快照不能为空");
+        }
+        AgentExecutionState state = restoreState(snapshot);
+        AgentRequestContext context = new AgentRequestContext(
+            snapshot.execution().getUserId(),
+            snapshot.execution().getSourceMessageId());
+        String request = snapshot.execution().getOriginalRequest();
+        return executeTasks(request, "", splitSupportingContext(request),
+            state.tasks(), System.nanoTime() + executionTimeout.toNanos(),
+            context, List.of(), new RecoveryContext(snapshot, state));
+    }
+
+    private AgentResponse executeTasks(
+        String userText,
+        String history,
+        PlanningInput input,
+        List<AgentTask> tasks,
+        long deadlineNanos,
+        AgentRequestContext requestContext,
+        List<AgentInputAttachment> inputAttachments,
+        RecoveryContext recovery
+    ) throws Exception {
 
         // 单一文本任务走原始输入，避免规划器改写造成语义或附加上下文丢失。
-        if (tasks.size() == 1
+        if (recovery == null && tasks.size() == 1
             && tasks.get(0).type() == AgentTaskType.CHAT_TOOL
             && tasks.get(0).dependencies().isEmpty()
             && inputAttachments.isEmpty()) {
@@ -348,9 +392,24 @@ public final class AgentOrchestrator implements AutoCloseable {
                 userText, history, deadlineNanos, requestContext);
         }
 
-        AgentExecutionState state = new AgentExecutionState(userText, tasks);
+        AgentExecutionState state = recovery == null
+            ? new AgentExecutionState(userText, tasks) : recovery.state();
         AgentExecutionSession executionSession = executionControl == null
-            ? null : executionControl.begin(requestContext, userText);
+            ? null : (recovery == null
+                ? executionControl.begin(requestContext, userText)
+                : executionControl.resume(
+                    recovery.snapshot().execution().getId(), requestContext, userText));
+        String checkpointExecutionId = recovery != null
+            ? recovery.snapshot().execution().getId()
+            : executionSession == null
+            ? "TASK-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase()
+            : executionSession.executionId();
+        AgentCheckpointRecorder checkpoints = recovery == null
+            ? AgentCheckpointRecorder.begin(
+                checkpointStore, new ObjectMapper(), checkpointExecutionId,
+                requestContext, userText, tasks)
+            : AgentCheckpointRecorder.resume(
+                checkpointStore, new ObjectMapper(), recovery.snapshot());
 
         for (int round = 0;
             round < maxOuterRounds
@@ -363,6 +422,7 @@ public final class AgentOrchestrator implements AutoCloseable {
                 break;
             }
             state.nextOuterRound();
+            checkpoints.outerRound(state);
             if (state.totalTaskExecutions()
                 >= replanPolicy.maxTotalTaskExecutions()) {
                 failActionableTasks(state, "任务执行总次数超过限制");
@@ -383,6 +443,8 @@ public final class AgentOrchestrator implements AutoCloseable {
                     try {
                         ResolvedTaskInput resolved = referenceResolver.resolve(task, state);
                         state.recordLineage(resolved.lineage());
+                        checkpoints.taskStarted(
+                            state.taskState(task.id()), resolved.input());
                         AgentTask executable = withInput(task, resolved.input());
                         executableTasks.add(executable);
                         lineageByTask.put(task.id(), resolved.lineage());
@@ -394,6 +456,7 @@ public final class AgentOrchestrator implements AutoCloseable {
                             error.code(), error.getMessage(),
                             new ObjectMapper().createObjectNode(), List.of(),
                             "修正任务依赖或引用路径后重新规划"));
+                        checkpoints.taskEvaluated(state.taskState(task.id()));
                     }
                 }
 
@@ -416,6 +479,8 @@ public final class AgentOrchestrator implements AutoCloseable {
                         result.task(), result,
                         state.verifiedDependencies(result.task()));
                     state.recordResult(result, evaluation);
+                    checkpoints.taskEvaluated(
+                        state.taskState(result.task().id()));
                 }
                 progressed = true;
             }
@@ -424,10 +489,19 @@ public final class AgentOrchestrator implements AutoCloseable {
                 state.cancelUnfinished();
                 break;
             }
-            progressed |= schedulePermittedRetries(state);
+            boolean retriesScheduled = schedulePermittedRetries(state);
+            progressed |= retriesScheduled;
+            if (retriesScheduled) {
+                checkpoints.retryOrReplanState(
+                    state, state.hasReplanRequiredTasks()
+                        ? AgentCheckpointExecutionStatus.REPLANNING
+                        : AgentCheckpointExecutionStatus.RUNNING);
+            }
+            boolean schemaAdapted = acceptUsableSchemaMismatches(state, checkpoints);
+            progressed |= schemaAdapted;
             if (!isCancellationRequested(executionSession)) {
                 progressed |= executeRequiredReplan(
-                    state, deadlineNanos, executionSession);
+                    state, deadlineNanos, executionSession, checkpoints);
             }
             if (!progressed) break;
         }
@@ -441,6 +515,12 @@ public final class AgentOrchestrator implements AutoCloseable {
                     state.completedTaskIds(), state.cancelledTaskIds(), partial,
                     requestContext.userId());
             }
+            checkpoints.finish(
+                state,
+                partial
+                    ? AgentCheckpointExecutionStatus.PARTIALLY_CANCELLED
+                    : AgentCheckpointExecutionStatus.CANCELLED,
+                "AGENT_CANCELLED", "用户取消了当前任务");
             return cancellationResponse(executionSession, state, partial);
         }
 
@@ -451,6 +531,16 @@ public final class AgentOrchestrator implements AutoCloseable {
                 : "任务依赖未通过验收、依赖不存在或超过外循环次数限制");
 
         AgentResponse response = aggregate(state);
+        boolean succeeded = state.taskStates().stream()
+            .allMatch(item -> item.status() == TaskStatus.VERIFIED);
+        checkpoints.finish(
+            state,
+            succeeded
+                ? AgentCheckpointExecutionStatus.SUCCEEDED
+                : AgentCheckpointExecutionStatus.FAILED,
+            succeeded ? "" : (timedOut ? "AGENT_TIMEOUT" : "AGENT_TASK_FAILED"),
+            succeeded ? "" : (timedOut
+                ? "Agent执行超时" : "一个或多个任务未通过验收"));
         if (executionControl != null) {
             executionControl.finish(executionSession, AgentRunStatus.SUCCEEDED,
                 state.completedTaskIds(), List.of(), state.hasCompletedSideEffects(),
@@ -480,7 +570,8 @@ public final class AgentOrchestrator implements AutoCloseable {
 
     private boolean executeRequiredReplan(
         AgentExecutionState state, long deadlineNanos,
-        AgentExecutionSession executionSession
+        AgentExecutionSession executionSession,
+        AgentCheckpointRecorder checkpoints
     ) {
         List<AgentTaskState> candidates = state.replanRequiredTaskStates();
         if (candidates.isEmpty()) return false;
@@ -506,12 +597,17 @@ public final class AgentOrchestrator implements AutoCloseable {
             failed.lastEvaluation(), state.verifiedResults(), remaining,
             remainingBudget);
         try {
+            checkpoints.retryOrReplanState(
+                state, AgentCheckpointExecutionStatus.REPLANNING);
             ReplanResult result = callReplanner(
                 request, deadlineNanos, executionSession);
             mutationApplier.apply(state, result);
+            checkpoints.planRevised(state);
         } catch (Exception error) {
             state.failTask(
                 failed.task().id(), "局部重规划失败：" + safeMessage(error));
+            checkpoints.taskEvaluated(
+                state.taskState(failed.task().id()));
         }
         return true;
     }
@@ -774,10 +870,10 @@ public final class AgentOrchestrator implements AutoCloseable {
         if (results.size() == 1) {
             AgentTaskResult result = results.get(0);
             if (result.hasMultipleTexts()) {
-                return AgentResponse.multi(result.texts());
+                return AgentResponse.multi(resultFormatter.formatAll(result.texts()));
             }
             return new AgentResponse(
-                result.succeeded() ? result.text() : result.error(),
+                result.succeeded() ? resultFormatter.format(result.text()) : result.error(),
                 List.of(), attachments);
         }
 
@@ -788,7 +884,9 @@ public final class AgentOrchestrator implements AutoCloseable {
             reply.append(index + 1).append(". 【")
                 .append(compactLabel(result.task().instruction()))
                 .append("】\n")
-                .append(result.succeeded() ? result.text() : result.error());
+                .append(result.succeeded()
+                    ? resultFormatter.format(result.text())
+                    : result.error());
         }
         return new AgentResponse(reply.toString(), List.of(), attachments);
     }
@@ -848,6 +946,123 @@ public final class AgentOrchestrator implements AutoCloseable {
             : message;
     }
 
+    private boolean acceptUsableSchemaMismatches(
+        AgentExecutionState state, AgentCheckpointRecorder checkpoints
+    ) {
+        boolean changed = false;
+        for (AgentTaskState taskState : state.replanRequiredTaskStates()) {
+            TaskEvaluation evaluation = taskState.lastEvaluation();
+            AgentTaskResult result = taskState.lastResult();
+            if (evaluation == null || result == null || !result.succeeded()
+                || !"TASK_OUTPUT_SCHEMA_MISMATCH".equals(evaluation.code())) {
+                continue;
+            }
+            state.acceptBestEffort(taskState.task().id(), bestEffortOutput(result));
+            checkpoints.taskEvaluated(state.taskState(taskState.task().id()));
+            System.out.println("[AGENT-REPLAN] 已本地适配结果字段，跳过LLM重规划 taskId="
+                + taskState.task().id());
+            changed = true;
+        }
+        return changed;
+    }
+
+    private JsonNode bestEffortOutput(AgentTaskResult result) {
+        ObjectMapper mapper = new ObjectMapper();
+        String text = result.text() == null ? "" : result.text().trim();
+        if (!text.isBlank()) {
+            try {
+                JsonNode parsed = mapper.readTree(text);
+                if (parsed != null) return parsed;
+            } catch (Exception ignored) {
+                // Plain text is wrapped below.
+            }
+        }
+        com.fasterxml.jackson.databind.node.ObjectNode output =
+            mapper.createObjectNode().put("text", text);
+        com.fasterxml.jackson.databind.node.ArrayNode attachments =
+            output.putArray("attachments");
+        result.attachments().forEach(attachment -> attachments.addObject()
+            .put("type", attachment.type().name())
+            .put("fileName", attachment.fileName())
+            .put("size", attachment.content().length));
+        return output;
+    }
+
+    private AgentExecutionState restoreState(AgentExecutionSnapshot snapshot) {
+        ObjectMapper mapper = new ObjectMapper();
+        List<AgentTask> restoredTasks = snapshot.tasks().stream()
+            .sorted(Comparator.comparingInt(AgentTaskCheckpoint::getOrder))
+            .map(checkpointStore::deserializeTask)
+            .toList();
+        AgentExecutionState state = new AgentExecutionState(
+            snapshot.execution().getOriginalRequest(), restoredTasks);
+        state.restoreProgress(snapshot.execution().getCurrentRound(),
+            snapshot.execution().getReplanCount(),
+            snapshot.execution().getTotalTaskExecutions());
+        for (AgentTaskCheckpoint checkpoint : snapshot.tasks()) {
+            AgentTask task = state.taskState(checkpoint.getTaskId()).task();
+            TaskStatus status = recoverableTaskStatus(checkpoint.getStatus());
+            AgentTaskResult result = readCheckpointResult(
+                mapper, task, checkpoint.getResultJson());
+            TaskEvaluation evaluation = readCheckpointEvaluation(
+                mapper, checkpoint.getEvaluationJson());
+            JsonNode verifiedOutput = readCheckpointJson(
+                mapper, checkpoint.getVerifiedOutputJson());
+            state.restoreTask(task.id(), status, checkpoint.getAttemptCount(),
+                checkpoint.getReplanGeneration(), result, evaluation,
+                verifiedOutput);
+        }
+        return state;
+    }
+
+    private TaskStatus recoverableTaskStatus(TaskStatus status) {
+        if (status == null) return TaskStatus.PENDING;
+        return switch (status) {
+            case RUNNING, VERIFYING, RETRY_PENDING -> TaskStatus.PENDING;
+            default -> status;
+        };
+    }
+
+    private AgentTaskResult readCheckpointResult(
+        ObjectMapper mapper, AgentTask task, String json
+    ) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            JsonNode root = mapper.readTree(json);
+            if (!root.path("success").asBoolean(false)) {
+                return AgentTaskResult.failure(task,
+                    root.path("error").asText("任务执行失败"));
+            }
+            List<String> texts = new ArrayList<>();
+            root.path("texts").forEach(item -> texts.add(item.asText()));
+            return texts.isEmpty()
+                ? AgentTaskResult.success(task, root.path("text").asText(), List.of())
+                : AgentTaskResult.successMulti(task, texts);
+        } catch (Exception error) {
+            throw new IllegalStateException("无法恢复任务结果：" + task.id(), error);
+        }
+    }
+
+    private TaskEvaluation readCheckpointEvaluation(
+        ObjectMapper mapper, String json
+    ) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return mapper.readValue(json, TaskEvaluation.class);
+        } catch (Exception error) {
+            throw new IllegalStateException("无法恢复任务验收结果", error);
+        }
+    }
+
+    private JsonNode readCheckpointJson(ObjectMapper mapper, String json) {
+        if (json == null || json.isBlank()) return mapper.createObjectNode();
+        try {
+            return mapper.readTree(json);
+        } catch (Exception error) {
+            throw new IllegalStateException("无法恢复任务结构化输出", error);
+        }
+    }
+
     public boolean isConfigured() {
         return fallbackChatService.isConfigured();
     }
@@ -864,5 +1079,10 @@ public final class AgentOrchestrator implements AutoCloseable {
     }
 
     private record PlanningInput(String supportingContext, String userQuestion) {
+    }
+
+    private record RecoveryContext(
+        AgentExecutionSnapshot snapshot, AgentExecutionState state
+    ) {
     }
 }
