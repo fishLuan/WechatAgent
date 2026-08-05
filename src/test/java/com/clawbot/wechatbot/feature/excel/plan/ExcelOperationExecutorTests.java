@@ -781,6 +781,26 @@ class ExcelOperationExecutorTests {
         assertFalse(result.text().contains("已无当前表"));
     }
 
+    /** 回归：删除「：季度销售副本」只能命中副本，不能因包含匹配误删「季度销售」原表。 */
+    @Test
+    void deleteWithColonNameDeletesExactTargetNotSubstringMatch() throws Exception {
+        ExcelTable quarter = new ExcelTable("user-1", "季度销售");
+        quarter.setId("q1");
+        ExcelTable copy = new ExcelTable("user-1", "季度销售副本");
+        copy.setId("q2");
+        when(excelService.listWorkbooks("user-1")).thenReturn(List.of(quarter, copy));
+        when(excelService.getActiveWorkbook("user-1")).thenReturn(quarter);
+        when(excelService.deleteWorkbook("user-1", "q2")).thenReturn(true);
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.WORKBOOK_DELETE,
+                Map.of("name", "：季度销售副本"))), existingTable());
+
+        assertTrue(result.success());
+        verify(excelService).deleteWorkbook("user-1", "q2"); // 删的是副本
+        verify(excelService, never()).deleteWorkbook(eq("user-1"), eq("q1")); // 原表不动
+    }
+
     @Test
     void workbookCopyHandlerCopiesAndSwitches() throws Exception {
         ExcelTable t1 = new ExcelTable("user-1", "销售表");

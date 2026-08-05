@@ -130,10 +130,10 @@ public final class ExcelPlanParser {
         "^(?:添加|增加|加入|新增|加|生成|创建|制作|新建|修改|更新|删除|移除|导出|查询|统计|排序|去重|补全|撤销|回滚|恢复)");
     /** 删除表格指令：删除表格/工作簿 X。 */
     private static final Pattern WORKBOOK_DELETE_CMD = Pattern.compile(
-        "^(?:请|帮我\\s*)*删除(?:表格|工作簿)\\s*(.+?)\\s*$");
+        "^(?:请|帮我\\s*)*删除(?:表格|工作簿)\\s*[:：]?\\s*(.+?)\\s*$");
     /** 复制表格指令：复制表格/工作簿 X。 */
     private static final Pattern WORKBOOK_COPY_CMD = Pattern.compile(
-        "^(?:请|帮我\\s*)*复制(?:表格|工作簿)?\\s*(.+?)\\s*$");
+        "^(?:请|帮我\\s*)*复制(?:表格|工作簿)?\\s*[:：]?\\s*(.+?)\\s*$");
     /** 表格式化指令：加标题/标题为/设置标题 X（X 到分隔符为止）。 */
     private static final Pattern FORMAT_TITLE = Pattern.compile(
         "(?:加标题|标题为|设置标题)\\s*[:：]?\\s*(.+?)\\s*(?:[，,、；;。]|$)");

@@ -34,13 +34,18 @@ final class OperationChecks {
         if (name == null || name.isBlank()) {
             return null;
         }
+        // 归一化：去掉首尾空白与前导冒号/顿号/逗号（「复制表格：X」的冒号不应进入名字）
+        String normalized = name.trim().replaceAll("^[:：、,，\\s]+", "").trim();
         for (ExcelTable table : tables) {
-            if (name.equals(table.getTitle())) {
+            if (normalized.equals(table.getTitle())) {
                 return table;
             }
         }
+        // 兜底：只允许「输入名是表名的子串」（如「季度销售副本」→ 季度销售副本），
+        // 禁止反向包含（如「：季度销售副本」包含「季度销售」导致删错原表）
         for (ExcelTable table : tables) {
-            if (table.getTitle().contains(name) || name.contains(table.getTitle())) {
+            if (!normalized.contains(table.getTitle())
+                && table.getTitle().contains(normalized)) {
                 return table;
             }
         }

@@ -659,6 +659,15 @@ class ExcelPlanParserTests {
         assertEquals("报表", parseSingle("打开工作簿 报表").param("name"));
     }
 
+    /** 复制/删除带冒号写法：冒号不能进入名字（否则查找时误匹配子串）。 */
+    @Test
+    void copyAndDeleteWithColonStripColonFromName() {
+        assertEquals("季度销售", parseSingle("复制表格：季度销售").param("name"));
+        assertEquals("季度销售副本", parseSingle("删除表格：季度销售副本").param("name"));
+        assertEquals("报表", parseSingle("复制工作簿：报表").param("name"));
+        assertEquals("报表-汇总", parseSingle("删除工作簿：报表-汇总").param("name"));
+    }
+
     @Test
     void workbookRenameRoutesToWorkbookRename() {
         ExcelOperation op = parseSingle("重命名表格 销售表为月度销售");
