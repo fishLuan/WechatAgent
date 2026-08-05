@@ -122,10 +122,11 @@ public class BotBeanConfiguration {
         SpeechSynthesisService speech, DocumentService documents, TianNewsTool news,
         BotConfig config, ConversationMemoryService memory, MemoryProperties memoryProperties,
         LongReplyManager replies, IntentRecognizer intents,
-        AgentInputAttachmentLoader attachments
+        AgentInputAttachmentLoader attachments,
+        com.clawbot.wechatbot.confirmation.ConfirmationReplyService confirmationReplies
     ) {
         SpeechSynthesisService optionalSpeech = config.isDashscopeConfigured() ? speech : null;
         return new TextMessageHandler(chat, orchestrator, optionalSpeech, documents, news,
-            memory, memoryProperties, replies, intents, attachments);
+            memory, memoryProperties, replies, intents, attachments, confirmationReplies);
     }
 }

@@ -1,6 +1,24 @@
 package com.clawbot.wechatbot.service.agent;
 
 import com.clawbot.wechatbot.service.ChatService;
+import com.clawbot.wechatbot.service.agent.acceptance.DefaultTaskAcceptanceEvaluator;
+import com.clawbot.wechatbot.service.agent.acceptance.TaskAcceptanceEvaluator;
+import com.clawbot.wechatbot.service.agent.acceptance.TaskEvaluation;
+import com.clawbot.wechatbot.service.agent.state.AgentExecutionState;
+import com.clawbot.wechatbot.service.agent.state.AgentTaskState;
+import com.clawbot.wechatbot.service.agent.state.TaskStatus;
+import com.clawbot.wechatbot.service.agent.replan.AgentReplanPolicy;
+import com.clawbot.wechatbot.service.agent.replan.NoOpTaskReplanner;
+import com.clawbot.wechatbot.service.agent.replan.PlanMutationApplier;
+import com.clawbot.wechatbot.service.agent.replan.ReplanRequest;
+import com.clawbot.wechatbot.service.agent.replan.ReplanResult;
+import com.clawbot.wechatbot.service.agent.replan.TaskReplanner;
+import com.clawbot.wechatbot.service.agent.reference.DataLineageRecord;
+import com.clawbot.wechatbot.service.agent.reference.ReferenceResolutionException;
+import com.clawbot.wechatbot.service.agent.reference.ReferencePolicy;
+import com.clawbot.wechatbot.service.agent.reference.ResolvedTaskInput;
+import com.clawbot.wechatbot.service.agent.reference.ResultReferenceResolver;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -32,6 +50,11 @@ public final class AgentOrchestrator implements AutoCloseable {
     private final Duration executionTimeout;
     private final ExecutorService executor;
     private final AgentRequestContextHolder requestContextHolder;
+    private final TaskAcceptanceEvaluator acceptanceEvaluator;
+    private final TaskReplanner replanner;
+    private final PlanMutationApplier mutationApplier;
+    private final AgentReplanPolicy replanPolicy;
+    private final ResultReferenceResolver referenceResolver;
 
     public AgentOrchestrator(
         ChatService fallbackChatService,
@@ -107,11 +130,61 @@ public final class AgentOrchestrator implements AutoCloseable {
         Duration executionTimeout,
         AgentRequestContextHolder requestContextHolder
     ) {
+        this(fallbackChatService, planner, handlers, enabled, maxOuterRounds,
+            maxTasksPerBatch, maxParallelism, executionTimeout,
+            requestContextHolder,
+            new DefaultTaskAcceptanceEvaluator(new ObjectMapper()));
+    }
+
+    public AgentOrchestrator(
+        ChatService fallbackChatService,
+        TaskPlanner planner,
+        List<AgentTaskHandler> handlers,
+        boolean enabled,
+        int maxOuterRounds,
+        int maxTasksPerBatch,
+        int maxParallelism,
+        Duration executionTimeout,
+        AgentRequestContextHolder requestContextHolder,
+        TaskAcceptanceEvaluator acceptanceEvaluator
+    ) {
+        this(fallbackChatService, planner, handlers, enabled, maxOuterRounds,
+            maxTasksPerBatch, maxParallelism, executionTimeout,
+            requestContextHolder, acceptanceEvaluator,
+            new NoOpTaskReplanner(), null, AgentReplanPolicy.disabled(),
+            new ResultReferenceResolver(
+                new ObjectMapper(), ReferencePolicy.defaults()));
+    }
+
+    public AgentOrchestrator(
+        ChatService fallbackChatService,
+        TaskPlanner planner,
+        List<AgentTaskHandler> handlers,
+        boolean enabled,
+        int maxOuterRounds,
+        int maxTasksPerBatch,
+        int maxParallelism,
+        Duration executionTimeout,
+        AgentRequestContextHolder requestContextHolder,
+        TaskAcceptanceEvaluator acceptanceEvaluator,
+        TaskReplanner replanner,
+        PlanMutationApplier mutationApplier,
+        AgentReplanPolicy replanPolicy,
+        ResultReferenceResolver referenceResolver
+    ) {
         this.fallbackChatService = fallbackChatService;
         this.planner = planner;
         this.handlers = List.copyOf(handlers);
         this.requestContextHolder = java.util.Objects.requireNonNull(
             requestContextHolder, "requestContextHolder");
+        this.acceptanceEvaluator = java.util.Objects.requireNonNull(
+            acceptanceEvaluator, "acceptanceEvaluator");
+        this.replanner = java.util.Objects.requireNonNull(replanner, "replanner");
+        this.mutationApplier = mutationApplier;
+        this.replanPolicy = java.util.Objects.requireNonNull(
+            replanPolicy, "replanPolicy");
+        this.referenceResolver = java.util.Objects.requireNonNull(
+            referenceResolver, "referenceResolver");
         this.enabled = enabled;
         this.maxOuterRounds = Math.max(1, maxOuterRounds);
         this.maxTasksPerBatch = Math.max(1, maxTasksPerBatch);
@@ -265,48 +338,167 @@ public final class AgentOrchestrator implements AutoCloseable {
                 userText, history, deadlineNanos, requestContext);
         }
 
-        Map<String, AgentTask> pending = new LinkedHashMap<>();
-        tasks.stream()
-            .sorted(Comparator.comparingInt(AgentTask::order))
-            .forEach(task -> pending.put(task.id(), task));
-        Map<String, AgentTaskResult> completed = new LinkedHashMap<>();
+        AgentExecutionState state = new AgentExecutionState(userText, tasks);
 
         for (int round = 0;
-             round < maxOuterRounds
-                 && !pending.isEmpty()
-                 && System.nanoTime() < deadlineNanos;
+            round < maxOuterRounds
+                && state.hasUnfinishedTasks()
+                && !state.aborted()
+                && System.nanoTime() < deadlineNanos;
              round++) {
-            List<AgentTask> ready = pending.values().stream()
-                .filter(task -> completed.keySet().containsAll(task.dependencies()))
-                .limit(maxTasksPerBatch)
-                .toList();
-            if (ready.isEmpty()) break;
-
-            List<AgentTaskResult> roundResults = executeReadyTasks(
-                ready,
-                completed,
-                input.supportingContext(),
-                history,
-                deadlineNanos,
-                requestContext,
-                inputAttachments);
-            for (AgentTaskResult result : roundResults) {
-                pending.remove(result.task().id());
-                completed.put(result.task().id(), result);
+            state.nextOuterRound();
+            if (state.totalTaskExecutions()
+                >= replanPolicy.maxTotalTaskExecutions()) {
+                failActionableTasks(state, "任务执行总次数超过限制");
+                break;
             }
+
+            boolean progressed = false;
+            List<AgentTask> ready = state.readyTasks(maxTasksPerBatch);
+            if (!ready.isEmpty()) {
+                int remainingExecutions = replanPolicy.maxTotalTaskExecutions()
+                    - state.totalTaskExecutions();
+                ready = ready.stream().limit(Math.max(0, remainingExecutions)).toList();
+                List<AgentTask> executableTasks = new ArrayList<>();
+                Map<String, List<DataLineageRecord>> lineageByTask =
+                    new LinkedHashMap<>();
+                for (AgentTask task : ready) {
+                    state.markRunning(task);
+                    try {
+                        ResolvedTaskInput resolved = referenceResolver.resolve(task, state);
+                        state.recordLineage(resolved.lineage());
+                        AgentTask executable = withInput(task, resolved.input());
+                        executableTasks.add(executable);
+                        lineageByTask.put(task.id(), resolved.lineage());
+                    } catch (ReferenceResolutionException error) {
+                        AgentTaskResult failed = AgentTaskResult.failure(
+                            task, error.getMessage());
+                        state.recordResult(failed, new TaskEvaluation(
+                            com.clawbot.wechatbot.service.agent.acceptance.TaskDecision.REPLAN,
+                            error.code(), error.getMessage(),
+                            new ObjectMapper().createObjectNode(), List.of(),
+                            "修正任务依赖或引用路径后重新规划"));
+                    }
+                }
+
+                List<AgentTaskResult> roundResults = executeReadyTasks(
+                    executableTasks,
+                    state.verifiedResults(),
+                    input.supportingContext(),
+                    history,
+                    deadlineNanos,
+                    requestContext,
+                    inputAttachments,
+                    lineageByTask);
+                for (AgentTaskResult result : roundResults) {
+                    TaskEvaluation evaluation = acceptanceEvaluator.evaluate(
+                        result.task(), result,
+                        state.verifiedDependencies(result.task()));
+                    state.recordResult(result, evaluation);
+                }
+                progressed = true;
+            }
+
+            progressed |= schedulePermittedRetries(state);
+            progressed |= executeRequiredReplan(state, deadlineNanos);
+            if (!progressed) break;
         }
 
-        // 循环达到上限、依赖不存在或出现依赖环时，不静默丢弃任务。
         boolean timedOut = System.nanoTime() >= deadlineNanos;
-        for (AgentTask task : pending.values()) {
-            completed.put(task.id(), AgentTaskResult.failure(
-                task,
-                timedOut
-                    ? "Agent 执行时间超过 " + executionTimeout.toSeconds() + " 秒"
-                    : "任务依赖无法满足或超过外循环次数限制"));
+        state.failUnresolvedTasks(
+            timedOut
+                ? "Agent 执行时间超过 " + executionTimeout.toSeconds() + " 秒"
+                : "任务依赖未通过验收、依赖不存在或超过外循环次数限制");
+
+        return aggregate(state);
+    }
+
+    private boolean schedulePermittedRetries(AgentExecutionState state) {
+        boolean changed = false;
+        for (AgentTaskState taskState : state.retryPendingTaskStates()) {
+            int retriesAlreadyUsed = Math.max(0, taskState.attemptCount() - 1);
+            if (replanPolicy.enabled()
+                && retriesAlreadyUsed < replanPolicy.maxRetriesPerTask()
+                && state.totalTaskExecutions()
+                    < replanPolicy.maxTotalTaskExecutions()) {
+                state.scheduleRetry(taskState.task().id());
+            } else if (replanPolicy.enabled()) {
+                state.requireReplan(taskState.task().id());
+            } else {
+                continue;
+            }
+            changed = true;
+        }
+        return changed;
+    }
+
+    private boolean executeRequiredReplan(
+        AgentExecutionState state, long deadlineNanos
+    ) {
+        List<AgentTaskState> candidates = state.replanRequiredTaskStates();
+        if (candidates.isEmpty()) return false;
+        AgentTaskState failed = candidates.get(0);
+        if (!replanPolicy.enabled()) return false;
+        if (!replanner.isConfigured() || mutationApplier == null) {
+            state.failTask(failed.task().id(), "局部重规划不可用");
+            return true;
+        }
+        if (state.replanCount() >= replanPolicy.maxReplans()) {
+            state.failTask(failed.task().id(), "局部重规划次数超过限制");
+            return true;
         }
 
-        return aggregate(tasks, completed);
+        int remainingBudget = Math.max(
+            0, replanPolicy.maxTotalTasks() - state.tasks().size());
+        List<AgentTask> remaining = state.taskStates().stream()
+            .filter(item -> item.status() != TaskStatus.VERIFIED)
+            .map(AgentTaskState::task)
+            .toList();
+        ReplanRequest request = new ReplanRequest(
+            state.originalUserRequest(), failed.task(), failed.lastResult(),
+            failed.lastEvaluation(), state.verifiedResults(), remaining,
+            remainingBudget);
+        try {
+            ReplanResult result = callReplanner(request, deadlineNanos);
+            mutationApplier.apply(state, result);
+        } catch (Exception error) {
+            state.failTask(
+                failed.task().id(), "局部重规划失败：" + safeMessage(error));
+        }
+        return true;
+    }
+
+    private ReplanResult callReplanner(
+        ReplanRequest request, long deadlineNanos
+    ) throws Exception {
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        long timeoutNanos = Math.min(
+            remainingNanos, replanPolicy.timeout().toNanos());
+        if (timeoutNanos <= 0) throw new TimeoutException("局部重规划超时");
+        Future<ReplanResult> future = executor.submit(() -> replanner.replan(request));
+        try {
+            return future.get(timeoutNanos, TimeUnit.NANOSECONDS);
+        } catch (TimeoutException error) {
+            future.cancel(true);
+            throw new TimeoutException("局部重规划超过 "
+                + replanPolicy.timeout().toSeconds() + " 秒");
+        } catch (ExecutionException error) {
+            Throwable cause = error.getCause();
+            if (cause instanceof Exception exception) throw exception;
+            throw new Exception("局部重规划执行失败", cause);
+        } catch (InterruptedException error) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new Exception("局部重规划被中断", error);
+        }
+    }
+
+    private void failActionableTasks(AgentExecutionState state, String reason) {
+        state.retryPendingTaskStates().forEach(item ->
+            state.failTask(item.task().id(), reason));
+        state.replanRequiredTaskStates().forEach(item ->
+            state.failTask(item.task().id(), reason));
+        state.failUnresolvedTasks(reason);
     }
 
     private AgentResponse executeFallback(
@@ -349,7 +541,8 @@ public final class AgentOrchestrator implements AutoCloseable {
         String history,
         long deadlineNanos,
         AgentRequestContext requestContext,
-        List<AgentInputAttachment> inputAttachments
+        List<AgentInputAttachment> inputAttachments,
+        Map<String, List<DataLineageRecord>> lineageByTask
     ) {
         List<Future<AgentTaskResult>> futures = new ArrayList<>();
         for (AgentTask task : ready) {
@@ -361,7 +554,8 @@ public final class AgentOrchestrator implements AutoCloseable {
                         completed,
                         supportingContext,
                         history,
-                        inputAttachments))));
+                        inputAttachments,
+                        lineageByTask.getOrDefault(task.id(), List.of())))));
         }
 
         List<AgentTaskResult> results = new ArrayList<>();
@@ -419,7 +613,8 @@ public final class AgentOrchestrator implements AutoCloseable {
         Map<String, AgentTaskResult> completed,
         String supportingContext,
         String history,
-        List<AgentInputAttachment> inputAttachments
+        List<AgentInputAttachment> inputAttachments,
+        List<DataLineageRecord> lineage
     ) {
         for (String dependencyId : task.dependencies()) {
             AgentTaskResult dependency = completed.get(dependencyId);
@@ -449,20 +644,18 @@ public final class AgentOrchestrator implements AutoCloseable {
                     history,
                     supportingContext,
                     dependencies,
-                    inputAttachments));
+                    inputAttachments,
+                    task.input(),
+                    lineage));
         } catch (Exception error) {
             return AgentTaskResult.failure(task, "处理失败：" + safeMessage(error));
         }
     }
 
-    private AgentResponse aggregate(
-        List<AgentTask> tasks,
-        Map<String, AgentTaskResult> completed
-    ) {
-        List<AgentTaskResult> results = tasks.stream()
-            .sorted(Comparator.comparingInt(AgentTask::order))
-            .map(task -> completed.getOrDefault(
-                task.id(), AgentTaskResult.failure(task, "任务未执行")))
+    private AgentResponse aggregate(AgentExecutionState state) {
+        List<AgentTaskResult> results = state.taskStates().stream()
+            .sorted(Comparator.comparingInt(item -> item.task().order()))
+            .map(this::resultForAggregation)
             .toList();
         List<AgentAttachment> attachments = results.stream()
             .flatMap(result -> result.attachments().stream())
@@ -487,9 +680,42 @@ public final class AgentOrchestrator implements AutoCloseable {
         return new AgentResponse(reply.toString(), attachments);
     }
 
+    private AgentTaskResult resultForAggregation(AgentTaskState state) {
+        if (state.status() == TaskStatus.VERIFIED && state.lastResult() != null) {
+            return state.lastResult();
+        }
+        if (state.status() == TaskStatus.FAILED && state.lastResult() != null) {
+            return state.lastResult();
+        }
+        TaskEvaluation evaluation = state.lastEvaluation();
+        if (evaluation == null) {
+            return AgentTaskResult.failure(
+                state.task(), "任务未完成，当前状态：" + state.status());
+        }
+        StringBuilder error = new StringBuilder("任务验收未通过 [")
+            .append(evaluation.decision()).append('/')
+            .append(evaluation.code()).append("]：")
+            .append(evaluation.reason());
+        if (!evaluation.failedCriteria().isEmpty()) {
+            error.append("；失败条件：")
+                .append(String.join("、", evaluation.failedCriteria()));
+        }
+        if (!evaluation.correctiveHint().isBlank()) {
+            error.append("；建议：").append(evaluation.correctiveHint());
+        }
+        error.append("；当前状态：").append(state.status());
+        return AgentTaskResult.failure(state.task(), error.toString());
+    }
+
     private String compactLabel(String instruction) {
         String label = instruction.replaceAll("\\s+", " ").trim();
         return label.length() <= 36 ? label : label.substring(0, 36) + "…";
+    }
+
+    private AgentTask withInput(AgentTask task, com.fasterxml.jackson.databind.JsonNode input) {
+        return new AgentTask(
+            task.id(), task.order(), task.type(), task.skillName(), task.instruction(),
+            input, task.expectedOutput(), task.acceptanceCriteria(), task.dependencies());
     }
 
     private PlanningInput splitSupportingContext(String input) {

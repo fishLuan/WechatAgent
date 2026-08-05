@@ -3,6 +3,21 @@ package com.clawbot.wechatbot.service.agent;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.ImageGenService;
 import com.clawbot.wechatbot.service.VisionService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.clawbot.wechatbot.service.agent.acceptance.DefaultTaskAcceptanceEvaluator;
+import com.clawbot.wechatbot.service.agent.replan.AgentReplanPolicy;
+import com.clawbot.wechatbot.service.agent.replan.PlanMutation;
+import com.clawbot.wechatbot.service.agent.replan.PlanMutationApplier;
+import com.clawbot.wechatbot.service.agent.replan.PlanMutationType;
+import com.clawbot.wechatbot.service.agent.replan.PlanMutationValidator;
+import com.clawbot.wechatbot.service.agent.replan.ReplanRequest;
+import com.clawbot.wechatbot.service.agent.replan.ReplanResult;
+import com.clawbot.wechatbot.service.agent.replan.TaskReplanner;
+import com.clawbot.wechatbot.skills.SkillCatalog;
+import com.clawbot.wechatbot.skills.SkillDefinition;
+import com.clawbot.wechatbot.service.agent.reference.ReferencePolicy;
+import com.clawbot.wechatbot.service.agent.reference.ResultReferenceResolver;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -15,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AgentOrchestratorTests {
@@ -76,6 +92,163 @@ class AgentOrchestratorTests {
 
             assertTrue(imagePrompt.get().contains("杭州今天有雨"));
             assertEquals(1, response.attachments().size());
+        }
+    }
+
+    @Test
+    void blocksDependentTaskWhenAcceptanceCriteriaRequestReplan() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        AtomicInteger imageCalls = new AtomicInteger();
+        ChatService chat = chatService(input -> "{\"city\":\"上海\",\"weather\":\"晴\"}");
+        ImageGenService image = imageService(prompt -> {
+            imageCalls.incrementAndGet();
+            return new byte[] {1};
+        });
+        AgentTask weather = new AgentTask(
+            "weather", 0, AgentTaskType.CHAT_TOOL, "", "查询杭州天气",
+            mapper.createObjectNode().put("city", "杭州"),
+            mapper.createObjectNode().put("city", "string").put("weather", "string"),
+            List.of(new AcceptanceCriterion(
+                "城市必须为杭州", "$.city", AcceptanceOperator.EQUALS,
+                mapper.valueToTree("杭州"), true)),
+            List.of());
+        AgentTask imageTask = new AgentTask(
+            "image", 1, AgentTaskType.IMAGE_GENERATION,
+            "根据天气生成图片", List.of("weather"));
+        TaskPlanner planner = ignored -> List.of(weather, imageTask);
+
+        try (AgentOrchestrator orchestrator = orchestrator(chat, image, planner, 3, 2)) {
+            AgentResponse response = orchestrator.execute("查询杭州天气并生成图片", "");
+
+            assertEquals(0, imageCalls.get());
+            assertTrue(response.text().contains("REPLAN/TASK_ACCEPTANCE_FAILED"));
+            assertTrue(response.text().contains("任务依赖未通过验收"));
+        }
+    }
+
+    @Test
+    void automaticallyRetriesThenUnlocksDependentTask() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        AtomicInteger firstAttempts = new AtomicInteger();
+        AtomicInteger dependentCalls = new AtomicInteger();
+        AtomicInteger replanCalls = new AtomicInteger();
+        ChatService chat = chatService(input -> {
+            if (input.contains("任务拆解过程：\n查询数据")) {
+                if (firstAttempts.incrementAndGet() == 1) {
+                    throw new IllegalStateException("临时故障");
+                }
+                return "{\"ok\":true}";
+            }
+            dependentCalls.incrementAndGet();
+            return "后续任务完成";
+        });
+        AgentTask first = new AgentTask(
+            "first", 0, AgentTaskType.CHAT_TOOL, "", "查询数据",
+            mapper.createObjectNode(), mapper.createObjectNode().put("ok", "boolean"),
+            List.of(), List.of());
+        AgentTask second = new AgentTask(
+            "second", 1, AgentTaskType.CHAT_TOOL, "处理查询结果", List.of("first"));
+        TaskReplanner replanner = replanner(request -> {
+            replanCalls.incrementAndGet();
+            return new ReplanResult(List.of(), "不应调用");
+        });
+
+        try (AgentOrchestrator orchestrator = dynamicOrchestrator(
+            chat, ignored -> List.of(first, second), replanner,
+            new AgentReplanPolicy(true, 2, 2, 10, 10, Duration.ofSeconds(2)))) {
+            AgentResponse response = orchestrator.execute("查询后处理", "");
+
+            assertEquals(2, firstAttempts.get());
+            assertEquals(1, dependentCalls.get());
+            assertEquals(0, replanCalls.get());
+            assertTrue(response.text().contains("后续任务完成"));
+        }
+    }
+
+    @Test
+    void dynamicallyReplacesFailedTaskAndContinuesPlan() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        AtomicInteger originalCalls = new AtomicInteger();
+        AtomicInteger repairedCalls = new AtomicInteger();
+        AtomicInteger dependentCalls = new AtomicInteger();
+        AtomicInteger replanCalls = new AtomicInteger();
+        ChatService chat = chatService(input -> {
+            if (input.contains("任务拆解过程：\n原搜索")) {
+                originalCalls.incrementAndGet();
+                return "{\"items\":[]}";
+            }
+            if (input.contains("任务拆解过程：\n改进搜索")) {
+                repairedCalls.incrementAndGet();
+                return "{\"items\":[{\"title\":\"火影忍者\"}]}";
+            }
+            dependentCalls.incrementAndGet();
+            return "已选择并完成后续操作";
+        });
+        AcceptanceCriterion notEmpty = new AcceptanceCriterion(
+            "搜索结果不能为空", "$.items", AcceptanceOperator.NOT_EMPTY,
+            null, true);
+        AgentTask search = new AgentTask(
+            "search", 0, AgentTaskType.CHAT_TOOL, "", "原搜索",
+            mapper.createObjectNode(), mapper.createObjectNode().put("items", "array"),
+            List.of(notEmpty), List.of());
+        AgentTask next = new AgentTask(
+            "next", 1, AgentTaskType.CHAT_TOOL, "执行后续操作", List.of("search"));
+        TaskReplanner replanner = replanner(request -> {
+            replanCalls.incrementAndGet();
+            AgentTask replacement = new AgentTask(
+                "search", 0, AgentTaskType.CHAT_TOOL, "", "改进搜索",
+                mapper.createObjectNode(), mapper.createObjectNode().put("items", "array"),
+                List.of(notEmpty), List.of());
+            return new ReplanResult(
+                List.of(new PlanMutation(
+                    PlanMutationType.REPLACE_TASK, "search", replacement,
+                    "更换搜索方式")),
+                "修复空结果");
+        });
+
+        try (AgentOrchestrator orchestrator = dynamicOrchestrator(
+            chat, ignored -> List.of(search, next), replanner,
+            new AgentReplanPolicy(true, 2, 1, 10, 10, Duration.ofSeconds(2)))) {
+            AgentResponse response = orchestrator.execute("搜索后执行", "");
+
+            assertEquals(1, originalCalls.get());
+            assertEquals(1, repairedCalls.get());
+            assertEquals(1, dependentCalls.get());
+            assertEquals(1, replanCalls.get());
+            assertTrue(response.text().contains("已选择并完成后续操作"));
+        }
+    }
+
+    @Test
+    void resolvesVerifiedReferenceBeforeExecutingDependentTask() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        AtomicReference<String> dependentPrompt = new AtomicReference<>("");
+        ChatService chat = chatService(input -> {
+            if (input.contains("任务拆解过程：\n搜索作品")) {
+                return "{\"selectedItem\":{\"title\":\"火影忍者\","
+                    + "\"seasonId\":\"ss123\"}}";
+            }
+            dependentPrompt.set(input);
+            return "订阅完成";
+        });
+        AgentTask search = new AgentTask(
+            "search", 0, AgentTaskType.CHAT_TOOL, "搜索作品", List.of());
+        ObjectNode subscribeInput = mapper.createObjectNode();
+        subscribeInput.putObject("seasonId")
+            .put("$ref", "search.output.selectedItem.seasonId");
+        AgentTask subscribe = new AgentTask(
+            "subscribe", 1, AgentTaskType.CHAT_TOOL, "", "订阅作品",
+            subscribeInput, mapper.createObjectNode(), List.of(), List.of("search"));
+
+        try (AgentOrchestrator orchestrator = orchestrator(
+            chat, imageService(prompt -> new byte[] {1}),
+            ignored -> List.of(search, subscribe), 4, 2)) {
+            AgentResponse response = orchestrator.execute("搜索并订阅作品", "");
+
+            assertTrue(response.text().contains("订阅完成"));
+            assertTrue(dependentPrompt.get().contains("已验证的结构化输入"));
+            assertTrue(dependentPrompt.get().contains("\"seasonId\":\"ss123\""));
+            assertFalse(dependentPrompt.get().contains("$ref"));
         }
     }
 
@@ -360,6 +533,55 @@ class AgentOrchestratorTests {
             true,
             rounds,
             parallelism);
+    }
+
+    private AgentOrchestrator dynamicOrchestrator(
+        ChatService chat,
+        TaskPlanner planner,
+        TaskReplanner replanner,
+        AgentReplanPolicy policy
+    ) {
+        ObjectMapper mapper = new ObjectMapper();
+        PlanMutationValidator validator = new PlanMutationValidator(
+            emptySkills(), 5, 5, policy.maxTotalTasks());
+        return new AgentOrchestrator(
+            chat,
+            planner,
+            List.of(new ChatAgentTaskHandler(chat)),
+            true,
+            10,
+            5,
+            2,
+            Duration.ofSeconds(5),
+            new AgentRequestContextHolder(),
+            new DefaultTaskAcceptanceEvaluator(mapper),
+            replanner,
+            new PlanMutationApplier(validator),
+            policy,
+            new ResultReferenceResolver(mapper, ReferencePolicy.defaults()));
+    }
+
+    private TaskReplanner replanner(
+        ThrowingFunction<ReplanRequest, ReplanResult> action
+    ) {
+        return new TaskReplanner() {
+            @Override
+            public ReplanResult replan(ReplanRequest request) throws Exception {
+                return action.apply(request);
+            }
+
+            @Override
+            public boolean isConfigured() {
+                return true;
+            }
+        };
+    }
+
+    private SkillCatalog emptySkills() {
+        return new SkillCatalog() {
+            @Override public List<SkillDefinition> definitions() { return List.of(); }
+            @Override public boolean contains(String name) { return false; }
+        };
     }
 
     private ChatService chatService(ThrowingFunction<String, String> responder) {

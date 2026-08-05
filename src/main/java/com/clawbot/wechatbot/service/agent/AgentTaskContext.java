@@ -1,5 +1,9 @@
 package com.clawbot.wechatbot.service.agent;
 
+import com.clawbot.wechatbot.service.agent.reference.DataLineageRecord;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -9,7 +13,9 @@ public record AgentTaskContext(
     String history,
     String supportingContext,
     Map<String, AgentTaskResult> dependencyResults,
-    List<AgentInputAttachment> inputAttachments
+    List<AgentInputAttachment> inputAttachments,
+    JsonNode resolvedInput,
+    List<DataLineageRecord> lineage
 ) {
     public AgentTaskContext {
         history = history == null ? "" : history;
@@ -20,6 +26,19 @@ public record AgentTaskContext(
         inputAttachments = inputAttachments == null
             ? List.of()
             : List.copyOf(inputAttachments);
+        resolvedInput = resolvedInput == null
+            ? JsonNodeFactory.instance.objectNode() : resolvedInput.deepCopy();
+        lineage = lineage == null ? List.of() : List.copyOf(lineage);
+    }
+
+    public AgentTaskContext(
+        String history,
+        String supportingContext,
+        Map<String, AgentTaskResult> dependencyResults,
+        List<AgentInputAttachment> inputAttachments
+    ) {
+        this(history, supportingContext, dependencyResults, inputAttachments,
+            JsonNodeFactory.instance.objectNode(), List.of());
     }
 
     public AgentTaskContext(
@@ -28,6 +47,11 @@ public record AgentTaskContext(
         Map<String, AgentTaskResult> dependencyResults
     ) {
         this(history, supportingContext, dependencyResults, List.of());
+    }
+
+    @Override
+    public JsonNode resolvedInput() {
+        return resolvedInput.deepCopy();
     }
 
     public String dependencyText() {

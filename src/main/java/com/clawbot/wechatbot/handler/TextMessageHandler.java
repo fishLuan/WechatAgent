@@ -5,6 +5,8 @@ import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.VoiceItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import com.clawbot.wechatbot.base.PlannedMessageHandler;
+import com.clawbot.wechatbot.confirmation.ConfirmationReply;
+import com.clawbot.wechatbot.confirmation.ConfirmationReplyService;
 import com.clawbot.wechatbot.memory.ConversationMemory;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.memory.ConversationMessage;
@@ -49,6 +51,7 @@ public class TextMessageHandler implements PlannedMessageHandler {
     private final LongReplyManager longReplyManager;
     private final IntentRecognizer intentRecognizer;
     private final AgentInputAttachmentLoader inputAttachmentLoader;
+    private final ConfirmationReplyService confirmationReplies;
 
     public TextMessageHandler(
         ChatService chatService,
@@ -60,7 +63,8 @@ public class TextMessageHandler implements PlannedMessageHandler {
         MemoryProperties memoryProperties,
         LongReplyManager longReplyManager,
         IntentRecognizer intentRecognizer,
-        AgentInputAttachmentLoader inputAttachmentLoader
+        AgentInputAttachmentLoader inputAttachmentLoader,
+        ConfirmationReplyService confirmationReplies
     ) {
         this.chatService = chatService;
         this.agentOrchestrator = agentOrchestrator;
@@ -72,6 +76,7 @@ public class TextMessageHandler implements PlannedMessageHandler {
         this.longReplyManager = longReplyManager;
         this.intentRecognizer = intentRecognizer;
         this.inputAttachmentLoader = inputAttachmentLoader;
+        this.confirmationReplies = confirmationReplies;
         DocumentService.silencePdfLogs();  // 屏蔽 PDF 库的噪音日志
     }
 
@@ -105,6 +110,18 @@ public class TextMessageHandler implements PlannedMessageHandler {
     ) {
         String from = msg.getFrom_user_id();
         String userText = extractText(msg);
+        try {
+            ConfirmationReply confirmation = confirmationReplies.handle(
+                from, msg.getMessage_id(), userText);
+            if (confirmation.handled() && !confirmation.continueWithAgent()) {
+                safeSendText(client, from, confirmation.message());
+                return;
+            }
+            if (confirmation.continueWithAgent()) userText = confirmation.revisedRequest();
+        } catch (Exception exception) {
+            safeSendText(client, from, "确认任务处理失败：" + exception.getMessage());
+            return;
+        }
         IntentResult intent = intentRecognizer.recognize(userText);
         System.out.println("[INTENT] type=" + intent.type()
             + " confidence=" + String.format("%.2f", intent.confidence())

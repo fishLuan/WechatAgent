@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.skills;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.clawbot.wechatbot.skills.validation.SkillValidationDefinition;
 
 import java.util.List;
 import java.util.Locale;
@@ -17,7 +18,8 @@ public record SkillDefinition(
     List<String> capabilities,
     List<String> triggers,
     @JsonProperty("timeout-seconds") int timeoutSeconds,
-    @JsonProperty("requires-user-context") boolean requiresUserContext
+    @JsonProperty("requires-user-context") boolean requiresUserContext,
+    SkillValidationDefinition validation
 ) {
     private static final Pattern NAME = Pattern.compile("[a-z0-9][a-z0-9-]{0,63}");
 
@@ -39,6 +41,26 @@ public record SkillDefinition(
             throw new IllegalArgumentException("Skill description cannot be empty: " + name);
         }
         if (timeoutSeconds <= 0) timeoutSeconds = 30;
+        validation = validation == null
+            ? SkillValidationDefinition.generic() : validation;
+    }
+
+    /** 兼容尚未声明 validation 的旧调用方。 */
+    public SkillDefinition(
+        String name,
+        String version,
+        boolean enabled,
+        String displayName,
+        String description,
+        String executor,
+        List<String> capabilities,
+        List<String> triggers,
+        int timeoutSeconds,
+        boolean requiresUserContext
+    ) {
+        this(name, version, enabled, displayName, description, executor,
+            capabilities, triggers, timeoutSeconds, requiresUserContext,
+            SkillValidationDefinition.generic());
     }
 
     private static String normalize(String value) {

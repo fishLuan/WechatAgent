@@ -93,7 +93,12 @@ public class ToolBeanConfiguration {
     @Bean CalculateZodiacInfoTool calculateZodiacInfoTool(ObjectMapper mapper) {
         return new CalculateZodiacInfoTool(mapper);
     }
-    @Bean FunctionToolRegistry functionToolRegistry(ObjectMapper mapper, List<FunctionTool> tools) {
-        return new FunctionToolRegistry(mapper, tools);
+    @Bean FunctionToolRegistry functionToolRegistry(
+        ObjectMapper mapper, List<FunctionTool> tools,
+        com.clawbot.wechatbot.confirmation.ConfirmationService confirmations,
+        com.clawbot.wechatbot.confirmation.RiskPolicy riskPolicy,
+        com.clawbot.wechatbot.service.agent.AgentRequestContextHolder requestContextHolder
+    ) {
+        return new FunctionToolRegistry(mapper, tools, confirmations, riskPolicy, requestContextHolder);
     }
 }

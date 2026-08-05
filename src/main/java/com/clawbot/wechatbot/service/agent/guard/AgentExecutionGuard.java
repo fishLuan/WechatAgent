@@ -167,6 +167,16 @@ public final class AgentExecutionGuard {
         return state == null ? Set.of() : Set.copyOf(state.circuitOpenTools);
     }
 
+    /** 仅返回已经通过校验并正式提交的工具结果，供后续校验器做跨步骤检查。 */
+    public Map<String, String> verifiedResults() {
+        ExecutionState state = stateHolder.get();
+        if (state == null) return Map.of();
+        Map<String, String> results = new HashMap<>();
+        state.successfulResults.forEach((key, value) ->
+            results.put(key.toolName() + ":" + key.argumentsFingerprint(), value));
+        return Map.copyOf(results);
+    }
+
     private String limitSingleResult(ToolExecutionOutcome outcome) {
         String content = outcome.content();
         if (content.length() <= policy.maxToolResultChars()) return content;

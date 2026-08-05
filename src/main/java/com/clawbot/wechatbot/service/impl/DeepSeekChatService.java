@@ -2,6 +2,7 @@ package com.clawbot.wechatbot.service.impl;
 
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.agent.guard.AgentExecutionGuard;
+import com.clawbot.wechatbot.service.agent.validation.ToolValidationPipeline;
 import com.clawbot.wechatbot.service.client.DeepSeekClient;
 import com.clawbot.wechatbot.service.longform.LongFormGenerationPolicy;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
@@ -15,6 +16,13 @@ import java.util.OptionalInt;
 
 /** 负责对话和 function-calling 流程，不再承担 HTTP 或具体工具执行细节。 */
 public class DeepSeekChatService implements ChatService {
+    private static final String TOOL_VALIDATION_PROMPT = """
+
+        工具串联执行规则：调用工具前先依据用户原始需求明确当前步骤目标和验收条件。
+        后续工具只能使用已经返回到 messages 中且 success=true 的工具结果，禁止猜测、补写或改写其中的标识、日期、地点、币种等关键字段。
+        如果工具结果 success=false 或 verified=false，必须遵循 action：RETRY 表示修正参数后重试当前步骤；REPLAN 表示重新规划当前步骤或更换工具；ABORT 表示停止依赖该结果的后续步骤。
+        被标记 discarded_untrusted_result=true 的结果绝不能作为后续工具参数；无法获得可信前置结果时，应明确告知用户失败原因，不得沿错误结果继续执行。
+        """;
     private final DeepSeekClient client;
     private final FunctionToolRegistry toolRegistry;
     private final String systemPrompt;
@@ -22,18 +30,30 @@ public class DeepSeekChatService implements ChatService {
     private final ObjectMapper mapper;
     private final AgentExecutionGuard executionGuard;
     private final LongFormGenerationPolicy longFormPolicy;
+    private final ToolValidationPipeline validationPipeline;
 
     public DeepSeekChatService(DeepSeekClient client, FunctionToolRegistry toolRegistry,
                                String systemPrompt, int maxToolRounds,
                                AgentExecutionGuard executionGuard) {
         this(client, toolRegistry, systemPrompt, maxToolRounds, executionGuard,
-            LongFormGenerationPolicy.disabled());
+            LongFormGenerationPolicy.disabled(),
+            new ToolValidationPipeline(client.mapper(), java.util.List.of(), 0.6D));
     }
 
     public DeepSeekChatService(DeepSeekClient client, FunctionToolRegistry toolRegistry,
                                String systemPrompt, int maxToolRounds,
                                AgentExecutionGuard executionGuard,
                                LongFormGenerationPolicy longFormPolicy) {
+        this(client, toolRegistry, systemPrompt, maxToolRounds, executionGuard,
+            longFormPolicy,
+            new ToolValidationPipeline(client.mapper(), java.util.List.of(), 0.6D));
+    }
+
+    public DeepSeekChatService(DeepSeekClient client, FunctionToolRegistry toolRegistry,
+                               String systemPrompt, int maxToolRounds,
+                               AgentExecutionGuard executionGuard,
+                               LongFormGenerationPolicy longFormPolicy,
+                               ToolValidationPipeline validationPipeline) {
         this.client = client;
         this.toolRegistry = toolRegistry;
         this.systemPrompt = systemPrompt;
@@ -41,6 +61,7 @@ public class DeepSeekChatService implements ChatService {
         this.mapper = client.mapper();
         this.executionGuard = executionGuard;
         this.longFormPolicy = longFormPolicy;
+        this.validationPipeline = validationPipeline;
     }
 
     @Override
@@ -52,7 +73,7 @@ public class DeepSeekChatService implements ChatService {
 
     private String runToolLoop(String userText, String history) throws Exception {
         ArrayNode messages = mapper.createArrayNode();
-        messages.add(message("system", systemPrompt));
+        messages.add(message("system", systemPrompt + TOOL_VALIDATION_PROMPT));
         appendHistory(messages, history);
         messages.add(message("user", userText));
 
@@ -92,6 +113,11 @@ public class DeepSeekChatService implements ChatService {
                     ToolExecutionOutcome outcome = decision.execute()
                         ? toolRegistry.executeWithOutcome(toolName, arguments)
                         : decision.blockedOutcome();
+                    if (decision.execute()) {
+                        outcome = validationPipeline.validate(
+                            userText, toolName, arguments, outcome,
+                            executionGuard.verifiedResults()).outcome();
+                    }
                     toolContent = executionGuard.completeTool(decision, outcome);
                     completed = true;
                 } finally {
