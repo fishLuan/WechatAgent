@@ -653,6 +653,10 @@ class ExcelPlanParserTests {
         assertEquals("销售表", op.param("name"));
         assertEquals("销售表", parseSingle("切换到表格 销售表").param("name"));
         assertEquals("销售表", parseSingle("打开表格 销售表").param("name"));
+        assertEquals("季度销售", parseSingle("切换工作簿：季度销售").param("name"));
+        assertEquals("报表", parseSingle("选择工作簿：报表").param("name"));
+        assertEquals("季度销售", parseSingle("切换表格：季度销售").param("name"));
+        assertEquals("报表", parseSingle("打开工作簿 报表").param("name"));
     }
 
     @Test

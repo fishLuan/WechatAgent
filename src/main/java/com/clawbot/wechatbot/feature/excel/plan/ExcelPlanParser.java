@@ -112,9 +112,9 @@ public final class ExcelPlanParser {
     private static final Pattern WORKBOOK_LIST_CMD = Pattern.compile(
         "^(?:请|帮我\\s*)*(?:我的表格|表格列表|查看表格列表|有哪些表格|"
             + "查看所有工作簿|所有工作簿|我的工作簿)\\s*$");
-    /** 选择表格指令：选择/切换到/打开表格 X。 */
+    /** 选择表格指令：选择/切换(到)/打开 表格或工作簿 X（支持冒号，如「切换工作簿：季度销售」）。 */
     private static final Pattern WORKBOOK_SELECT_CMD = Pattern.compile(
-        "^(?:请|帮我\\s*)*(?:选择|切换到|打开)表格\\s*(.+?)\\s*$");
+        "^(?:请|帮我\\s*)*(?:选择|切换(?:到)?|打开)(?:表格|工作簿)\\s*[:：]?\\s*(.+?)\\s*$");
     /** 重命名表格指令：重命名表格 X为Y / 把表格X改名为Y。 */
     private static final Pattern WORKBOOK_RENAME_VERB = Pattern.compile(
         "^(?:请|帮我\\s*)*重命名(?:表格|工作簿)?\\s*(.+?)为(.+?)\\s*$");
