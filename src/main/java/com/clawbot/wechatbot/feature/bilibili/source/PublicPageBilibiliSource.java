@@ -3,6 +3,7 @@ package com.clawbot.wechatbot.feature.bilibili.source;
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 import com.clawbot.wechatbot.feature.bilibili.source.client.BilibiliHttpClient;
+import com.clawbot.wechatbot.feature.bilibili.source.client.BilibiliWbiSigner;
 import com.clawbot.wechatbot.feature.bilibili.source.dto.BilibiliContentDto;
 import com.clawbot.wechatbot.feature.bilibili.source.parser.BilibiliPageParser;
 import com.clawbot.wechatbot.feature.bilibili.source.parser.BilibiliUrlParser;
@@ -39,8 +40,10 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
     private static final String PGC_INDEX =
         "https://api.bilibili.com/pgc/season/index/result?"
             + "season_type=%d&type=1&st=1&sort=0&page=%d&pagesize=%d";
-    private static final String SEARCH =
-        "https://api.bilibili.com/x/web-interface/search/type?search_type=%s&keyword=%s&page_size=%d";
+    private static final String PGC_RANK =
+        "https://api.bilibili.com/pgc/season/rank/web/list?season_type=%d&day=3";
+    private static final String WBI_SEARCH =
+        "https://api.bilibili.com/x/web-interface/wbi/search/type";
     private static final String PGC_TIMELINE =
         "https://api.bilibili.com/pgc/web/timeline?types=%d&before=6&after=0";
 
@@ -49,12 +52,14 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
     private final BilibiliPageParser pageParser;
     private final ObjectMapper objectMapper;
     private final BilibiliContentMapper contentMapper;
+    private final BilibiliWbiSigner wbiSigner;
     private final Map<ContentType, Integer> nextPgcIndexPage =
         new EnumMap<>(ContentType.class);
 
     @Autowired
     public PublicPageBilibiliSource(BilibiliHttpClient httpClient, ObjectMapper objectMapper) {
-        this(httpClient, new BilibiliUrlParser(), new BilibiliPageParser(), objectMapper);
+        this(httpClient, new BilibiliUrlParser(), new BilibiliPageParser(), objectMapper,
+            new BilibiliWbiSigner(httpClient, objectMapper));
     }
 
     PublicPageBilibiliSource(
@@ -63,11 +68,23 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         BilibiliPageParser pageParser,
         ObjectMapper objectMapper
     ) {
+        this(httpClient, urlParser, pageParser, objectMapper,
+            new BilibiliWbiSigner(httpClient, objectMapper));
+    }
+
+    PublicPageBilibiliSource(
+        BilibiliHttpClient httpClient,
+        BilibiliUrlParser urlParser,
+        BilibiliPageParser pageParser,
+        ObjectMapper objectMapper,
+        BilibiliWbiSigner wbiSigner
+    ) {
         this.httpClient = httpClient;
         this.urlParser = urlParser;
         this.pageParser = pageParser;
         this.objectMapper = objectMapper;
         this.contentMapper = new BilibiliContentMapper();
+        this.wbiSigner = wbiSigner;
     }
 
     @Override
@@ -138,25 +155,61 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         if (limit < 1 || contentType == null || contentType == ContentType.UPLOADER) {
             return List.of();
         }
-        List<BilibiliContent> indexCandidates = tryFindPgcIndexCandidates(contentType, limit);
-        if (!indexCandidates.isEmpty()) return indexCandidates;
+        List<BilibiliContent> ranked = tryFindPgcRankCandidates(contentType, limit);
+        if (!ranked.isEmpty()) return ranked;
+        return tryFindPgcIndexCandidates(contentType, limit);
+    }
 
-        String keyword = contentType == ContentType.MOVIE ? "高分电影" : "高分动漫";
-        String searchType = contentType == ContentType.MOVIE ? "media_ft" : "media_bangumi";
-        String url = String.format(
-            SEARCH,
-            searchType,
-            URLEncoder.encode(keyword, StandardCharsets.UTF_8),
-            Math.min(limit, 20));
-        List<BilibiliContent> contents = new ArrayList<>();
-        String body = httpClient.getAnonymousSearchText(url);
-        if (body == null || body.isBlank()) return List.of();
-        for (BilibiliContentDto dto : pageParser.parseSearchMediaJson(body, "")) {
-            BilibiliContent content = contentMapper.toContent(dto);
-            if (content.getContentType() == contentType) contents.add(content);
-            if (contents.size() >= limit) break;
+    private List<BilibiliContent> tryFindPgcRankCandidates(
+        ContentType contentType, int limit
+    ) {
+        Integer seasonType = pgcSeasonType(contentType);
+        if (seasonType == null) return List.of();
+        try {
+            String body = httpClient.getText(String.format(PGC_RANK, seasonType));
+            ensureSupportedResponse(body);
+            JsonNode list = objectMapper.readTree(body).at("/result/list");
+            if (!list.isArray()) return List.of();
+            List<BilibiliContent> contents = new ArrayList<>();
+            for (JsonNode item : list) {
+                String seasonId = item.path("season_id").asText("").trim();
+                String title = item.path("title").asText("").trim();
+                if (seasonId.isEmpty() || title.isEmpty()) continue;
+                BilibiliContent content = new BilibiliContent(contentType, seasonId, title);
+                content.setSeasonId(seasonId);
+                content.setRating(parseRating(item.path("rating").asText("")));
+                if (item.at("/stat/view").canConvertToLong()) {
+                    content.setViewCount(item.at("/stat/view").asLong());
+                }
+                content.setCoverUrl(item.path("cover").asText(""));
+                content.setPageUrl(item.path("url").asText(""));
+                String episode = item.at("/new_ep/index_show").asText("").trim();
+                if (episode.isEmpty()) episode = item.path("desc").asText("").trim();
+                content.setLatestEpisodeTitle(episode);
+                content.setLatestEpisodeNumber(parseIntFromText(episode));
+                content.setFinished(!episode.isEmpty() && episode.contains("全")
+                    && !episode.contains("更新至"));
+                content.setLastFetchedAt(Instant.now());
+                contents.add(content);
+                if (contents.size() >= limit) break;
+            }
+            System.out.println("[BILIBILI] 候选数据源=PGC_RANK，类型="
+                + contentType + "，数量=" + contents.size());
+            return contents;
+        } catch (Exception e) {
+            System.err.println("[BILIBILI] PGC 榜单失败，降级索引接口: " + e.getMessage());
+            return List.of();
         }
-        return contents;
+    }
+
+    private Double parseRating(String text) {
+        if (text == null || text.isBlank()) return null;
+        try {
+            String number = text.replaceAll("[^0-9.]", "");
+            return number.isBlank() ? null : Double.valueOf(number);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     @Override
@@ -180,13 +233,13 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         String title,
         int limit
     ) throws Exception {
-        String url = String.format(
-            SEARCH,
-            searchType,
-            URLEncoder.encode(title, StandardCharsets.UTF_8),
-            limit);
-        String body = httpClient.getAnonymousSearchText(url);
-        if (body == null || body.isBlank()) return;
+        String url = wbiSigner.sign(WBI_SEARCH, Map.of(
+            "search_type", searchType,
+            "keyword", title,
+            "page", "1",
+            "page_size", Integer.toString(limit)));
+        String body = httpClient.getText(url);
+        ensureSupportedResponse(body);
         for (BilibiliContentDto dto
             : pageParser.parseSearchMediaJson(body, "")) {
             BilibiliContent content = contentMapper.toContent(dto);
@@ -203,7 +256,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         try {
             return findPgcIndexCandidates(contentType, limit);
         } catch (Exception e) {
-            System.err.println("[BILIBILI] PGC 索引候选池失败，降级搜索接口: "
+            System.err.println("[BILIBILI] PGC 索引候选池失败: "
                 + e.getMessage());
             return List.of();
         }

@@ -13,6 +13,8 @@ import java.time.LocalTime;
 public class BilibiliProperties {
     private boolean enabled;
     private int checkIntervalMinutes = 30;
+    private int catalogRefreshMinutes = 360;
+    private int catalogSizePerType = 50;
     private int requestTimeoutSeconds = 15;
     private int maxRetries = 2;
     private LocalTime defaultPushTime = LocalTime.of(20, 0);
@@ -27,6 +29,8 @@ public class BilibiliProperties {
     @PostConstruct
     void validate() {
         requirePositive(checkIntervalMinutes, "check-interval-minutes");
+        requirePositive(catalogRefreshMinutes, "catalog-refresh-minutes");
+        requirePositive(catalogSizePerType, "catalog-size-per-type");
         requirePositive(requestTimeoutSeconds, "request-timeout-seconds");
         if (maxRetries < 0) {
             throw invalid("max-retries", "不能小于 0");
@@ -79,6 +83,10 @@ public class BilibiliProperties {
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
     public int getCheckIntervalMinutes() { return checkIntervalMinutes; }
     public void setCheckIntervalMinutes(int value) { this.checkIntervalMinutes = value; }
+    public int getCatalogRefreshMinutes() { return catalogRefreshMinutes; }
+    public void setCatalogRefreshMinutes(int value) { this.catalogRefreshMinutes = value; }
+    public int getCatalogSizePerType() { return catalogSizePerType; }
+    public void setCatalogSizePerType(int value) { this.catalogSizePerType = value; }
     public int getRequestTimeoutSeconds() { return requestTimeoutSeconds; }
     public void setRequestTimeoutSeconds(int value) { this.requestTimeoutSeconds = value; }
     public int getMaxRetries() { return maxRetries; }

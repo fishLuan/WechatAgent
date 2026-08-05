@@ -4,6 +4,7 @@ import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
 import com.clawbot.wechatbot.feature.bilibili.model.*;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliPreferenceRepository;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliRecommendationHistoryRepository;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliContentRepository;
 import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -15,6 +16,8 @@ import java.time.LocalTime;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 /**
  * B 站推荐模块完整集成测试。
@@ -34,6 +37,7 @@ class BilibiliRecommendationIntegrationTests {
     private StubContentSource contentSource;
     private StubPreferenceRepository prefRepo;
     private StubHistoryRepository historyRepo;
+    private BilibiliContentRepository contentRepository;
 
     // ---- 工厂 ----
     private BilibiliProperties properties;
@@ -56,11 +60,17 @@ class BilibiliRecommendationIntegrationTests {
         contentSource = new StubContentSource();
         prefRepo = new StubPreferenceRepository();
         historyRepo = new StubHistoryRepository();
+        contentRepository = mock(BilibiliContentRepository.class);
+        when(contentRepository
+            .findByContentTypeAndRatingGreaterThanEqualOrderByRatingDesc(
+                any(ContentType.class), anyDouble()))
+            .thenReturn(List.of());
         pendingStore = new PendingRecommendationStore();
         preferenceService = new BilibiliPreferenceServiceImpl(prefRepo, properties);
         historyService = new RecommendationHistoryService(historyRepo);
         recommendationService = new BilibiliRecommendationServiceImpl(
-            contentSource, preferenceService, historyService, pendingStore, properties);
+            contentSource, preferenceService, historyService, pendingStore, properties,
+            contentRepository);
     }
 
     // ================================================================

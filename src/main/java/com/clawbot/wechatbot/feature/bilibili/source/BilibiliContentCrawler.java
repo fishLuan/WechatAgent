@@ -14,6 +14,7 @@ import java.util.Optional;
 /** 自动抓取 B 站候选内容并写入 bilibili_content 集合。 */
 @Service
 public class BilibiliContentCrawler {
+    private static final int DETAIL_ENRICHMENT_LIMIT_PER_TYPE = 2;
     private final BilibiliContentSource contentSource;
     private final BilibiliContentRepository contentRepository;
     private final BilibiliProperties properties;
@@ -58,13 +59,62 @@ public class BilibiliContentCrawler {
         int updated = 0;
         List<BilibiliContent> candidates =
             contentSource.findCandidates(contentType, limit);
+        int enriched = 0;
         for (BilibiliContent candidate : candidates) {
+            if (enriched < DETAIL_ENRICHMENT_LIMIT_PER_TYPE
+                && enrichNewCandidate(candidate)) {
+                enriched++;
+            }
             StoredContent stored = saveSnapshot(candidate);
             saved.add(stored.content());
             if (stored.inserted()) inserted++;
             else updated++;
         }
         return new StoredContents(saved, candidates.size(), inserted, updated);
+    }
+
+    /** 保存用户在线搜索发现的作品，并复用候选池的幂等更新规则。 */
+    public List<BilibiliContent> storeDiscovered(List<BilibiliContent> contents) {
+        if (contents == null || contents.isEmpty()) return List.of();
+        List<BilibiliContent> saved = new ArrayList<>();
+        for (BilibiliContent content : contents) {
+            if (content == null || content.getContentType() == ContentType.UPLOADER) continue;
+            saved.add(saveSnapshot(content).content());
+        }
+        return saved;
+    }
+
+    private boolean enrichNewCandidate(BilibiliContent candidate) {
+        if (candidate == null || candidate.getSeasonId() == null
+            || candidate.getSeasonId().isBlank()) return false;
+        boolean exists = contentRepository.findByContentTypeAndContentId(
+            candidate.getContentType(), candidate.getContentId()).isPresent();
+        if (exists) return false;
+        try {
+            Optional<BilibiliContent> detail = Optional.ofNullable(
+                contentSource.findBySeasonId(
+                    candidate.getContentType(), candidate.getSeasonId()))
+                .orElseGet(Optional::empty);
+            detail.ifPresent(value -> mergeDetail(value, candidate));
+            return detail.isPresent();
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void mergeDetail(BilibiliContent detail, BilibiliContent target) {
+        if (detail.getDescription() != null && !detail.getDescription().isBlank())
+            target.setDescription(detail.getDescription());
+        if (!detail.getGenres().isEmpty()) target.setGenres(detail.getGenres());
+        if (target.getRating() == null) target.setRating(detail.getRating());
+        if (target.getCoverUrl() == null || target.getCoverUrl().isBlank())
+            target.setCoverUrl(detail.getCoverUrl());
+        if (target.getPageUrl() == null || target.getPageUrl().isBlank())
+            target.setPageUrl(detail.getPageUrl());
+        if (detail.getLatestEpisodeId() != null)
+            target.setLatestEpisodeId(detail.getLatestEpisodeId());
+        if (detail.getLatestEpisodePubTime() != null)
+            target.setLatestEpisodePubTime(detail.getLatestEpisodePubTime());
     }
 
     private void crawlOneType(
@@ -75,7 +125,7 @@ public class BilibiliContentCrawler {
     ) {
         try {
             StoredContents stored = crawlAndStoreWithStats(
-                contentType, properties.recommendationCount(contentType));
+                contentType, properties.getCatalogSizePerType());
             stats.candidateCount += stored.candidateCount();
             stats.insertedCount += stored.insertedCount();
             stats.updatedCount += stored.updatedCount();
@@ -116,17 +166,26 @@ public class BilibiliContentCrawler {
     private void copyMutableFields(BilibiliContent source, BilibiliContent target) {
         target.setSeasonId(source.getSeasonId());
         target.setTitle(source.getTitle());
-        target.setDescription(source.getDescription());
-        target.setGenres(source.getGenres());
-        target.setRating(source.getRating());
-        target.setViewCount(source.getViewCount());
-        target.setCoverUrl(source.getCoverUrl());
-        target.setPageUrl(source.getPageUrl());
-        target.setLatestEpisodeId(source.getLatestEpisodeId());
-        target.setLatestEpisodeTitle(source.getLatestEpisodeTitle());
-        target.setLatestEpisodeNumber(source.getLatestEpisodeNumber());
-        target.setLatestEpisodePubTime(source.getLatestEpisodePubTime());
-        target.setFinished(source.isFinished());
+        if (source.getDescription() != null && !source.getDescription().isBlank())
+            target.setDescription(source.getDescription());
+        if (!source.getGenres().isEmpty()) target.setGenres(source.getGenres());
+        if (source.getRating() != null) target.setRating(source.getRating());
+        if (source.getViewCount() != null) target.setViewCount(source.getViewCount());
+        if (source.getCoverUrl() != null && !source.getCoverUrl().isBlank())
+            target.setCoverUrl(source.getCoverUrl());
+        if (source.getPageUrl() != null && !source.getPageUrl().isBlank())
+            target.setPageUrl(source.getPageUrl());
+        if (source.getLatestEpisodeId() != null)
+            target.setLatestEpisodeId(source.getLatestEpisodeId());
+        if (source.getLatestEpisodeTitle() != null
+            && !source.getLatestEpisodeTitle().isBlank()) {
+            target.setLatestEpisodeTitle(source.getLatestEpisodeTitle());
+            target.setFinished(source.isFinished());
+        }
+        if (source.getLatestEpisodeNumber() != null)
+            target.setLatestEpisodeNumber(source.getLatestEpisodeNumber());
+        if (source.getLatestEpisodePubTime() != null)
+            target.setLatestEpisodePubTime(source.getLatestEpisodePubTime());
     }
 
     private static class CrawlStats {

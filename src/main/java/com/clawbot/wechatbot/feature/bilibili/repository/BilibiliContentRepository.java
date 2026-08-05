@@ -15,6 +15,9 @@ public interface BilibiliContentRepository
     Optional<BilibiliContent> findByContentTypeAndContentId(
         ContentType contentType, String contentId);
 
+    List<BilibiliContent> findTop20ByTitleContainingIgnoreCaseOrderByRatingDesc(
+        String title);
+
     List<BilibiliContent> findByContentTypeAndRatingGreaterThanEqualOrderByRatingDesc(
         ContentType contentType, double minimumRating);
 

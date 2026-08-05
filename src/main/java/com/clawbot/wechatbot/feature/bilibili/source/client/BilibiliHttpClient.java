@@ -12,6 +12,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 
 /** 带超时、重试和基础限流的 B 站公开页面/API 客户端。 */
 @Component
@@ -20,13 +22,16 @@ public class BilibiliHttpClient {
     private static final String USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
-    private static final long MIN_REQUEST_GAP_MILLIS = 350;
+    private static final long MIN_REQUEST_GAP_MILLIS = 1_500;
+    private static final long REQUEST_JITTER_MILLIS = 1_500;
+    private static final long BLOCKED_COOLDOWN_MILLIS = Duration.ofMinutes(10).toMillis();
 
     private final HttpClient httpClient;
     private final Duration requestTimeout;
     private final int maxRetries;
     private boolean anonymousSessionInitialized;
     private long lastRequestAt;
+    private final ConcurrentHashMap<String, Long> blockedUntil = new ConcurrentHashMap<>();
 
     @Autowired
     public BilibiliHttpClient(BilibiliProperties properties) {
@@ -52,6 +57,11 @@ public class BilibiliHttpClient {
     }
 
     public String getText(String url) throws Exception {
+        String endpoint = endpointKey(url);
+        Long cooldownUntil = blockedUntil.get(endpoint);
+        if (cooldownUntil != null && cooldownUntil > System.currentTimeMillis()) {
+            throw new IllegalStateException("B站接口处于熔断冷却期: " + endpoint);
+        }
         Exception lastFailure = null;
         for (int attempt = 0; attempt <= maxRetries; attempt++) {
             throttle();
@@ -60,13 +70,22 @@ public class BilibiliHttpClient {
                 HttpResponse<String> response = httpClient.send(
                     request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
                 int status = response.statusCode();
-                if (status >= 200 && status < 300) return response.body();
-                if (status != 429 && status < 500) {
+                if (status >= 200 && status < 300) {
+                    blockedUntil.remove(endpoint);
+                    return response.body();
+                }
+                if (status == 403 || status == 412 || status == 429) {
+                    blockedUntil.put(endpoint,
+                        System.currentTimeMillis() + BLOCKED_COOLDOWN_MILLIS);
+                    throw new PermissionLimitedException("B站请求受限，HTTP " + status);
+                }
+                if (status < 500) {
                     throw new IllegalStateException("B站请求失败，HTTP " + status);
                 }
                 lastFailure = new IllegalStateException("B站请求失败，HTTP " + status);
             } catch (Exception e) {
                 lastFailure = e;
+                if (e instanceof PermissionLimitedException) throw e;
             }
             Thread.sleep(Math.min(1000L * (attempt + 1), 3000L));
         }
@@ -140,8 +159,25 @@ public class BilibiliHttpClient {
 
     private synchronized void throttle() throws InterruptedException {
         long now = System.currentTimeMillis();
-        long wait = MIN_REQUEST_GAP_MILLIS - (now - lastRequestAt);
+        long targetGap = MIN_REQUEST_GAP_MILLIS
+            + ThreadLocalRandom.current().nextLong(REQUEST_JITTER_MILLIS + 1);
+        long wait = targetGap - (now - lastRequestAt);
         if (wait > 0) Thread.sleep(wait);
         lastRequestAt = System.currentTimeMillis();
+    }
+
+    private String endpointKey(String url) {
+        try {
+            URI uri = URI.create(url);
+            return uri.getHost() + uri.getPath();
+        } catch (Exception ignored) {
+            return url;
+        }
+    }
+
+    private static final class PermissionLimitedException extends IllegalStateException {
+        private PermissionLimitedException(String message) {
+            super(message);
+        }
     }
 }

@@ -4,6 +4,7 @@ import com.clawbot.wechatbot.feature.bilibili.config.BilibiliProperties;
 import com.clawbot.wechatbot.feature.bilibili.model.*;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliPreferenceRepository;
 import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliRecommendationHistoryRepository;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliContentRepository;
 import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,6 +27,7 @@ class BilibiliRecommendationServiceImplTests {
     @Mock private BilibiliContentSource contentSource;
     @Mock private BilibiliPreferenceRepository prefRepository;
     @Mock private BilibiliRecommendationHistoryRepository historyRepository;
+    @Mock private BilibiliContentRepository contentRepository;
 
     private BilibiliRecommendationServiceImpl service;
     private BilibiliProperties properties;
@@ -48,7 +50,12 @@ class BilibiliRecommendationServiceImplTests {
             new RecommendationHistoryService(historyRepository);
 
         service = new BilibiliRecommendationServiceImpl(
-            contentSource, preferenceService, historyService, pendingStore, properties);
+            contentSource, preferenceService, historyService, pendingStore, properties,
+            contentRepository);
+        when(contentRepository
+            .findByContentTypeAndRatingGreaterThanEqualOrderByRatingDesc(
+                any(ContentType.class), anyDouble()))
+            .thenReturn(List.of());
     }
 
     @Test
@@ -68,6 +75,24 @@ class BilibiliRecommendationServiceImplTests {
         assertEquals(3, result.items().size());
         assertEquals(userId, result.wechatUserId());
         assertEquals(ContentType.BANGUMI, result.contentType());
+    }
+
+    @Test
+    void usesMongoSnapshotWithoutCallingLiveSource() throws Exception {
+        mockPreference(userId, ContentType.BANGUMI, 9.0, 3, Set.of());
+        List<BilibiliContent> snapshots = candidates(ContentType.BANGUMI, 5, 9.0);
+        when(contentRepository
+            .findByContentTypeAndRatingGreaterThanEqualOrderByRatingDesc(
+                ContentType.BANGUMI, 0.0))
+            .thenReturn(snapshots);
+        when(historyRepository.findByWechatUserIdAndContentTypeAndStateIn(
+                eq(userId), eq(ContentType.BANGUMI), anyCollection()))
+            .thenReturn(List.of());
+
+        RecommendationResult result = service.recommend(userId, ContentType.BANGUMI, 3);
+
+        assertEquals(3, result.items().size());
+        verify(contentSource, never()).findCandidates(any(), anyInt());
     }
 
     @Test

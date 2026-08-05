@@ -19,7 +19,7 @@ public class BilibiliContentCrawlScheduler {
 
     @Scheduled(
         initialDelayString = "PT30S",
-        fixedDelayString = "#{@bilibiliProperties.checkIntervalMinutes * 60000}"
+        fixedDelayString = "#{@bilibiliProperties.catalogRefreshMinutes * 60000}"
     )
     public void crawlCandidates() {
         BilibiliContentCrawler.CrawlResult result =
