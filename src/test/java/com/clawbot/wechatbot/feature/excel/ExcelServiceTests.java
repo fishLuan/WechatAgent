@@ -15,6 +15,8 @@ import org.apache.poi.ss.util.PaneInformation;
 import org.apache.poi.xssf.usermodel.XSSFChart;
 import org.apache.poi.xssf.usermodel.XSSFDrawing;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
+import org.openxmlformats.schemas.drawingml.x2006.chart.CTValAx;
+import org.openxmlformats.schemas.drawingml.x2006.chart.STAxPos;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Example;
 import org.springframework.data.domain.Page;
@@ -729,6 +731,11 @@ class ExcelServiceTests {
             XSSFDrawing drawing = chartSheet.createDrawingPatriarch();
             assertTrue(drawing.getRelations().stream()
                 .anyMatch(part -> part instanceof XSSFChart));
+            // 坐标轴位置规范：数值轴在左、分类轴在底（两轴叠底会导致图表不显示）
+            XSSFChart chart = (XSSFChart) drawing.getRelations().stream()
+                .filter(part -> part instanceof XSSFChart).findFirst().orElseThrow();
+            CTValAx valAx = chart.getCTChart().getPlotArea().getValAxArray(0);
+            assertEquals(STAxPos.L, valAx.getAxPos().getVal());
         }
     }
 

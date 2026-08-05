@@ -728,14 +728,14 @@ public class ExcelService {
         ser.addNewVal().addNewNumRef().setF(valRef);
     }
 
-    /** 柱状/折线图共用的坐标轴：数值轴（B 侧）+ 类别轴（B 侧），id 与图表内引用一致。 */
+    /** 柱状/折线图共用的坐标轴：数值轴（左侧 L）+ 类别轴（底部 B），id 与图表内引用一致。 */
     private static void addChartAxes(CTPlotArea plotArea) {
         CTValAx valAx = plotArea.addNewValAx();
         valAx.addNewAxId().setVal(123457);
         valAx.addNewCrossAx().setVal(123456);
         valAx.addNewScaling().addNewOrientation().setVal(STOrientation.MIN_MAX);
         valAx.addNewDelete().setVal(false);
-        valAx.addNewAxPos().setVal(STAxPos.B);
+        valAx.addNewAxPos().setVal(STAxPos.L);
         valAx.addNewCrosses().setVal(STCrosses.AUTO_ZERO);
         CTCatAx catAx = plotArea.addNewCatAx();
         catAx.addNewAxId().setVal(123456);
