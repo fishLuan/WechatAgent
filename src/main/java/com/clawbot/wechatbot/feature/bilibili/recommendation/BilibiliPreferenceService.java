@@ -22,4 +22,10 @@ public interface BilibiliPreferenceService {
         ContentType contentType,
         Set<DayOfWeek> days,
         boolean excluded);
+
+    BilibiliPreference setPreferredTags(
+        String wechatUserId, ContentType contentType, Set<String> tags);
+
+    void addTagWeight(
+        String wechatUserId, ContentType contentType, Set<String> tags, int weight);
 }

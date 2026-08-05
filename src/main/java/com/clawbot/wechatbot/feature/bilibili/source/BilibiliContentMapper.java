@@ -14,6 +14,7 @@ final class BilibiliContentMapper {
         content.setSeasonId(dto.getSeasonId());
         content.setDescription(dto.getDescription());
         content.setGenres(dto.getGenres());
+        content.setTags(dto.getTags());
         content.setRating(dto.getRating());
         content.setViewCount(dto.getViewCount());
         content.setCoverUrl(dto.getCoverUrl());

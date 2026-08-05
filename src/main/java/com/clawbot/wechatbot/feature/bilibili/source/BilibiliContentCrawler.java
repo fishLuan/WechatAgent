@@ -179,6 +179,7 @@ public class BilibiliContentCrawler {
             || !Objects.equals(source.getTitle(), target.getTitle())
             || !Objects.equals(source.getDescription(), target.getDescription())
             || !Objects.equals(source.getGenres(), target.getGenres())
+            || !Objects.equals(source.getTags(), target.getTags())
             || !Objects.equals(source.getRating(), target.getRating())
             || !Objects.equals(source.getViewCount(), target.getViewCount())
             || !Objects.equals(source.getCoverUrl(), target.getCoverUrl())
@@ -196,6 +197,7 @@ public class BilibiliContentCrawler {
         if (source.getDescription() != null && !source.getDescription().isBlank())
             target.setDescription(source.getDescription());
         if (!source.getGenres().isEmpty()) target.setGenres(source.getGenres());
+        if (!source.getTags().isEmpty()) target.setTags(source.getTags());
         if (source.getRating() != null) target.setRating(source.getRating());
         if (source.getViewCount() != null) target.setViewCount(source.getViewCount());
         if (source.getCoverUrl() != null && !source.getCoverUrl().isBlank())

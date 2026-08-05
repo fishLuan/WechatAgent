@@ -209,6 +209,8 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
                 content.setLatestEpisodeNumber(parseIntFromText(episode));
                 content.setFinished(!episode.isEmpty() && episode.contains("全")
                     && !episode.contains("更新至"));
+                content.setGenres(pageParser.parseGenres(item));
+                content.setTags(pageParser.parseTags(item));
                 content.setLastFetchedAt(Instant.now());
                 contents.add(content);
                 if (contents.size() >= limit) break;
