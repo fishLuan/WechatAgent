@@ -216,6 +216,49 @@ class ExcelPlanParserTests {
         assertEquals("MAX", op.param("queryType"));
     }
 
+    /** 规划层改写的表格格式：生成Excel表格，表头为：X；数据行：A；B → 还原为标准表头+每行一条。 */
+    @Test
+    void plannerRewrittenTableFormatNormalizesHeadersAndRows() {
+        ExcelOperation op = parseSingle(
+            "生成Excel表格，表头为：姓名,城市；数据行：张三,北京；李四,上海");
+        assertEquals(ExcelOperationType.CREATE_TABLE, op.type());
+        assertEquals("姓名,城市", op.param("headers"));
+        assertEquals("张三,北京\n李四,上海", op.param("rows"));
+        assertEquals("false", op.param("overwrite"));
+    }
+
+    /** 规划层改写 + 覆盖确认词：overwrite 必须保持 true（覆盖保护不能被规划层吞掉）。 */
+    @Test
+    void plannerRewrittenTableFormatKeepsOverwriteKeyword() {
+        ExcelOperation op = parseSingle(
+            "生成覆盖Excel表格，表头为：姓名,城市；数据行：张三,北京；李四,上海");
+        assertEquals(ExcelOperationType.CREATE_TABLE, op.type());
+        assertEquals("姓名,城市", op.param("headers"));
+        assertEquals("张三,北京\n李四,上海", op.param("rows"));
+        assertEquals("true", op.param("overwrite"));
+    }
+
+    /** 规划层改写且表头/数据行反序（数据行在前）：仍能正确还原。 */
+    @Test
+    void plannerRewrittenTableFormatWithRowsFirst() {
+        ExcelOperation op = parseSingle(
+            "生成Excel表格，数据行：张三,北京；李四,上海，表头为：姓名,城市");
+        assertEquals(ExcelOperationType.CREATE_TABLE, op.type());
+        assertEquals("姓名,城市", op.param("headers"));
+        assertEquals("张三,北京\n李四,上海", op.param("rows"));
+    }
+
+    /** 规划层实际输出形态：覆盖独占首行 + 表头行 + 每行一条 → 正确还原且覆盖标记为 true。 */
+    @Test
+    void standaloneCoverLineIsMergedIntoCreatePrefix() {
+        ExcelOperation op = parseSingle(
+            "覆盖\n姓名,城市\n张三,北京\n李四,上海");
+        assertEquals(ExcelOperationType.CREATE_TABLE, op.type());
+        assertEquals("姓名,城市", op.param("headers"));
+        assertEquals("张三,北京\n李四,上海", op.param("rows"));
+        assertEquals("true", op.param("overwrite"));
+    }
+
     // ============================
     // 排序路由
     // ============================

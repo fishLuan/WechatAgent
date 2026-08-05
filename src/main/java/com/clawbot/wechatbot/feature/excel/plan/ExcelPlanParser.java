@@ -50,6 +50,14 @@ public final class ExcelPlanParser {
     /** 规划层改写指令时加的尾部说明：「，列顺序为产品、数量、金额」。 */
     private static final Pattern SUFFIX_COLUMN_ORDER = Pattern.compile(
         "[,，]?\\s*列顺序为[^，,。]*$");
+    /** 规划层改写的表格格式：表头为：A,B；数据行：a,b；c,d（表头/数据行任意顺序，行间用分号或换行）。 */
+    private static final Pattern PLANNER_TABLE_HEADERS = Pattern.compile(
+        "表头为\\s*[:：]?\\s*([^；;\\n]+)");
+    private static final Pattern PLANNER_TABLE_ROWS = Pattern.compile(
+        "数据行[为是：:]*\\s*(.+?)(?:[,，]?\\s*表头为.*)?$", Pattern.DOTALL);
+    /** 规划层把「覆盖」单独放第一行：覆盖\\n表头\\n行1\\n行2 → 生成覆盖表格：表头\\n行1\\n行2。 */
+    private static final Pattern STANDALONE_COVER_LINE = Pattern.compile(
+        "^(?:覆盖(?:表格|生成表格|创建表格)?)\\s*\\n");
     /** 版本历史指令：版本历史/查看版本/历史版本/查看版本历史，前缀「请/帮我」可任意组合与重复。 */
     private static final Pattern VERSION_HISTORY_CMD = Pattern.compile(
         "^(?:(?:请|帮我)\\s*)*(?:版本历史|历史版本|查看版本(?:历史)?)(?:记录|列表)?\\s*$");
@@ -248,11 +256,38 @@ public final class ExcelPlanParser {
             return null;
         }
         String normalized = text.trim();
+        // 规划层把「覆盖」作为独立首行时，合并进生成指令前缀
+        normalized = STANDALONE_COVER_LINE.matcher(normalized).replaceFirst("生成覆盖表格：");
         normalized = SUFFIX_PAREN_GUIDE.matcher(normalized).replaceAll("");
         normalized = SUFFIX_COLUMN_ORDER.matcher(normalized).replaceAll("");
         normalized = PREFIX_TABLE_CONTEXT.matcher(normalized).replaceFirst("");
         normalized = PREFIX_QUERY_TABLE.matcher(normalized).replaceFirst("");
+        normalized = normalizePlannerTableFormat(normalized);
         return normalized;
+    }
+
+    /**
+     * 规划层（LLM）改写后的表格格式还原：把「表头为：A,B；数据行：a,b；c,d」还原成
+     * 「生成[覆盖]表格：A,B\n a,b\nc,d」，让既有表头/数据提取逻辑直接生效；
+     * 原文含「覆盖」确认词时保留在第一行，避免覆盖保护误拦截。
+     */
+    private static String normalizePlannerTableFormat(String text) {
+        Matcher headers = PLANNER_TABLE_HEADERS.matcher(text);
+        Matcher rows = PLANNER_TABLE_ROWS.matcher(text);
+        if (!headers.find() || !rows.find()) {
+            return text;
+        }
+        String headerLine = headers.group(1).trim();
+        if (headerLine.isBlank()) {
+            return text;
+        }
+        // 行分隔只认中文/半角分号与换行，不折叠单元格内部空格
+        String rowsJoined = rows.group(1).trim()
+            .replaceAll("[；;]", "\n")
+            .replaceAll("\\n\\s*", "\n")
+            .trim();
+        String prefix = text.contains("覆盖") ? "生成覆盖表格：" : "生成表格：";
+        return prefix + headerLine + "\n" + rowsJoined;
     }
 
     private static ExcelPlan plan(String userId, ExcelOperation... operations) {

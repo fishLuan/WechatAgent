@@ -45,6 +45,10 @@ public final class LlmTaskPlanner implements TaskPlanner {
             voice-reply SKILL，语音任务依赖内容任务。
         11. 如果用户已经在冒号后提供了完整正文，可只创建对应的文档或语音
             SKILL，并将完整正文保留在 instruction 中。
+        12. 涉及表格的 SKILL 任务：用户指令中的「覆盖」「替换」「重新生成」等覆盖确认词
+            必须原样保留在 instruction 的第一行，禁止删除或改写；表格数据必须规范化为
+            首行表头、后续每行一条数据（行间用换行或中文分号分隔），禁止把多行数据合并成
+            一行，禁止把数据改写成自然语言描述。
         """;
 
     private static final SkillCatalog EMPTY_CATALOG = new SkillCatalog() {
