@@ -169,6 +169,53 @@ class ExcelPlanParserTests {
         assertEquals("季度销售", op.param("title"));
     }
 
+    /** 规划层改写：创建指令尾部带「（首行为表头，每行一条数据）」说明时，表头/标题仍正确提取。 */
+    @Test
+    void createTableWithTrailingParentheticalGuide() {
+        ExcelOperation op = parseSingle(
+            "创建名为“季度销售”的Excel表格，表头为：产品,数量,金额（首行为表头，每行一条数据）");
+        assertEquals(ExcelOperationType.CREATE_TABLE, op.type());
+        assertEquals("季度销售", op.param("title"));
+        assertEquals("产品,数量,金额", op.param("headers"));
+        assertEquals("", op.param("rows"));
+        assertEquals("false", op.param("overwrite"));
+    }
+
+    /** 规划层改写：添加行变成「在X表格中添加一行数据：Y，列顺序为…」时仍能提取出干净数据。 */
+    @Test
+    void addRowInTablePhraseAfterPlannerExpansion() {
+        ExcelOperation op = parseSingle(
+            "在“季度销售”Excel表格中添加一行数据：产品A,100,25，列顺序为产品、数量、金额");
+        assertEquals(ExcelOperationType.ADD_ROW, op.type());
+        assertEquals("产品A,100,25", op.param("cells"));
+    }
+
+    /** 用户短句「添加行：X」（省掉「一」）也能正确识别，不再把「行」带进数据。 */
+    @Test
+    void terseAddRowWithoutOneWord() {
+        ExcelOperation op = parseSingle("添加行：产品A,100,25");
+        assertEquals(ExcelOperationType.ADD_ROW, op.type());
+        assertEquals("产品A,100,25", op.param("cells"));
+    }
+
+    /** 规划层改写：排序变成「对X表格按Y从大到小排序」时仍正确路由。 */
+    @Test
+    void sortInTablePhraseAfterPlannerExpansion() {
+        ExcelOperation op = parseSingle("对“季度销售”表格按数量从大到小排序");
+        assertEquals(ExcelOperationType.SORT, op.type());
+        assertEquals("数量", op.param("column"));
+        assertEquals("DESC", op.param("direction"));
+    }
+
+    /** 规划层改写：查询变成「查询X表格中Y的最大值」时列名不带表格上下文。 */
+    @Test
+    void queryInTablePhraseAfterPlannerExpansion() {
+        ExcelOperation op = parseSingle("查询“季度销售”表格中金额的最大值");
+        assertEquals(ExcelOperationType.QUERY, op.type());
+        assertEquals("金额", op.param("column"));
+        assertEquals("MAX", op.param("queryType"));
+    }
+
     // ============================
     // 排序路由
     // ============================
@@ -727,6 +774,35 @@ class ExcelPlanParserTests {
         assertEquals(ExcelOperationType.FORMAT_TABLE, parseSingle("加筛选").type());
         assertEquals(ExcelOperationType.CHART, parseSingle("生成柱状图：产品名称,销售额").type());
         assertEquals(ExcelOperationType.DASHBOARD, parseSingle("生成汇总页").type());
+    }
+
+    /** 导出指令：导出/下载表格（可带表名）路由到 EXPORT。 */
+    @Test
+    void exportCommandsRouteToExport() {
+        assertEquals(ExcelOperationType.EXPORT, parseSingle("导出表格").type());
+        assertEquals(ExcelOperationType.EXPORT, parseSingle("下载表格").type());
+        assertEquals(ExcelOperationType.EXPORT, parseSingle("导出").type());
+        assertEquals(ExcelOperationType.EXPORT, parseSingle("请帮我导出表格").type());
+        assertEquals(ExcelOperationType.EXPORT, parseSingle("导出“季度销售”表格").type());
+    }
+
+    /** 导出指令：把X表格发给我/给我表格文件/发我表格 等口语说法路由到 EXPORT。 */
+    @Test
+    void exportColloquialPhrasesRouteToExport() {
+        assertEquals(ExcelOperationType.EXPORT, parseSingle("把表格发给我").type());
+        assertEquals(ExcelOperationType.EXPORT, parseSingle("把“季度销售”表格发给我").type());
+        assertEquals(ExcelOperationType.EXPORT, parseSingle("给我表格文件").type());
+        assertEquals(ExcelOperationType.EXPORT, parseSingle("给我表格").type());
+        assertEquals(ExcelOperationType.EXPORT, parseSingle("发我表格").type());
+        assertEquals(ExcelOperationType.EXPORT, parseSingle("发送表格").type());
+    }
+
+    /** 导出路由不应吞掉「把表格按X排序/把表格X改名」等既有指令。 */
+    @Test
+    void exportRoutingDoesNotHijackExistingCommands() {
+        assertEquals(ExcelOperationType.SORT, parseSingle("把表格按销售额倒序").type());
+        assertEquals(ExcelOperationType.WORKBOOK_RENAME,
+            parseSingle("把表格销售表改名为月度销售").type());
     }
 
     /** 新路由不应改变既有指令的路由结果（添加行/生成/排序/工作簿/知识）。 */

@@ -9,6 +9,7 @@ import com.clawbot.wechatbot.feature.excel.plan.CreateTableHandler;
 import com.clawbot.wechatbot.feature.excel.plan.DashboardHandler;
 import com.clawbot.wechatbot.feature.excel.plan.DeduplicateHandler;
 import com.clawbot.wechatbot.feature.excel.plan.DeleteRowHandler;
+import com.clawbot.wechatbot.feature.excel.plan.ExportHandler;
 import com.clawbot.wechatbot.feature.excel.plan.ExcelOperationExecutor;
 import com.clawbot.wechatbot.feature.excel.plan.ExcelOperationType;
 import com.clawbot.wechatbot.feature.excel.plan.ExcelPlan;
@@ -66,7 +67,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
             + "按某列汇总某列、补全某列空值、查询某列的最大/最小/合计/平均、"
             + "回滚到上一版本、查看版本历史、对比上一版、新建表格、查看表格列表、选择表格、"
             + "重命名表格、删除表格、复制表格、添加知识、查看知识、删除知识、查看操作日志、"
-            + "美化表格（加标题/冻结首行/加筛选）、生成柱状图/折线图/饼图、生成汇总页。";
+            + "导出表格、美化表格（加标题/冻结首行/加筛选）、生成柱状图/折线图/饼图、生成汇总页。";
     /** 工作簿管理类操作（及操作日志）：不需要活动表，直接校验执行。 */
     private static final Set<ExcelOperationType> WORKBOOK_TYPES = Set.of(
         ExcelOperationType.WORKBOOK_CREATE,
@@ -120,6 +121,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
             new FormatTableHandler(excelService),
             new ChartHandler(excelService),
             new DashboardHandler(excelService),
+            new ExportHandler(excelService),
             new RollbackHandler(excelService),
             new VersionHistoryHandler(excelService),
             new WorkbookCreateHandler(excelService),
@@ -199,6 +201,10 @@ public final class ExcelOperationSkill implements SkillExecutor {
         if (result.success()) {
             result = compositeSummary(resolved.plan(), result);
             result = annotateKnowledge(result, text, resolved.notes());
+            // 方案一：内容操作只回文字；创建/导出/图表/汇总页才附带文件（需要完整表格时发「导出表格」）
+            if (!keepsAttachment(resolved.plan())) {
+                result = OperationResult.success(result.text());
+            }
         }
         // 6. 审计：无论成败记录本次操作（operation 为各操作类型名拼接，detail 为结果文案）
         recordAudit(userId, resolved.plan(), table, result);
@@ -227,6 +233,18 @@ public final class ExcelOperationSkill implements SkillExecutor {
     private static boolean isCreateTablePlan(ExcelPlan plan) {
         return plan.operations().size() == 1
             && plan.operations().get(0).type() == ExcelOperationType.CREATE_TABLE;
+    }
+
+    /** 是否在回复中附带 xlsx 文件：创建/生成表格、导出、图表与汇总页保留；其余内容操作只回文字。 */
+    private static boolean keepsAttachment(ExcelPlan plan) {
+        if (plan.operations().size() != 1) {
+            return false;
+        }
+        ExcelOperationType type = plan.operations().get(0).type();
+        return type == ExcelOperationType.CREATE_TABLE
+            || type == ExcelOperationType.EXPORT
+            || type == ExcelOperationType.CHART
+            || type == ExcelOperationType.DASHBOARD;
     }
 
     /** 成功回复前加注知识库标注：别名映射说明 + 命中的业务规则/操作示例（换行拼在操作文案前）。 */

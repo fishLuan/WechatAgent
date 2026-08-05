@@ -33,7 +33,23 @@ public final class ExcelPlanParser {
     private static final Pattern CONTENT_MARKER = Pattern.compile(
         "为|改成|改为|数据(?:是|为)?|内容(?:是|为)?|[:：]");
     private static final Pattern ADD_PREFIX = Pattern.compile(
-        "^(?:添加|增加|加入|新增|加)\\s*(?:一行|一条|1行|1条)?\\s*[:：]?\\s*(.+)$");
+        "^(?:(?:请|帮我)\\s*)*(?:添加|增加|加入|新增|加)\\s*"
+            + "(?:一行|一条|1行|1条|行)?\\s*(?:数据)?\\s*[:：]?\\s*(.+)$");
+    /** 规划层（LLM）改写指令时加的前缀：「在/向/给/对/把 X表格 中/里/内做Y」；
+     *  表格上下文后必须是「中/里/内」或操作动词开头，避免误剥「把表格X改名为Y」这类合法指令。 */
+    private static final Pattern PREFIX_TABLE_CONTEXT = Pattern.compile(
+        "^(?:在|向|给|对|把|将)\\s*[“「\"']?[^“「\"',，。表格]*?[”」\"']?\\s*"
+            + "(?:表格|工作簿|表)\\s*(?:(?:中|里|内)\\s*|(?=[按添加增修改更删除移除查询统计计算生成创建排序去重补汇总]))");
+    /** 查询/统计类前缀里的表格上下文：「查询X表格中金额的最大值」→「查询金额的最大值」。 */
+    private static final Pattern PREFIX_QUERY_TABLE = Pattern.compile(
+        "^(?:查询|统计|计算)\\s*[“「\"']?[^“「\"',，。表格]*?[”」\"']?\\s*"
+            + "(?:表格|工作簿|表)\\s*(?:中|里|内)?\\s*");
+    /** 规划层改写指令时加的尾部括号说明：（首行为表头…）/（每行一条…）/（列顺序…）。 */
+    private static final Pattern SUFFIX_PAREN_GUIDE = Pattern.compile(
+        "[（(](?:首行为表头|每行一条|列顺序)[^）)]*[）)]\\s*$");
+    /** 规划层改写指令时加的尾部说明：「，列顺序为产品、数量、金额」。 */
+    private static final Pattern SUFFIX_COLUMN_ORDER = Pattern.compile(
+        "[,，]?\\s*列顺序为[^，,。]*$");
     /** 版本历史指令：版本历史/查看版本/历史版本/查看版本历史，前缀「请/帮我」可任意组合与重复。 */
     private static final Pattern VERSION_HISTORY_CMD = Pattern.compile(
         "^(?:(?:请|帮我)\\s*)*(?:版本历史|历史版本|查看版本(?:历史)?)(?:记录|列表)?\\s*$");
@@ -123,12 +139,19 @@ public final class ExcelPlanParser {
     /** 汇总页指令：生成汇总页/汇总页/dashboard（大小写不敏感）。 */
     private static final Pattern DASHBOARD_CMD = Pattern.compile(
         "^(?:请|帮我\\s*)*(?:生成汇总页|汇总页|dashboard)\\s*$", Pattern.CASE_INSENSITIVE);
+    /** 导出表格指令：导出/下载表格（可带表名）、把X表格发给我、给我表格文件、发我表格（发当前活动表完整版，不修改数据）。 */
+    private static final Pattern EXPORT_CMD = Pattern.compile(
+        "^(?:(?:请|帮我)\\s*)*(?:导出|下载)\\s*[“「]?[^”」]*?[”」]?\\s*(?:表格|工作簿)?\\s*$"
+            + "|^(?:(?:请|帮我)\\s*)*(?:把|将)\\s*[“「]?[^”」]*?[”」]?\\s*表格\\s*(?:发|发送|发给)(?:给)?\\s*我?\\s*$"
+            + "|^(?:(?:请|帮我)\\s*)*(?:发|发送)\\s*(?:给)?\\s*我?\\s*[“「]?[^”」]*?[”」]?\\s*表格\\s*$"
+            + "|^(?:(?:请|帮我)\\s*)*给我\\s*(?:发)?\\s*(?:表格|Excel|excel|xlsx)?\\s*(?:文件)?\\s*$");
     /** 片段尾部残留分隔符（切分点前的标点/连接词），清理时按长度从长到短尝试。 */
     private static final List<String> SEPARATOR_TAIL_WORDS = List.of(
         "然后", "接着", "同时", "并且", "并", "再", "，", "、", "；", ",", ";");
 
     /** 解析用户文本为 ExcelPlan；无法识别时返回 null（由调用方给出兜底提示）。 */
     public ExcelPlan parse(String userId, String text) {
+        text = normalizeInstruction(text);
         // 1. 回滚/撤销（放最前：避免「撤销删除第2行」这类说法被当成删除再次执行）
         if (isRollbackCommand(text)) {
             return plan(userId, op("1", ExcelOperationType.ROLLBACK, Map.of()));
@@ -166,6 +189,11 @@ public final class ExcelPlanParser {
         if (chart != null) return plan(userId, chart);
         ExcelOperation dashboard = tryDashboard(text);
         if (dashboard != null) return plan(userId, dashboard);
+
+        // 导出表格（方案一：内容操作只回文字，需要当前完整文件时发送「导出表格」）
+        if (EXPORT_CMD.matcher(text).matches()) {
+            return plan(userId, op("1", ExcelOperationType.EXPORT, Map.of()));
+        }
 
         // 3. 删除行
         Matcher rowMatcher = ROW_NUMBER.matcher(text);
@@ -208,6 +236,23 @@ public final class ExcelPlanParser {
         }
 
         return null;
+    }
+
+    /**
+     * 指令归一化：剥掉规划层（LLM）改写指令时加的前缀与尾部说明，
+     * 避免「在X表格中…」「（首行为表头，每行一条数据）」「，列顺序为…」污染路由与数据提取。
+     * 只剥离特征明显的规划层包装，不改变用户原始数据文本。
+     */
+    private static String normalizeInstruction(String text) {
+        if (text == null) {
+            return null;
+        }
+        String normalized = text.trim();
+        normalized = SUFFIX_PAREN_GUIDE.matcher(normalized).replaceAll("");
+        normalized = SUFFIX_COLUMN_ORDER.matcher(normalized).replaceAll("");
+        normalized = PREFIX_TABLE_CONTEXT.matcher(normalized).replaceFirst("");
+        normalized = PREFIX_QUERY_TABLE.matcher(normalized).replaceFirst("");
+        return normalized;
     }
 
     private static ExcelPlan plan(String userId, ExcelOperation... operations) {

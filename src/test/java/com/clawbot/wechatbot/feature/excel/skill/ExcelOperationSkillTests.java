@@ -735,12 +735,68 @@ class ExcelOperationSkillTests {
 
         SkillResult result = skill.execute(definition,
             new SkillRequest("user-1",
-                "创建名为“季度销售”的Excel表格，表头为：产品,数量,金额", "", "", ""));
+                "创建名为“季度销售”的Excel表格，表头为：产品,数量,金额"
+                    + "（首行为表头，每行一条数据）", "", "", ""));
 
         assertTrue(result.success());
         assertEquals("季度销售", fresh.getTitle());
         assertEquals(List.of("产品", "数量", "金额"), fresh.getHeaders());
+        assertEquals(1, result.attachments().size());
         verify(excelService).createWorkbook(eq("user-1"), eq("季度销售"));
+    }
+
+    /** 方案一：添加行等内容操作只回文字，不再附带 xlsx（需要完整文件时发「导出表格」）。 */
+    @Test
+    void contentOperationsDoNotAttachFile() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(existingTable());
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "添加行：张三,北京", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已添加"));
+        assertTrue(result.attachments().isEmpty());
+        verify(excelService).toXlsx(any());
+    }
+
+    /** 导出表格：带附件返回当前表完整文件，不修改数据、不落库。 */
+    @Test
+    void exportInstructionAttachesCurrentTable() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "导出表格", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已导出"));
+        assertTrue(result.text().contains("2列×1行"));
+        assertEquals(1, result.attachments().size());
+        verify(excelService).toXlsx(table);
+        verify(excelService, never()).save(any());
+    }
+
+    /** 导出空表：给出明确提示，不产生附件。 */
+    @Test
+    void exportEmptyTableReturnsClearHint() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.getActiveWorkbook(eq("user-1")))
+            .thenReturn(new ExcelTable("user-1", "空表"));
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "导出表格", "", "", ""));
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("还没有生成表格"));
+        assertTrue(result.attachments().isEmpty());
+        verify(excelService, never()).toXlsx(any());
     }
 
     /** 新建工作簿指令不需要活动表：直接新建并切换为当前表格（纯文字回复）。 */

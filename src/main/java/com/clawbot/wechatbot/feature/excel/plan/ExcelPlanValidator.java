@@ -42,7 +42,8 @@ public final class ExcelPlanValidator {
         Map.entry(ExcelOperationType.VERSION_DIFF, Set.of()),
         Map.entry(ExcelOperationType.FORMAT_TABLE, Set.of("title", "freezeHeader", "autoFilter")),
         Map.entry(ExcelOperationType.CHART, Set.of("chartType", "categoryColumn", "valueColumn")),
-        Map.entry(ExcelOperationType.DASHBOARD, Set.of()));
+        Map.entry(ExcelOperationType.DASHBOARD, Set.of()),
+        Map.entry(ExcelOperationType.EXPORT, Set.of()));
 
     /** 每种操作必填的参数 key。 */
     private static final Map<ExcelOperationType, Set<String>> REQUIRED_PARAM_KEYS = Map.ofEntries(
@@ -70,7 +71,8 @@ public final class ExcelPlanValidator {
         Map.entry(ExcelOperationType.VERSION_DIFF, Set.of()),
         Map.entry(ExcelOperationType.FORMAT_TABLE, Set.of()),
         Map.entry(ExcelOperationType.CHART, Set.of("chartType", "categoryColumn", "valueColumn")),
-        Map.entry(ExcelOperationType.DASHBOARD, Set.of()));
+        Map.entry(ExcelOperationType.DASHBOARD, Set.of()),
+        Map.entry(ExcelOperationType.EXPORT, Set.of()));
 
     private final ExcelService excelService;
 
@@ -123,7 +125,7 @@ public final class ExcelPlanValidator {
             case KNOWLEDGE_DELETE -> validateKnowledgeDelete(operation);
             case FORMAT_TABLE -> validateFormatTable(operation, table);
             case CHART -> validateChart(operation, table);
-            case DASHBOARD -> validateRequireTable(table);
+            case DASHBOARD, EXPORT -> validateRequireTable(table);
         };
     }
 
