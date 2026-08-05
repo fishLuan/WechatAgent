@@ -142,6 +142,13 @@ public final class BilibiliCommandHandler {
         return catalogCommands.markByTitle(userId, title, state);
     }
 
+    public String getPreferredTags(String userId, ContentType type) {
+        ContentType actualType = type == null ? ContentType.BANGUMI : type;
+        var pref = preferences.getOrCreate(userId, actualType);
+        var tags = pref.getPreferredTags();
+        return tags.isEmpty() ? "当前没有设置偏好标签。" : "当前偏好标签：" + String.join("、", tags);
+    }
+
     public String handleSetPreference(String userId, ContentType type, String key, String value) {
         sessions.markActive(userId);
         return preferenceCommands.updateField(userId, type, key, value);

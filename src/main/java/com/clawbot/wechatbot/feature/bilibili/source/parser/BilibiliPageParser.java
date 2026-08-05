@@ -82,6 +82,7 @@ public class BilibiliPageParser {
                 dto.setPageUrl(text(item, "url", pageUrl));
                 dto.setRating(doubleValue(firstPresent(item, "/media_score/score", "/rating/score")));
                 dto.setGenres(parseGenres(item));
+                dto.setTags(parseTags(item));
                 String indexShow = text(item, "index_show", "");
                 dto.setFinished(indexShow.startsWith("全")
                     || indexShow.contains("已完结"));
@@ -203,6 +204,7 @@ public class BilibiliPageParser {
         dto.setPageUrl(pageUrl);
         dto.setRating(doubleValue(firstPresent(result, "/rating/score", "/new_ep/index_show")));
         dto.setGenres(parseGenres(result));
+        dto.setTags(parseTags(result));
         JsonNode episodes = result.path("episodes");
         if (episodes.isArray() && episodes.size() > 0) {
             JsonNode latest = episodes.get(episodes.size() - 1);
@@ -251,7 +253,7 @@ public class BilibiliPageParser {
         return resolvedType;
     }
 
-    private Set<String> parseGenres(JsonNode result) {
+    public Set<String> parseGenres(JsonNode result) {
         Set<String> genres = new LinkedHashSet<>();
         JsonNode styles = firstPresent(result, "/styles", "/style");
         if (styles.isArray()) {
@@ -265,6 +267,19 @@ public class BilibiliPageParser {
             }
         }
         return genres;
+    }
+
+    /** 解析 B站 tags 数组 [{tag_id, tag_name}, ...]，比 styles 更细分。 */
+    public Set<String> parseTags(JsonNode result) {
+        Set<String> tags = new LinkedHashSet<>();
+        JsonNode tagsNode = result.at("/tags");
+        if (tagsNode.isArray()) {
+            tagsNode.forEach(node -> {
+                String name = node.isTextual() ? node.asText() : text(node, "tag_name", "");
+                if (!name.isBlank()) tags.add(name);
+            });
+        }
+        return tags;
     }
 
     private boolean hasRequired(BilibiliContentDto dto) {

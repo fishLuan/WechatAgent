@@ -6,14 +6,18 @@ import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 import com.clawbot.wechatbot.feature.bilibili.model.RecommendedContent;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionResult;
+import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliPreferenceService;
+import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.BilibiliRecommendationService;
 import com.clawbot.wechatbot.feature.bilibili.recommendation.RecommendationHistoryService;
 import com.clawbot.wechatbot.feature.bilibili.subscription.BilibiliSubscriptionService;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /** 编排作品搜索、搜索结果选择、订阅和观看状态标记。 */
 @Service
@@ -23,19 +27,25 @@ public final class BilibiliCatalogCommandService {
     private final RecommendationHistoryService history;
     private final BilibiliTitleSearchService titleSearch;
     private final PendingSearchResultStore pendingSearchResults;
+    private final BilibiliPreferenceService preferenceService;
+    private final BilibiliContentSource contentSource;
 
     public BilibiliCatalogCommandService(
         @Lazy BilibiliSubscriptionService subscriptions,
         @Lazy BilibiliRecommendationService recommendations,
         RecommendationHistoryService history,
         BilibiliTitleSearchService titleSearch,
-        PendingSearchResultStore pendingSearchResults
+        PendingSearchResultStore pendingSearchResults,
+        BilibiliPreferenceService preferenceService,
+        BilibiliContentSource contentSource
     ) {
         this.subscriptions = subscriptions;
         this.recommendations = recommendations;
         this.history = history;
         this.titleSearch = titleSearch;
         this.pendingSearchResults = pendingSearchResults;
+        this.preferenceService = preferenceService;
+        this.contentSource = contentSource;
     }
 
     public String subscribeByIndex(String userId, Integer index, ContentType ignoredType) {
@@ -48,7 +58,16 @@ public final class BilibiliCatalogCommandService {
         SubscriptionResult result = hasText(item.seasonId())
             ? subscriptions.subscribeBySeasonId(userId, item.contentType(), item.seasonId())
             : subscriptions.subscribeByContentId(userId, item.contentType(), item.contentId());
-        return BilibiliMessageFormatter.formatSubscription(result);
+        // 推荐路径也自动学习标签（genres 空时补查 B站详情）
+        Set<String> genres = item.genres();
+        if (genres.isEmpty() && hasText(item.seasonId())) {
+            try {
+                genres = contentSource.findBySeasonId(item.contentType(), item.seasonId())
+                    .map(BilibiliContent::getGenres).orElse(Set.of());
+            } catch (Exception ignored) {}
+        }
+        learnTags(userId, item.contentType(), genres, 3);
+        return BilibiliMessageFormatter.formatSubscription(result) + genreSuffix(genres);
     }
 
     public String subscribeByTitle(String userId, String title) {
@@ -81,14 +100,27 @@ public final class BilibiliCatalogCommandService {
         if (index == null || index < 1) return "❌ 要标记的编号不正确。";
         RecommendedContent item = recommendations.findPendingItem(userId, index);
         if (item == null) return "❌ 找不到第 " + index + " 个推荐，请先获取最新推荐。";
-        switch (normalizeState(state)) {
+        String normal = normalizeState(state);
+        switch (normal) {
             case "want_to_watch" -> history.markWantToWatch(
                 userId, item.contentType(), item.contentId(), item.title());
             case "watched" -> recommendations.markWatched(userId, index);
             case "disliked" -> recommendations.markDisliked(userId, index);
             default -> throw new IllegalArgumentException("未知标记状态");
         }
-        return "✅ 已将《" + item.title() + "》标记" + stateDescription(state) + "。";
+        // 标记后自动学习/反学习标签（genres 空时补查 B站详情）
+        Set<String> markGenres = item.genres();
+        if (markGenres.isEmpty() && hasText(item.seasonId())) {
+            try {
+                markGenres = contentSource.findBySeasonId(item.contentType(), item.seasonId())
+                    .map(BilibiliContent::getGenres).orElse(Set.of());
+            } catch (Exception ignored) {}
+        }
+        int w = "want_to_watch".equals(normal) ? 2 : 1;
+        if (!"disliked".equals(normal)) learnTags(userId, item.contentType(), markGenres, w);
+        else unlearnTags(userId, item.contentType(), markGenres);
+        return "✅ 已将《" + item.title() + "》标记" + stateDescription(state) + "。"
+            + genreSuffix(markGenres);
     }
 
     public String markByTitle(String userId, String title, String state) {
@@ -100,7 +132,8 @@ public final class BilibiliCatalogCommandService {
                 return "找到多个相关作品，无法确定你指的是哪一个：\n\n"
                     + BilibiliMessageFormatter.formatSearchResults(title, matches);
             }
-            switch (normalizeState(state)) {
+            String normal = normalizeState(state);
+            switch (normal) {
                 case "want_to_watch" -> history.markWantToWatch(
                     userId, exact.getContentType(), exact.getContentId(), exact.getTitle());
                 case "watched" -> history.markWatched(
@@ -109,10 +142,36 @@ public final class BilibiliCatalogCommandService {
                     userId, exact.getContentType(), exact.getContentId(), exact.getTitle());
                 default -> throw new IllegalArgumentException("未知标记状态");
             }
-            return "✅ 已将《" + exact.getTitle() + "》标记为" + stateDescription(state) + "。";
+            // 标记后自动学习/反学习标签
+            Set<String> tags = new LinkedHashSet<>();
+            if (exact.getTags() != null) tags.addAll(exact.getTags());
+            tags.addAll(exact.getGenres());
+            int w = "want_to_watch".equals(normal) ? 2 : 1;
+            if (!"disliked".equals(normal)) learnTags(userId, exact.getContentType(), tags, w);
+            else unlearnTags(userId, exact.getContentType(), tags);
+            return "✅ 已将《" + exact.getTitle() + "》标记为" + stateDescription(state) + "。"
+                + genreSuffix(tags);
         } catch (Exception error) {
             return failure("标记作品失败", error);
         }
+    }
+
+    private String genreSuffix(Set<String> genres) {
+        if (genres == null || genres.isEmpty()) return "";
+        return "\n🏷️ " + String.join("、", genres);
+    }
+
+    private void learnTags(String userId, ContentType type, Set<String> newTags, int weight) {
+        if (newTags == null || newTags.isEmpty()) return;
+        preferenceService.addTagWeight(userId, type, newTags, weight);
+    }
+
+    private void unlearnTags(String userId, ContentType type, Set<String> removeTags) {
+        if (removeTags == null || removeTags.isEmpty()) return;
+        var pref = preferenceService.getOrCreate(userId, type);
+        var merged = new LinkedHashSet<>(pref.getPreferredTags());
+        merged.removeAll(removeTags);
+        preferenceService.setPreferredTags(userId, type, merged);
     }
 
     private String subscribe(String userId, BilibiliContent content) {
@@ -120,7 +179,13 @@ public final class BilibiliCatalogCommandService {
         SubscriptionResult result = hasText(content.getSeasonId())
             ? subscriptions.subscribeBySeasonId(userId, content.getContentType(), content.getSeasonId())
             : subscriptions.subscribeByContentId(userId, content.getContentType(), content.getContentId());
-        return BilibiliMessageFormatter.formatSubscription(result);
+        // 自动学习：订阅权 3 > 想看权 2 > 看过权 1
+        Set<String> learned = new LinkedHashSet<>();
+        if (content.getTags() != null) learned.addAll(content.getTags());
+        learned.addAll(content.getGenres());
+        learnTags(userId, content.getContentType(), learned, 3);
+        return BilibiliMessageFormatter.formatSubscription(result)
+            + genreSuffix(learned);
     }
 
     private List<BilibiliContent> search(String title) throws Exception {

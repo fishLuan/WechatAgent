@@ -79,6 +79,32 @@ public class BilibiliPreferenceServiceImpl implements BilibiliPreferenceService 
         return repository.save(pref);
     }
 
+    @Override
+    public BilibiliPreference setPreferredTags(
+            String wechatUserId, ContentType contentType, Set<String> tags) {
+        BilibiliPreference pref = getOrCreate(wechatUserId, contentType);
+        pref.setPreferredTags(tags);
+        // 同步更新权重：新增的 tag 默认权重 1
+        var weights = pref.getTagWeights();
+        for (String tag : tags) weights.putIfAbsent(tag, 1);
+        pref.setUpdatedAt(Instant.now());
+        return repository.save(pref);
+    }
+
+    public void addTagWeight(String wechatUserId, ContentType contentType,
+                             Set<String> tags, int weight) {
+        BilibiliPreference pref = getOrCreate(wechatUserId, contentType);
+        Set<String> merged = new LinkedHashSet<>(pref.getPreferredTags());
+        merged.addAll(tags);
+        pref.setPreferredTags(merged);
+        var weights = pref.getTagWeights();
+        for (String tag : tags) {
+            weights.merge(tag, weight, Integer::sum);
+        }
+        pref.setUpdatedAt(Instant.now());
+        repository.save(pref);
+    }
+
     /**
      * 查询所有启用推送的用户偏好列表（按内容类型）。
      */

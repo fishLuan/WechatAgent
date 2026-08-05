@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.DayOfWeek;
 import java.time.Instant;
+import java.util.Set;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
@@ -63,6 +64,33 @@ public final class BilibiliPreferenceCommandService {
                 if (count < 1 || count > 10) return "❌ 推荐数量必须在 1 到 10 之间。";
                 field = "推荐数量";
                 display = count + " 部";
+            }
+            case "tags" -> {
+                Set<String> currentTags = new LinkedHashSet<>(
+                    current.getPreferredTags());
+                boolean wasCleared = value.isBlank();
+                if (wasCleared) {
+                    currentTags.clear();
+                } else {
+                    Set.of(value.split("[,，\\s]+")).forEach(currentTags::add);
+                }
+                preferences.setPreferredTags(userId, actualType, currentTags);
+                if (wasCleared) {
+                    return "✅ " + BilibiliMessageFormatter.typeName(actualType)
+                        + "偏好标签已清空。";
+                }
+                return "✅ " + BilibiliMessageFormatter.typeName(actualType)
+                    + "偏好标签：" + String.join("、", currentTags);
+            }
+            case "remove_tag" -> {
+                Set<String> currentTags = new LinkedHashSet<>(
+                    current.getPreferredTags());
+                Set<String> toRemove = value.isBlank() ? Set.of()
+                    : Set.of(value.split("[,，\\s]+"));
+                currentTags.removeAll(toRemove);
+                preferences.setPreferredTags(userId, actualType, currentTags);
+                return "✅ 已移除标签：" + String.join("、", toRemove)
+                    + "，当前：" + (currentTags.isEmpty() ? "（无）" : String.join("、", currentTags));
             }
             default -> {
                 return "❌ 未知设置项：" + key;

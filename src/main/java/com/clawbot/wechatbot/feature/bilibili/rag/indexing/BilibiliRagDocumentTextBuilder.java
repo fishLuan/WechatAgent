@@ -13,6 +13,9 @@ public class BilibiliRagDocumentTextBuilder {
         if (!content.getGenres().isEmpty()) {
             append(out, "题材", String.join("、", content.getGenres()));
         }
+        if (!content.getTags().isEmpty()) {
+            append(out, "标签", String.join("、", content.getTags()));
+        }
         append(out, "简介", content.getDescription());
         append(out, "最新集", content.getLatestEpisodeTitle());
         if (content.getLatestEpisodeNumber() != null) {
