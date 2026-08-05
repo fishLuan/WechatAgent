@@ -50,6 +50,12 @@ class ExcelScreenshotMessageHandlerTests {
         assertFalse(handler.canHandle(textOnlyMessage("生成表格")));
     }
 
+    /** 表格截图属于强领域意图：声明绕过统一任务规划，避免被 LLM 规划改写/劫持。 */
+    @Test
+    void bypassesPlanningIsTrue() {
+        assertTrue(handler.bypassesPlanning());
+    }
+
     @Test
     void handleSkipsWhenVisionNotConfigured() throws Exception {
         when(visionService.isConfigured()).thenReturn(false);

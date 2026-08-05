@@ -72,6 +72,12 @@ public final class ExcelScreenshotMessageHandler implements MessageHandler {
         return hasImage && containsTableKeyword(extractText(msg));
     }
 
+    /** 表格截图是强领域意图：图片消息先于统一规划路由处理，避免被 LLM 规划改写/劫持。 */
+    @Override
+    public boolean bypassesPlanning() {
+        return true;
+    }
+
     @Override
     public void handle(ILinkClient client, WeixinMessage msg) {
         String from = msg.getFrom_user_id();
