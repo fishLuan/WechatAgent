@@ -19,7 +19,7 @@ public class RuleBasedIntentRecognizer implements IntentRecognizer {
     private static final Pattern TITLE_REMINDER = Pattern.compile(
         "^(.+?)(?:更新时|有更新时|更新了)\\s*(?:提醒我|通知我)\\s*$");
     private static final Pattern SEARCH_TITLE = Pattern.compile(
-        "^(?:搜索|查找|搜一下|找一下|帮我找(?:一下)?)\\s*(?:B站)?\\s*(.+?)\\s*$");
+        "^(?:搜索|查找|搜一下|搜|找一下|帮我找(?:一下)?)\\s*(?:B站)?\\s*(.+?)\\s*$");
     private static final Pattern MARK_TITLE = Pattern.compile(
         "^(?:我\\s*)?(?:已经|早就|刚刚|刚)?\\s*"
             + "(看过|看完了?|看了|想看|不喜欢)\\s*(?:了)?\\s*(.+?)\\s*$");
@@ -36,6 +36,10 @@ public class RuleBasedIntentRecognizer implements IntentRecognizer {
 
         if (isMultiTask(text)) {
             return result(IntentType.MULTI_TASK, 0.90);
+        }
+
+        if (isWereadRequest(text)) {
+            return result(IntentType.WEREAD_QUERY, 0.96);
         }
 
         Matcher matcher = MARK_TITLE.matcher(text);
@@ -84,17 +88,24 @@ public class RuleBasedIntentRecognizer implements IntentRecognizer {
         }
 
         matcher = SEARCH_TITLE.matcher(text);
-        if (matcher.matches() && isUsableTitle(matcher.group(1))) {
+        if (matcher.matches() && isUsableTitle(matcher.group(1))
+            && !isWereadRequest(matcher.group(1))) {
+            String title = cleanBilibiliTitle(matcher.group(1));
+            if (!containsBilibiliCategory(text)) {
+                return result(IntentType.CONTENT_SEARCH_AMBIGUOUS, 0.82,
+                    "title", title);
+            }
             return result(
                 IntentType.BILIBILI_SEARCH_TITLE,
                 0.98,
                 "title",
-                cleanTitle(matcher.group(1)));
+                title);
         }
 
         if (containsBilibiliCategory(text)
-            && containsAny(text, "推荐", "好看", "来点", "找点", "有啥")) {
-            return result(IntentType.BILIBILI_RECOMMEND, 0.92);
+            && containsAny(text, "推荐", "好看", "来点", "找点", "有啥", "想看", "看看")) {
+            return new IntentResult(IntentType.BILIBILI_RECOMMEND, 0.94,
+                Map.of("content_type", bilibiliContentType(text)));
         }
         if (isImageRequest(text)) {
             return result(IntentType.IMAGE_GENERATION, 0.95);
@@ -119,7 +130,26 @@ public class RuleBasedIntentRecognizer implements IntentRecognizer {
     }
 
     private boolean containsBilibiliCategory(String text) {
-        return containsAny(text, "B站", "动漫", "番剧", "电视剧", "剧集", "电影");
+        return containsAny(text, "B站", "动漫", "动画", "番剧", "国漫", "日漫",
+            "电视剧", "剧集", "美剧", "韩剧", "电影", "影片");
+    }
+
+    private boolean isWereadRequest(String text) {
+        if (text == null || text.isBlank()) return false;
+        return containsAny(text, "微信读书", "书架", "阅读统计", "读了多久",
+            "读书笔记", "划线", "书籍", "图书", "小说", "名著", "书单",
+            "作者", "出版社", "这本书", "找书", "搜书", "推荐书", "推荐几本");
+    }
+
+    private String bilibiliContentType(String text) {
+        if (containsAny(text, "电影", "影片")) return "MOVIE";
+        if (containsAny(text, "电视剧", "剧集", "美剧", "韩剧")) return "SERIES";
+        return "BANGUMI";
+    }
+
+    private String cleanBilibiliTitle(String value) {
+        return cleanTitle(value).replaceFirst(
+            "\\s*(?:动漫|动画|番剧|电影|影片|电视剧|剧集)$", "").trim();
     }
 
     private boolean isImageRequest(String text) {

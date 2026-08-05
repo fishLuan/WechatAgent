@@ -132,6 +132,11 @@ public final class BilibiliCommandHandler {
         return catalogCommands.searchByTitle(userId, title);
     }
 
+    public String handleSearchResultByIndex(String userId, int index) {
+        sessions.markActive(userId);
+        return catalogCommands.showSearchResultByIndex(userId, index);
+    }
+
     public String handleMarkState(String userId, Integer index, String state) {
         sessions.markActive(userId);
         return catalogCommands.markByIndex(userId, index, state);

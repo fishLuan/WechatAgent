@@ -107,7 +107,7 @@ public final class BilibiliCommandParser {
             + "(新番|新动漫|新剧|新电视剧)(?:呢|吗|啊|呀)?\\s*$");
 
     private static final Pattern SEARCH_BY_TITLE = Pattern.compile(
-        "^(?:搜索|查找|搜一下|找一下|帮我找(?:一下)?)\\s*(?:B站)?\\s*(.+?)\\s*$");
+        "^(?:搜索|查找|搜一下|搜|找一下|帮我找(?:一下)?)\\s*(?:B站)?\\s*(.+?)\\s*$");
     private static final Pattern TITLE_SUBSCRIBE = Pattern.compile(
         "^(?:(?:我想|我要|请|帮我)\\s*)?(?:订阅|追更)\\s*(?:一下|下)?\\s*(?:作品)?\\s*(.+?)\\s*$");
     private static final Pattern TITLE_STATE = Pattern.compile(
@@ -233,9 +233,11 @@ public final class BilibiliCommandParser {
 
         matcher = SEARCH_BY_TITLE.matcher(text);
         if (matcher.find() && !matcher.group(1).isBlank()) {
+            String title = cleanTitle(matcher.group(1)).replaceFirst(
+                "\\s*(?:动漫|动画|番剧|电影|影片|电视剧|剧集)$", "").trim();
             return new ParsedCommand(CmdType.SEARCH_BY_TITLE,
                 null, null, null, null, null, null, null,
-                matcher.group(1).trim(), null, null, null);
+                title, null, null, null);
         }
 
         matcher = TITLE_STATE.matcher(text);

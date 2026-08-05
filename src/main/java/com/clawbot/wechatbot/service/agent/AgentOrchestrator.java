@@ -426,7 +426,8 @@ public final class AgentOrchestrator implements AutoCloseable {
             }
             progressed |= schedulePermittedRetries(state);
             if (!isCancellationRequested(executionSession)) {
-                progressed |= executeRequiredReplan(state, deadlineNanos);
+                progressed |= executeRequiredReplan(
+                    state, deadlineNanos, executionSession);
             }
             if (!progressed) break;
         }
@@ -478,7 +479,8 @@ public final class AgentOrchestrator implements AutoCloseable {
     }
 
     private boolean executeRequiredReplan(
-        AgentExecutionState state, long deadlineNanos
+        AgentExecutionState state, long deadlineNanos,
+        AgentExecutionSession executionSession
     ) {
         List<AgentTaskState> candidates = state.replanRequiredTaskStates();
         if (candidates.isEmpty()) return false;
@@ -504,7 +506,8 @@ public final class AgentOrchestrator implements AutoCloseable {
             failed.lastEvaluation(), state.verifiedResults(), remaining,
             remainingBudget);
         try {
-            ReplanResult result = callReplanner(request, deadlineNanos);
+            ReplanResult result = callReplanner(
+                request, deadlineNanos, executionSession);
             mutationApplier.apply(state, result);
         } catch (Exception error) {
             state.failTask(
@@ -514,13 +517,15 @@ public final class AgentOrchestrator implements AutoCloseable {
     }
 
     private ReplanResult callReplanner(
-        ReplanRequest request, long deadlineNanos
+        ReplanRequest request, long deadlineNanos,
+        AgentExecutionSession executionSession
     ) throws Exception {
         long remainingNanos = deadlineNanos - System.nanoTime();
         long timeoutNanos = Math.min(
             remainingNanos, replanPolicy.timeout().toNanos());
         if (timeoutNanos <= 0) throw new TimeoutException("局部重规划超时");
         Future<ReplanResult> future = executor.submit(() -> replanner.replan(request));
+        if (executionSession != null) executionSession.register(future);
         try {
             return future.get(timeoutNanos, TimeUnit.NANOSECONDS);
         } catch (TimeoutException error) {
@@ -535,6 +540,8 @@ public final class AgentOrchestrator implements AutoCloseable {
             future.cancel(true);
             Thread.currentThread().interrupt();
             throw new Exception("局部重规划被中断", error);
+        } finally {
+            if (executionSession != null) executionSession.unregister(future);
         }
     }
 

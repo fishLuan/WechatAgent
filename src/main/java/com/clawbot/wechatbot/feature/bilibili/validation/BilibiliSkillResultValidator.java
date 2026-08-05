@@ -27,6 +27,9 @@ public final class BilibiliSkillResultValidator implements SkillResultValidator 
                 return reject("BILIBILI_RESULT_INVALID", "B站任务返回失败或受限结果：" + marker);
             }
         }
+        if (normalized.isBlank()) {
+            return reject("BILIBILI_EMPTY_RESULT", "B站任务没有返回可用内容");
+        }
         if (instruction.contains("订阅")
             && !normalized.contains("订阅成功")
             && !normalized.contains("已订阅")) {
