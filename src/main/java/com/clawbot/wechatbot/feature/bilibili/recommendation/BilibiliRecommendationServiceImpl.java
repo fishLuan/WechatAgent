@@ -7,6 +7,7 @@ import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 import com.clawbot.wechatbot.feature.bilibili.model.RecommendationResult;
 import com.clawbot.wechatbot.feature.bilibili.model.RecommendedContent;
 import com.clawbot.wechatbot.feature.bilibili.source.BilibiliContentSource;
+import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliContentRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -35,18 +36,21 @@ public class BilibiliRecommendationServiceImpl implements BilibiliRecommendation
     private final RecommendationHistoryService historyService;
     private final PendingRecommendationStore pendingStore;
     private final BilibiliProperties properties;
+    private final BilibiliContentRepository contentRepository;
 
     public BilibiliRecommendationServiceImpl(
             BilibiliContentSource contentSource,
             BilibiliPreferenceService preferenceService,
             RecommendationHistoryService historyService,
             PendingRecommendationStore pendingStore,
-            BilibiliProperties properties) {
+            BilibiliProperties properties,
+            BilibiliContentRepository contentRepository) {
         this.contentSource = contentSource;
         this.preferenceService = preferenceService;
         this.historyService = historyService;
         this.pendingStore = pendingStore;
         this.properties = properties;
+        this.contentRepository = contentRepository;
     }
 
     @Override
@@ -138,13 +142,25 @@ public class BilibiliRecommendationServiceImpl implements BilibiliRecommendation
         int targetCount = (count > 0) ? count : pref.getRecommendationCount();
         Set<String> userGenres = pref.getPreferredGenres();
 
-        // 2. 拉取候选作品
+        // 2. 优先使用后台采集的 Mongo 快照，避免用户请求直接触发 B 站风控。
         List<BilibiliContent> candidates;
         try {
-            candidates = contentSource.findCandidates(contentType, CANDIDATE_POOL_SIZE);
+            candidates = contentRepository
+                .findByContentTypeAndRatingGreaterThanEqualOrderByRatingDesc(contentType, 0.0)
+                .stream().limit(CANDIDATE_POOL_SIZE).toList();
         } catch (Exception e) {
-            log.error("拉取 {} 候选失败: {}", contentType, e.getMessage(), e);
-            return emptyResult(wechatUserId, contentType);
+            log.warn("读取 {} Mongo 候选池失败，尝试实时数据源: {}",
+                contentType, e.getMessage());
+            candidates = List.of();
+        }
+        if (candidates.isEmpty()) {
+            try {
+                candidates = contentSource.findCandidates(contentType, CANDIDATE_POOL_SIZE);
+                log.info("{} Mongo 候选池为空，临时使用实时数据源", contentType);
+            } catch (Exception e) {
+                log.error("{} Mongo 候选池为空且实时数据源失败: {}", contentType, e.getMessage());
+                return emptyResult(wechatUserId, contentType);
+            }
         }
 
         if (candidates == null || candidates.isEmpty()) {

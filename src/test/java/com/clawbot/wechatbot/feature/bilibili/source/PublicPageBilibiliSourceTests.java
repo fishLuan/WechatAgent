@@ -55,8 +55,9 @@ class PublicPageBilibiliSourceTests {
               }
             }
             """;
+        StubBilibiliHttpClient http = new StubBilibiliHttpClient(json);
         PublicPageBilibiliSource source = new PublicPageBilibiliSource(
-            new StubBilibiliHttpClient(json),
+            http,
             new BilibiliUrlParser(),
             new BilibiliPageParser(), new ObjectMapper());
 
@@ -68,7 +69,38 @@ class PublicPageBilibiliSourceTests {
     }
 
     @Test
-    void fallsBackToSearchWhenPgcIndexIsEmpty() throws Exception {
+    void findsCandidatesFromPgcRankAsPrimarySource() throws Exception {
+        String json = """
+            {
+              "code": 0,
+              "result": {"list": [{
+                "season_id": 109700,
+                "title": "假面骑士ZZZ",
+                "rating": "9.8分",
+                "cover": "https://example.test/cover.jpg",
+                "url": "https://www.bilibili.com/bangumi/play/ss109700",
+                "stat": {"view": 169645130},
+                "new_ep": {"index_show": "更新至第46话"}
+              }]}
+            }
+            """;
+        StubBilibiliHttpClient http = new StubBilibiliHttpClient(json);
+        PublicPageBilibiliSource source = new PublicPageBilibiliSource(
+            http,
+            new BilibiliUrlParser(),
+            new BilibiliPageParser(), new ObjectMapper());
+
+        List<BilibiliContent> results = source.findCandidates(ContentType.BANGUMI, 50);
+
+        assertEquals(1, results.size());
+        assertEquals("109700", results.get(0).getSeasonId());
+        assertEquals(9.8, results.get(0).getRating());
+        assertEquals(169645130L, results.get(0).getViewCount());
+        assertEquals(46, results.get(0).getLatestEpisodeNumber());
+    }
+
+    @Test
+    void doesNotUseBlockedAnonymousSearchForAutomaticCandidates() throws Exception {
         String json = """
             {
               "data": {
@@ -79,16 +111,16 @@ class PublicPageBilibiliSourceTests {
               }
             }
             """;
+        StubBilibiliHttpClient http = new StubBilibiliHttpClient(json);
         PublicPageBilibiliSource source = new PublicPageBilibiliSource(
-            new StubBilibiliHttpClient(json),
+            http,
             new BilibiliUrlParser(),
             new BilibiliPageParser(), new ObjectMapper());
 
         List<BilibiliContent> movies = source.findCandidates(ContentType.MOVIE, 3);
 
-        assertEquals(1, movies.size());
-        assertEquals(ContentType.MOVIE, movies.get(0).getContentType());
-        assertEquals("33", movies.get(0).getContentId());
+        assertTrue(movies.isEmpty());
+        assertEquals(null, http.lastAnonymousSearchUrl());
     }
 
     @Test
@@ -198,8 +230,9 @@ class PublicPageBilibiliSourceTests {
         assertEquals(2, results.size());
         assertEquals("老友记 第一季", results.get(0).getTitle());
         assertTrue(results.get(0).isFinished());
-        assertTrue(http.lastAnonymousSearchUrl()
-            .contains("search_type=media_ft"));
+        assertTrue(http.lastTextUrl()
+            .contains("/wbi/search/type"));
+        assertTrue(http.lastTextUrl().contains("w_rid="));
     }
 
     @Test
@@ -277,6 +310,13 @@ class PublicPageBilibiliSourceTests {
         @Override
         public String getText(String url) {
             lastTextUrl = url;
+            if (url.endsWith("/x/web-interface/nav")) {
+                return "{\"data\":{\"wbi_img\":{"
+                    + "\"img_url\":\"https://i0.hdslb.com/bfs/wbi/"
+                    + "0123456789abcdef0123456789abcdef.png\","
+                    + "\"sub_url\":\"https://i0.hdslb.com/bfs/wbi/"
+                    + "fedcba9876543210fedcba9876543210.png\"}}}";
+            }
             return anonymousSearchBody;
         }
 

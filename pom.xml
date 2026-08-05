@@ -66,10 +66,15 @@
             <artifactId>pdfbox</artifactId>
             <version>2.0.32</version>
         </dependency>
-        <!-- Word 读写 (.docx) -->
+        <!-- Word 读写 (.docx / legacy .doc) -->
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
+            <version>5.2.5</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-scratchpad</artifactId>
             <version>5.2.5</version>
         </dependency>
         <!-- HTML → PDF（排版简单） -->

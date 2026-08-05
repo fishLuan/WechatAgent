@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.base.PlanningBypassMessageHandler;
 import com.clawbot.wechatbot.intent.IntentRecognizer;
 import com.clawbot.wechatbot.intent.IntentResult;
 import com.clawbot.wechatbot.intent.IntentType;
@@ -12,7 +13,7 @@ import org.springframework.stereotype.Component;
  * B站结构化命令入口。能确定的命令直接执行，无法确定的文本继续交给普通Agent。
  */
 @Component
-public final class BilibiliCommandMessageHandler implements MessageHandler {
+public final class BilibiliCommandMessageHandler implements PlanningBypassMessageHandler {
     private final BilibiliCommandHandler commands;
     private final WeChatOutboundGateway gateway;
     private final IntentRecognizer intents;
@@ -38,6 +39,20 @@ public final class BilibiliCommandMessageHandler implements MessageHandler {
             return true;
         }
         return intents.recognize(text).isBilibiliIntent();
+    }
+
+    @Override
+    public boolean canBypassPlanning(WeixinMessage message) {
+        String text = WeChatMessageTextExtractor.extract(message).trim();
+        if (text.isEmpty() || looksLikeScheduledPush(text) || looksLikeMultipleTasks(text)) {
+            return false;
+        }
+        return BilibiliCommandParser.parse(text).type()
+            != BilibiliCommandParser.CmdType.UNKNOWN;
+    }
+
+    private boolean looksLikeMultipleTasks(String text) {
+        return text.matches(".*(?:然后|并且|同时|另外|接着|顺便).+");
     }
 
     /** 定时推送请求检测：时间词 + 推送/推荐/提醒 语义 */

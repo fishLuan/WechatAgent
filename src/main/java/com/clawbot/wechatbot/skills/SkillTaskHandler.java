@@ -32,7 +32,9 @@ public final class SkillTaskHandler implements AgentTaskHandler {
             context.history(), context.supportingContext(), context.dependencyText(),
             context.resolvedInput(), context.lineage()));
         return result.success()
-            ? AgentTaskResult.success(task, result.text(), result.attachments())
+            ? (result.hasMultipleTexts()
+                ? AgentTaskResult.successMulti(task, result.texts())
+                : AgentTaskResult.success(task, result.text(), result.attachments()))
             : AgentTaskResult.failure(task, result.text());
     }
 }

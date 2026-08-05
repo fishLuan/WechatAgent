@@ -1,6 +1,8 @@
 package com.clawbot.wechatbot.feature.bilibili.rag.retrieval;
 
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliPreference;
+import com.clawbot.wechatbot.feature.bilibili.model.BilibiliRecommendationHistory;
+import com.clawbot.wechatbot.feature.bilibili.model.BilibiliSubscription;
 import com.clawbot.wechatbot.feature.bilibili.model.RecommendationState;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionStatus;
 import com.clawbot.wechatbot.feature.bilibili.rag.model.BilibiliRagContext;
@@ -12,16 +14,22 @@ import com.clawbot.wechatbot.feature.bilibili.repository.BilibiliSubscriptionRep
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 
 @Component
 public class BilibiliRagContextBuilder {
-    private final BilibiliRagRetriever retriever;
+    private static final Set<RecommendationState> EXCLUDED_STATES = Set.of(
+        RecommendationState.WANT_TO_WATCH,
+        RecommendationState.WATCHED,
+        RecommendationState.DISLIKED);
+
+    private final BilibiliRagRetrievalService retriever;
     private final BilibiliPreferenceRepository preferences;
     private final BilibiliRecommendationHistoryRepository histories;
     private final BilibiliSubscriptionRepository subscriptions;
 
     public BilibiliRagContextBuilder(
-        BilibiliRagRetriever retriever,
+        BilibiliRagRetrievalService retriever,
         BilibiliPreferenceRepository preferences,
         BilibiliRecommendationHistoryRepository histories,
         BilibiliSubscriptionRepository subscriptions
@@ -33,29 +41,55 @@ public class BilibiliRagContextBuilder {
     }
 
     public BilibiliRagContext build(BilibiliRagRequest request) {
+        UserSignals signals = loadUserSignals(request);
         List<BilibiliRagDocument> documents = retriever.retrieve(
             request.question(),
             request.preferredContentType(),
             request.referenceTitle(),
-            8);
+            24).stream()
+            .filter(document -> allowed(document, signals))
+            .limit(8)
+            .toList();
         return new BilibiliRagContext(
-            request, documents, buildUserContext(request));
+            request, documents, buildUserContext(signals));
     }
 
-    private String buildUserContext(BilibiliRagRequest request) {
-        StringBuilder out = new StringBuilder();
-        if (request.preferredContentType() != null) {
-            preferences.findByWechatUserIdAndContentType(
-                request.wechatUserId(), request.preferredContentType())
-                .ifPresent(preference -> appendPreference(out, preference));
+    private UserSignals loadUserSignals(BilibiliRagRequest request) {
+        BilibiliPreference preference = request.preferredContentType() == null
+            ? null
+            : preferences.findByWechatUserIdAndContentType(
+                request.wechatUserId(), request.preferredContentType()).orElse(null);
+        List<BilibiliRecommendationHistory> history = request.preferredContentType() == null
+            ? List.of()
+            : safeList(histories.findByWechatUserIdAndContentTypeAndStateIn(
+                request.wechatUserId(), request.preferredContentType(), EXCLUDED_STATES));
+        List<BilibiliSubscription> activeSubscriptions = safeList(
+            subscriptions.findByWechatUserIdAndStatus(
+                request.wechatUserId(), SubscriptionStatus.ACTIVE));
+        return new UserSignals(preference, history, activeSubscriptions);
+    }
+
+    private boolean allowed(BilibiliRagDocument document, UserSignals signals) {
+        if (signals.preference() != null
+            && document.rating() != null
+            && document.rating() < signals.preference().getMinimumRating()) {
+            return false;
         }
-        List.of(RecommendationState.WANT_TO_WATCH,
-            RecommendationState.WATCHED,
-            RecommendationState.DISLIKED)
-            .forEach(state -> appendHistory(out, request, state));
-        subscriptions.findByWechatUserIdAndStatus(
-            request.wechatUserId(), SubscriptionStatus.ACTIVE)
-            .stream()
+        return signals.history().stream().noneMatch(history ->
+            history.getContentType() == document.contentType()
+                && java.util.Objects.equals(history.getContentId(), document.contentId())
+                && EXCLUDED_STATES.contains(history.getState()));
+    }
+
+    private String buildUserContext(UserSignals signals) {
+        StringBuilder out = new StringBuilder();
+        if (signals.preference() != null) appendPreference(out, signals.preference());
+        signals.history().stream()
+            .limit(18)
+            .forEach(history -> out.append("- ")
+                .append(stateLabel(history.getState())).append("：")
+                .append(history.getTitle()).append('\n'));
+        signals.subscriptions().stream()
             .limit(8)
             .forEach(subscription -> out.append("- 订阅中：")
                 .append(subscription.getTitle())
@@ -77,19 +111,6 @@ public class BilibiliRagContextBuilder {
         out.append('\n');
     }
 
-    private void appendHistory(
-        StringBuilder out, BilibiliRagRequest request, RecommendationState state
-    ) {
-        if (request.preferredContentType() == null) return;
-        histories.findByWechatUserIdAndContentTypeAndStateIn(
-            request.wechatUserId(), request.preferredContentType(), List.of(state))
-            .stream()
-            .limit(6)
-            .forEach(history -> out.append("- ")
-                .append(stateLabel(state)).append("：")
-                .append(history.getTitle()).append('\n'));
-    }
-
     private String stateLabel(RecommendationState state) {
         return switch (state) {
             case WANT_TO_WATCH -> "想看";
@@ -97,5 +118,16 @@ public class BilibiliRagContextBuilder {
             case DISLIKED -> "不喜欢";
             case RECOMMENDED -> "推荐过";
         };
+    }
+
+    private <T> List<T> safeList(List<T> values) {
+        return values == null ? List.of() : values;
+    }
+
+    private record UserSignals(
+        BilibiliPreference preference,
+        List<BilibiliRecommendationHistory> history,
+        List<BilibiliSubscription> subscriptions
+    ) {
     }
 }

@@ -2,6 +2,7 @@ package com.clawbot.wechatbot.feature.bilibili.rag.retrieval;
 
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliContent;
 import com.clawbot.wechatbot.feature.bilibili.model.BilibiliPreference;
+import com.clawbot.wechatbot.feature.bilibili.model.BilibiliRecommendationHistory;
 import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 import com.clawbot.wechatbot.feature.bilibili.model.RecommendationState;
 import com.clawbot.wechatbot.feature.bilibili.model.SubscriptionStatus;
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -104,5 +106,52 @@ class BilibiliRagContextBuilderTests {
         assertEquals(1, results.size());
         assertTrue(results.toString().contains("紫罗兰永恒花园"));
         assertFalse(results.toString().contains("剧场版"));
+    }
+
+    @Test
+    void hardFiltersLowRatedAndUserExcludedDocuments() {
+        BilibiliPreferenceRepository preferenceRepository =
+            mock(BilibiliPreferenceRepository.class);
+        BilibiliRecommendationHistoryRepository historyRepository =
+            mock(BilibiliRecommendationHistoryRepository.class);
+        BilibiliSubscriptionRepository subscriptionRepository =
+            mock(BilibiliSubscriptionRepository.class);
+        BilibiliPreference preference =
+            new BilibiliPreference("user-1", ContentType.BANGUMI);
+        preference.setMinimumRating(9.0);
+        when(preferenceRepository.findByWechatUserIdAndContentType(
+            "user-1", ContentType.BANGUMI)).thenReturn(Optional.of(preference));
+        BilibiliRecommendationHistory disliked =
+            new BilibiliRecommendationHistory(
+                "user-1", ContentType.BANGUMI, "disliked");
+        disliked.setState(RecommendationState.DISLIKED);
+        disliked.setTitle("不喜欢的作品");
+        when(historyRepository.findByWechatUserIdAndContentTypeAndStateIn(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(ContentType.BANGUMI),
+            any())).thenReturn(List.of(disliked));
+        when(subscriptionRepository.findByWechatUserIdAndStatus(
+            "user-1", SubscriptionStatus.ACTIVE)).thenReturn(List.of());
+        BilibiliRagRetrievalService retriever = (question, type, title, limit) -> List.of(
+            document("low", "低分作品", 8.0),
+            document("disliked", "不喜欢的作品", 9.8),
+            document("allowed", "符合条件的作品", 9.3));
+
+        BilibiliRagContext context = new BilibiliRagContextBuilder(
+            retriever, preferenceRepository, historyRepository, subscriptionRepository)
+            .build(new BilibiliRagRequest(
+                "user-1", "智能推荐动漫", ContentType.BANGUMI, null));
+
+        assertEquals(List.of("符合条件的作品"), context.documents().stream()
+            .map(document -> document.title()).toList());
+    }
+
+    private com.clawbot.wechatbot.feature.bilibili.rag.model.BilibiliRagDocument document(
+        String id, String title, double rating
+    ) {
+        return new com.clawbot.wechatbot.feature.bilibili.rag.model.BilibiliRagDocument(
+            ContentType.BANGUMI, id, "season-" + id, title, "简介",
+            java.util.Set.of("治愈"), rating, 100L, "https://example.com/" + id,
+            "第1集", 1, false);
     }
 }

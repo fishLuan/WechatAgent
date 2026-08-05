@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import com.nlf.calendar.Solar;
+import com.nlf.calendar.Lunar;
+
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
@@ -117,6 +120,31 @@ public class CurrentTimeTool implements FunctionTool {
         node.put("day_of_year", "第" + now.getDayOfYear() + "天");
         node.put("timestamp_s", now.toEpochSecond());
         node.put("timestamp_ms", now.toInstant().toEpochMilli());
+
+        // ---- 农历与节气 ----
+        try {
+            Solar solar = Solar.fromYmd(now.getYear(), now.getMonthValue(), now.getDayOfMonth());
+            Lunar lunar = solar.getLunar();
+            node.put("lunar_year", lunar.getYearInChinese() + "年");
+            node.put("lunar_month", lunar.getMonthInChinese() + "月");
+            node.put("lunar_day", lunar.getDayInChinese());
+            node.put("lunar_full", lunar.getYearInChinese() + "年"
+                + lunar.getMonthInChinese() + "月" + lunar.getDayInChinese());
+            node.put("lunar_year_ganzhi", lunar.getYearInGanZhi());
+
+            String jieQi = lunar.getJieQi();
+            if (jieQi != null && !jieQi.isEmpty()) {
+                node.put("solar_term", jieQi);
+            }
+            com.nlf.calendar.JieQi nextJieQi = lunar.getNextJieQi();
+            if (nextJieQi != null) {
+                node.put("next_solar_term", nextJieQi.getName());
+                node.put("next_solar_term_date", nextJieQi.getSolar().toFullString());
+            }
+        } catch (Exception ignored) {
+            // 农历计算失败不影响主流程
+        }
+
         return node.toString();
     }
 
