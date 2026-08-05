@@ -18,6 +18,9 @@ import com.clawbot.wechatbot.service.agent.reference.ReferenceResolutionExceptio
 import com.clawbot.wechatbot.service.agent.reference.ReferencePolicy;
 import com.clawbot.wechatbot.service.agent.reference.ResolvedTaskInput;
 import com.clawbot.wechatbot.service.agent.reference.ResultReferenceResolver;
+import com.clawbot.wechatbot.service.agent.interrupt.AgentExecutionControlService;
+import com.clawbot.wechatbot.service.agent.interrupt.AgentExecutionSession;
+import com.clawbot.wechatbot.service.agent.interrupt.AgentRunStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
@@ -27,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -55,6 +59,7 @@ public final class AgentOrchestrator implements AutoCloseable {
     private final PlanMutationApplier mutationApplier;
     private final AgentReplanPolicy replanPolicy;
     private final ResultReferenceResolver referenceResolver;
+    private AgentExecutionControlService executionControl;
 
     public AgentOrchestrator(
         ChatService fallbackChatService,
@@ -203,6 +208,11 @@ public final class AgentOrchestrator implements AutoCloseable {
             });
     }
 
+    public AgentOrchestrator enableInterrupts(AgentExecutionControlService control) {
+        this.executionControl = control;
+        return this;
+    }
+
     public AgentResponse execute(String userText, String history) throws Exception {
         return execute(userText, history, AgentRequestContext.anonymous());
     }
@@ -339,6 +349,8 @@ public final class AgentOrchestrator implements AutoCloseable {
         }
 
         AgentExecutionState state = new AgentExecutionState(userText, tasks);
+        AgentExecutionSession executionSession = executionControl == null
+            ? null : executionControl.begin(requestContext, userText);
 
         for (int round = 0;
             round < maxOuterRounds
@@ -346,6 +358,10 @@ public final class AgentOrchestrator implements AutoCloseable {
                 && !state.aborted()
                 && System.nanoTime() < deadlineNanos;
              round++) {
+            if (isCancellationRequested(executionSession)) {
+                state.cancelUnfinished();
+                break;
+            }
             state.nextOuterRound();
             if (state.totalTaskExecutions()
                 >= replanPolicy.maxTotalTaskExecutions()) {
@@ -389,7 +405,12 @@ public final class AgentOrchestrator implements AutoCloseable {
                     deadlineNanos,
                     requestContext,
                     inputAttachments,
-                    lineageByTask);
+                    lineageByTask,
+                    executionSession);
+                if (isCancellationRequested(executionSession)) {
+                    state.cancelUnfinished();
+                    break;
+                }
                 for (AgentTaskResult result : roundResults) {
                     TaskEvaluation evaluation = acceptanceEvaluator.evaluate(
                         result.task(), result,
@@ -399,9 +420,27 @@ public final class AgentOrchestrator implements AutoCloseable {
                 progressed = true;
             }
 
+            if (isCancellationRequested(executionSession)) {
+                state.cancelUnfinished();
+                break;
+            }
             progressed |= schedulePermittedRetries(state);
-            progressed |= executeRequiredReplan(state, deadlineNanos);
+            if (!isCancellationRequested(executionSession)) {
+                progressed |= executeRequiredReplan(state, deadlineNanos);
+            }
             if (!progressed) break;
+        }
+
+        if (isCancellationRequested(executionSession)) {
+            state.cancelUnfinished();
+            boolean partial = state.hasCompletedSideEffects();
+            if (executionControl != null) {
+                executionControl.finish(executionSession,
+                    partial ? AgentRunStatus.PARTIALLY_CANCELLED : AgentRunStatus.CANCELLED,
+                    state.completedTaskIds(), state.cancelledTaskIds(), partial,
+                    requestContext.userId());
+            }
+            return cancellationResponse(executionSession, state, partial);
         }
 
         boolean timedOut = System.nanoTime() >= deadlineNanos;
@@ -410,7 +449,13 @@ public final class AgentOrchestrator implements AutoCloseable {
                 ? "Agent 执行时间超过 " + executionTimeout.toSeconds() + " 秒"
                 : "任务依赖未通过验收、依赖不存在或超过外循环次数限制");
 
-        return aggregate(state);
+        AgentResponse response = aggregate(state);
+        if (executionControl != null) {
+            executionControl.finish(executionSession, AgentRunStatus.SUCCEEDED,
+                state.completedTaskIds(), List.of(), state.hasCompletedSideEffects(),
+                requestContext.userId());
+        }
+        return response;
     }
 
     private boolean schedulePermittedRetries(AgentExecutionState state) {
@@ -507,6 +552,8 @@ public final class AgentOrchestrator implements AutoCloseable {
         long deadlineNanos,
         AgentRequestContext requestContext
     ) throws Exception {
+        AgentExecutionSession executionSession = executionControl == null
+            ? null : executionControl.begin(requestContext, userText);
         long remainingNanos = deadlineNanos - System.nanoTime();
         if (remainingNanos <= 0) {
             throw new TimeoutException(
@@ -516,21 +563,46 @@ public final class AgentOrchestrator implements AutoCloseable {
             () -> requestContextHolder.callWith(
                 requestContext,
                 () -> fallbackChatService.chat(userText, history)));
+        if (executionSession != null) executionSession.register(future);
         try {
-            return AgentResponse.text(
+            AgentResponse response = AgentResponse.text(
                 future.get(remainingNanos, TimeUnit.NANOSECONDS));
+            if (executionControl != null) {
+                executionControl.finish(executionSession, AgentRunStatus.SUCCEEDED,
+                    List.of("task-1"), List.of(), false, requestContext.userId());
+            }
+            return response;
+        } catch (CancellationException error) {
+            if (executionControl != null) {
+                executionControl.finish(executionSession, AgentRunStatus.CANCELLED,
+                    List.of(), List.of("task-1"), false, requestContext.userId());
+            }
+            return AgentResponse.text("任务 " + executionSession.executionId()
+                + " 已取消。没有检测到已完成的副作用操作。");
         } catch (TimeoutException error) {
             future.cancel(true);
+            finishFailed(executionSession, requestContext);
             throw new TimeoutException(
                 "Agent 执行时间超过 " + executionTimeout.toSeconds() + " 秒");
         } catch (ExecutionException error) {
+            finishFailed(executionSession, requestContext);
             Throwable cause = error.getCause();
             if (cause instanceof Exception exception) throw exception;
             throw new Exception("Agent 单任务执行失败", cause);
         } catch (InterruptedException error) {
             future.cancel(true);
+            finishFailed(executionSession, requestContext);
             Thread.currentThread().interrupt();
             throw new Exception("Agent 执行被中断", error);
+        }
+    }
+
+    private void finishFailed(
+        AgentExecutionSession session, AgentRequestContext context
+    ) {
+        if (executionControl != null && session != null) {
+            executionControl.finish(session, AgentRunStatus.FAILED,
+                List.of(), List.of(), false, context.userId());
         }
     }
 
@@ -542,11 +614,12 @@ public final class AgentOrchestrator implements AutoCloseable {
         long deadlineNanos,
         AgentRequestContext requestContext,
         List<AgentInputAttachment> inputAttachments,
-        Map<String, List<DataLineageRecord>> lineageByTask
+        Map<String, List<DataLineageRecord>> lineageByTask,
+        AgentExecutionSession executionSession
     ) {
         List<Future<AgentTaskResult>> futures = new ArrayList<>();
         for (AgentTask task : ready) {
-            futures.add(executor.submit(
+            Future<AgentTaskResult> future = executor.submit(
                 () -> requestContextHolder.callWith(
                     requestContext,
                     () -> executeTask(
@@ -555,7 +628,9 @@ public final class AgentOrchestrator implements AutoCloseable {
                         supportingContext,
                         history,
                         inputAttachments,
-                        lineageByTask.getOrDefault(task.id(), List.of())))));
+                        lineageByTask.getOrDefault(task.id(), List.of()))));
+            futures.add(future);
+            if (executionSession != null) executionSession.register(future);
         }
 
         List<AgentTaskResult> results = new ArrayList<>();
@@ -567,7 +642,15 @@ public final class AgentOrchestrator implements AutoCloseable {
                 break;
             }
             try {
+                if (isCancellationRequested(executionSession)) {
+                    cancelRemaining(futures, index);
+                    break;
+                }
                 results.add(futures.get(index).get(remainingNanos, TimeUnit.NANOSECONDS));
+                if (executionSession != null) executionSession.unregister(futures.get(index));
+            } catch (CancellationException error) {
+                cancelRemaining(futures, index);
+                break;
             } catch (TimeoutException error) {
                 cancelRemaining(futures, index);
                 addTimeoutResults(results, ready, index);
@@ -590,6 +673,26 @@ public final class AgentOrchestrator implements AutoCloseable {
         }
         results.sort(Comparator.comparingInt(result -> result.task().order()));
         return results;
+    }
+
+    private boolean isCancellationRequested(AgentExecutionSession session) {
+        return session != null && session.token().isCancellationRequested();
+    }
+
+    private AgentResponse cancellationResponse(
+        AgentExecutionSession session, AgentExecutionState state, boolean partial
+    ) {
+        StringBuilder text = new StringBuilder("任务 ")
+            .append(session.executionId()).append(" 已")
+            .append(partial ? "部分取消" : "取消").append("。\n")
+            .append("已完成步骤：").append(state.completedTaskIds().size()).append(" 个；")
+            .append("已停止或未执行步骤：").append(state.cancelledTaskIds().size()).append(" 个。");
+        if (partial) {
+            text.append("\n部分已完成步骤产生了实际变更，系统不会自动撤销；如需回滚请明确提出。");
+        } else {
+            text.append("\n没有检测到已完成的副作用操作。");
+        }
+        return AgentResponse.text(text.toString());
     }
 
     private void cancelRemaining(List<Future<AgentTaskResult>> futures, int start) {

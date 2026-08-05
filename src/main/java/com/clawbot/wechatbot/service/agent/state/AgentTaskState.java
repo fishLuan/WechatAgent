@@ -110,6 +110,12 @@ public final class AgentTaskState {
         status = TaskStatus.ABORTED;
     }
 
+    void markCancelled(String reason) {
+        if (status == TaskStatus.VERIFIED) return;
+        lastResult = AgentTaskResult.failure(task, reason);
+        status = TaskStatus.CANCELLED;
+    }
+
     void requireReplan() {
         requireStatus(TaskStatus.RETRY_PENDING);
         status = TaskStatus.REPLAN_REQUIRED;

@@ -9,9 +9,10 @@ public enum TaskStatus {
     RETRY_PENDING,
     REPLAN_REQUIRED,
     FAILED,
-    ABORTED;
+    ABORTED,
+    CANCELLED;
 
     public boolean terminal() {
-        return this == VERIFIED || this == FAILED || this == ABORTED;
+        return this == VERIFIED || this == FAILED || this == ABORTED || this == CANCELLED;
     }
 }
