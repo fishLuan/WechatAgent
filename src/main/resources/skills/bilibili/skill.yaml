@@ -17,3 +17,6 @@ triggers:
   - 高分电影
 timeout-seconds: 30
 requires-user-context: true
+validation:
+  mode: REQUIRED
+  validator: bilibili

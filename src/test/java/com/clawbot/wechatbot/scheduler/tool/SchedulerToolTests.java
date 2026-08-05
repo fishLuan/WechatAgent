@@ -1,5 +1,6 @@
 package com.clawbot.wechatbot.scheduler.tool;
 
+import com.clawbot.wechatbot.idempotency.IdempotencyService;
 import com.clawbot.wechatbot.scheduler.controller.SchedulerControlService;
 import com.clawbot.wechatbot.service.agent.AgentRequestContext;
 import com.clawbot.wechatbot.service.agent.AgentRequestContextHolder;
@@ -22,8 +23,9 @@ class SchedulerToolTests {
         mock(SchedulerControlService.class);
     private final AgentRequestContextHolder requestContextHolder =
         new AgentRequestContextHolder();
+    private final IdempotencyService idempotencyService = mock(IdempotencyService.class);
     private final SchedulerTool tool =
-        new SchedulerTool(controlService, mapper, requestContextHolder);
+        new SchedulerTool(controlService, mapper, requestContextHolder, idempotencyService);
 
     @Test
     void rejectsExecutionWithoutRequestContext() throws Exception {

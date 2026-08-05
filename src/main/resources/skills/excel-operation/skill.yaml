@@ -41,3 +41,6 @@ triggers:
   - 合计
 timeout-seconds: 30
 requires-user-context: true
+validation:
+  mode: REQUIRED
+  validator: excel

@@ -78,6 +78,45 @@ public class BotConfig {
     public int getAgentExecutionTimeoutSeconds() {
         return getInt("agent.guard.execution-timeout-seconds");
     }
+    public double getAgentToolValidationMinConfidence() {
+        return getDouble("agent.validation.min-confidence");
+    }
+    public boolean isAgentReplanEnabled() {
+        return getBoolean("agent.replan.enabled");
+    }
+    public int getAgentReplanMaxCount() {
+        return getInt("agent.replan.max-count");
+    }
+    public int getAgentReplanMaxMutations() {
+        return getInt("agent.replan.max-mutations");
+    }
+    public int getAgentReplanMaxGeneratedTasks() {
+        return getInt("agent.replan.max-generated-tasks");
+    }
+    public int getAgentReplanMaxTotalTasks() {
+        return getInt("agent.replan.max-total-tasks");
+    }
+    public int getAgentReplanMaxRetriesPerTask() {
+        return getInt("agent.replan.max-retries-per-task");
+    }
+    public int getAgentReplanMaxTotalTaskExecutions() {
+        return getInt("agent.replan.max-total-task-executions");
+    }
+    public int getAgentReplanTimeoutSeconds() {
+        return getInt("agent.replan.timeout-seconds");
+    }
+    public int getAgentReferenceMaxPerTask() {
+        return getInt("agent.reference.max-per-task");
+    }
+    public int getAgentReferenceMaxDepth() {
+        return getInt("agent.reference.max-depth");
+    }
+    public int getAgentReferenceMaxPathLength() {
+        return getInt("agent.reference.max-path-length");
+    }
+    public int getAgentReferenceMaxResolvedInputChars() {
+        return getInt("agent.reference.max-resolved-input-chars");
+    }
     public int getAgentMaxInputAttachments() {
         return getInt("agent.input.max-attachments");
     }

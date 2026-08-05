@@ -7,6 +7,8 @@ import org.springframework.context.SmartLifecycle;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.index.Index;
 import org.springframework.scheduling.support.CronTrigger;
 import org.springframework.scheduling.support.SimpleTriggerContext;
 import org.springframework.stereotype.Service;
@@ -111,6 +113,8 @@ public class SchedulerControlService implements SmartLifecycle {
     public synchronized void start() {
         if (running) return;
         running = true;
+        mongoTemplate.indexOps(ScheduledSubscription.class).ensureIndex(
+            new Index().on("idempotencyKey", Sort.Direction.ASC).unique().sparse());
 
         // 【强力清理-解决脏数据】启动时先把属于测试用户的「每分钟的调试订阅（abc123）」全部自动禁用，防止骚扰
         try {
@@ -187,10 +191,25 @@ public class SchedulerControlService implements SmartLifecycle {
     }
 
     public ScheduledSubscription createOrUpdate(ScheduledSubscription subscription) {
+        if (subscription.getId() == null && subscription.getIdempotencyKey() != null
+            && !subscription.getIdempotencyKey().isBlank()) {
+            ScheduledSubscription existing = findByIdempotencyKey(subscription.getIdempotencyKey());
+            if (existing != null) {
+                schedulerCore.register(existing);
+                return existing;
+            }
+        }
         if (subscription.getCreatedAt() == null) subscription.setCreatedAt(System.currentTimeMillis());
         ScheduledSubscription saved = mongoTemplate.save(subscription);
         schedulerCore.register(saved);
         return saved;
+    }
+
+    public ScheduledSubscription findByIdempotencyKey(String key) {
+        if (key == null || key.isBlank()) return null;
+        return mongoTemplate.findOne(
+            Query.query(Criteria.where("idempotencyKey").is(key)),
+            ScheduledSubscription.class);
     }
 
     public boolean cancelByUserAndType(String userId, String taskTypeStr) {
@@ -206,6 +225,28 @@ public class SchedulerControlService implements SmartLifecycle {
             return true;
         } catch (Exception e) {
             return false;
+        }
+    }
+
+    /** Cancels every enabled subscription of one task type for the current user. */
+    public int cancelAllByUserAndType(String userId, String taskTypeStr) {
+        try {
+            TaskType taskType = Enum.valueOf(TaskType.class, taskTypeStr);
+            List<ScheduledSubscription> subscriptions = mongoTemplate.find(
+                Query.query(Criteria.where("userId").is(userId)
+                    .and("taskType").is(taskType)
+                    .and("enabled").is(true)),
+                ScheduledSubscription.class);
+            int count = 0;
+            for (ScheduledSubscription subscription : subscriptions) {
+                schedulerCore.cancel(subscription.getId());
+                subscription.setEnabled(false);
+                mongoTemplate.save(subscription);
+                count++;
+            }
+            return count;
+        } catch (IllegalArgumentException exception) {
+            return -1;
         }
     }
 

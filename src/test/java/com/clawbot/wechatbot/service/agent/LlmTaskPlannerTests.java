@@ -3,6 +3,7 @@ package com.clawbot.wechatbot.service.agent;
 import com.clawbot.wechatbot.service.client.DeepSeekClient;
 import com.clawbot.wechatbot.skills.SkillCatalog;
 import com.clawbot.wechatbot.skills.SkillDefinition;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -31,6 +32,96 @@ class LlmTaskPlannerTests {
         assertEquals(AgentTaskType.CHAT_TOOL, tasks.get(0).type());
         assertEquals(AgentTaskType.IMAGE_GENERATION, tasks.get(1).type());
         assertEquals(List.of("task-1"), tasks.get(1).dependencies());
+    }
+
+    @Test
+    void parsesStructuredInputExpectedOutputAndAcceptanceCriteria() throws Exception {
+        LlmTaskPlanner planner = planner(5);
+
+        List<AgentTask> tasks = planner.parseTasks(
+            "查询杭州明天天气",
+            """
+                {"tasks":[{
+                  "id":"weather",
+                  "type":"CHAT_TOOL",
+                  "instruction":"查询杭州明天天气",
+                  "input":{"city":"杭州","date":"2026-08-05"},
+                  "expected_output":{"city":"string","date":"string","weather":"string"},
+                  "acceptance_criteria":[
+                    {"description":"城市必须一致","path":"$.city","operator":"EQUALS","expected":"杭州","required":true},
+                    {"description":"必须返回天气","path":"$.weather","operator":"NOT_EMPTY","required":true}
+                  ],
+                  "depends_on":[]
+                }]}
+                """);
+
+        AgentTask task = tasks.get(0);
+        assertEquals("杭州", task.input().path("city").asText());
+        assertEquals("string", task.expectedOutput().path("weather").asText());
+        assertEquals(2, task.acceptanceCriteria().size());
+        assertEquals(
+            AcceptanceOperator.EQUALS,
+            task.acceptanceCriteria().get(0).operator());
+        assertEquals(
+            "杭州",
+            task.acceptanceCriteria().get(0).expectedValue().asText());
+    }
+
+    @Test
+    void canonicalizesTaskIdsInsideResultReferences() throws Exception {
+        LlmTaskPlanner planner = planner(5);
+
+        List<AgentTask> tasks = planner.parseTasks(
+            "搜索后订阅",
+            """
+                {"tasks":[
+                  {"id":"search","type":"CHAT_TOOL","instruction":"搜索作品",
+                   "input":{},"expected_output":{"selected":"object"},
+                   "acceptance_criteria":[],"depends_on":[]},
+                  {"id":"subscribe","type":"CHAT_TOOL","instruction":"订阅作品",
+                   "input":{"seasonId":{"$ref":"search.output.selected.seasonId"}},
+                   "expected_output":{},"acceptance_criteria":[],"depends_on":["search"]}
+                ]}
+                """);
+
+        assertEquals(
+            "task-1.output.selected.seasonId",
+            tasks.get(1).input().path("seasonId").path("$ref").asText());
+        assertEquals(List.of("task-1"), tasks.get(1).dependencies());
+    }
+
+    @Test
+    void keepsStructuredTaskJsonImmutable() {
+        ObjectNode input = new com.fasterxml.jackson.databind.ObjectMapper()
+            .createObjectNode().put("city", "杭州");
+        AgentTask task = new AgentTask(
+            "task-1", 0, AgentTaskType.CHAT_TOOL, "", "查询天气",
+            input,
+            new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode(),
+            List.of(), List.of());
+
+        input.put("city", "上海");
+        ObjectNode exposed = (ObjectNode) task.input();
+        exposed.put("city", "北京");
+
+        assertEquals("杭州", task.input().path("city").asText());
+    }
+
+    @Test
+    void ignoresInvalidAcceptanceCriterionWithoutDiscardingTask() throws Exception {
+        LlmTaskPlanner planner = planner(5);
+
+        AgentTask task = planner.parseTasks(
+            "查询天气",
+            """
+                {"tasks":[{"id":"t1","type":"CHAT_TOOL","instruction":"查询天气",
+                "input":{},"expected_output":{},
+                "acceptance_criteria":[
+                  {"path":"city","operator":"UNKNOWN","required":true}
+                ],"depends_on":[]}]}
+                """).get(0);
+
+        assertTrue(task.acceptanceCriteria().isEmpty());
     }
 
     @Test

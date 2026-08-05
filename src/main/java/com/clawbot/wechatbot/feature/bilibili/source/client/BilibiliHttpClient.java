@@ -99,6 +99,12 @@ public class BilibiliHttpClient {
                         throw new BilibiliAccessLimitedException(
                             "B站接口触发访问限制（412/风控）");
                     }
+                    if (isSearchUrl(url) && !looksLikeJson(response.body())) {
+                        throw new IllegalStateException(
+                            "B站搜索接口返回非JSON响应，HTTP=" + status
+                                + "，Content-Type=" + contentType(response)
+                                + "，响应类型=" + responseType(response.body()));
+                    }
                     return response.body();
                 }
                 if (status == 403 || status == 412 || status == 429) {
@@ -128,6 +134,8 @@ public class BilibiliHttpClient {
         } catch (Exception e) {
             if (e instanceof BilibiliAccessLimitedException
                 || isPermissionLimitedError(e)) {
+                System.err.println("[BILIBILI] 搜索请求触发明确访问限制："
+                    + e.getClass().getSimpleName() + "，原因=" + e.getMessage());
                 openSearchCircuit();
                 throw new BilibiliAccessLimitedException(
                     "B站实时搜索暂时受限，已暂停请求以避免继续触发风控", e);
@@ -190,8 +198,32 @@ public class BilibiliHttpClient {
             || body.toLowerCase().contains("session timeout")
             || body.contains("错误号: 412")
             || body.contains("错误：412")
-            || body.contains("security control policy")
-            || body.matches("(?is).*<title>\s*出错啦!\s*-\s*aba\\.bilibili\\.com\s*</title>.*");
+            || body.contains("security control policy");
+    }
+
+    private boolean isSearchUrl(String url) {
+        return url != null && url.contains("/x/web-interface/search/type");
+    }
+
+    private boolean looksLikeJson(String body) {
+        if (body == null) return false;
+        String trimmed = body.stripLeading();
+        return trimmed.startsWith("{") || trimmed.startsWith("[");
+    }
+
+    private String responseType(String body) {
+        if (body == null || body.isBlank()) return "EMPTY";
+        String trimmed = body.stripLeading().toLowerCase();
+        if (trimmed.startsWith("<!doctype html") || trimmed.startsWith("<html")) {
+            return "HTML";
+        }
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) return "JSON";
+        return "TEXT";
+    }
+
+    private String contentType(HttpResponse<String> response) {
+        if (response.headers() == null) return "unknown";
+        return response.headers().firstValue("Content-Type").orElse("unknown");
     }
 
     private boolean isPermissionLimitedError(Exception e) {

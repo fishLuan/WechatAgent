@@ -42,7 +42,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         "https://api.bilibili.com/pgc/season/index/result?"
             + "season_type=%d&type=1&st=1&sort=0&page=%d&pagesize=%d";
     private static final String SEARCH =
-        "https://api.bilibili.com/x/web-interface/search/type?search_type=%s&keyword=%s&page_size=%d";
+        "https://api.bilibili.com/x/web-interface/search/type?search_type=%s&keyword=%s&page=1";
     private static final String PGC_TIMELINE =
         "https://api.bilibili.com/pgc/web/timeline?types=%d&before=6&after=0";
 
@@ -165,8 +165,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         String url = String.format(
             SEARCH,
             searchType,
-            URLEncoder.encode(keyword, StandardCharsets.UTF_8),
-            Math.min(limit, 20));
+            URLEncoder.encode(keyword, StandardCharsets.UTF_8));
         List<BilibiliContent> contents = new ArrayList<>();
         String body = httpClient.getAnonymousSearchText(url);
         if (body == null || body.isBlank()) return List.of();
@@ -203,8 +202,7 @@ public class PublicPageBilibiliSource implements BilibiliContentSource {
         String url = String.format(
             SEARCH,
             searchType,
-            URLEncoder.encode(title, StandardCharsets.UTF_8),
-            limit);
+            URLEncoder.encode(title, StandardCharsets.UTF_8));
         String body = httpClient.getAnonymousSearchText(url);
         if (body == null || body.isBlank()) return;
         ensureSupportedResponse(body);
