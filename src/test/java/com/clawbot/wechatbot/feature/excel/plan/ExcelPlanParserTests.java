@@ -50,6 +50,17 @@ class ExcelPlanParserTests {
         assertEquals("MAX", op.param("queryType"));
     }
 
+    /** 查询类「的」可选：查询数量最大值 / 查询数量平均 / 查询金额合计 等无「的」说法也能识别。 */
+    @Test
+    void queryWithoutDeWordRoutesToQuery() {
+        ExcelOperation op = parseSingle("查询数量最大值");
+        assertEquals(ExcelOperationType.QUERY, op.type());
+        assertEquals("数量", op.param("column"));
+        assertEquals("MAX", op.param("queryType"));
+        assertEquals("AVERAGE", parseSingle("查询数量平均").param("queryType"));
+        assertEquals("SUM", parseSingle("查询金额合计").param("queryType"));
+    }
+
     @Test
     void averageAndCountWordsMapToQueryType() {
         assertEquals("AVERAGE", parseSingle("查询成绩的平均值").param("queryType"));

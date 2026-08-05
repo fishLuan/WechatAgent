@@ -3,6 +3,9 @@ package com.clawbot.wechatbot.feature.excel.messaging;
 import com.clawbot.wechatbot.skills.SkillManager;
 import com.clawbot.wechatbot.skills.SkillRequest;
 import com.clawbot.wechatbot.skills.SkillResult;
+import com.clawbot.wechatbot.service.client.DeepSeekClient;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.FileItem;
 import com.github.wechat.ilink.sdk.core.model.ImageItem;
@@ -16,9 +19,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -26,7 +32,10 @@ import static org.mockito.Mockito.when;
 class ExcelTextMessageHandlerTests {
 
     private final SkillManager skills = mock(SkillManager.class);
-    private final ExcelTextMessageHandler handler = new ExcelTextMessageHandler(skills);
+    private final DeepSeekClient deepSeekClient = mock(DeepSeekClient.class);
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final ExcelTextMessageHandler handler =
+        new ExcelTextMessageHandler(skills, deepSeekClient);
 
     private WeixinMessage textMessage(String text) {
         WeixinMessage message = new WeixinMessage();
@@ -51,8 +60,22 @@ class ExcelTextMessageHandlerTests {
     @Test
     void doesNotClaimChatQuestionsOrBlank() {
         assertFalse(handler.canHandle(textMessage("今天天气怎么样")));
-        assertFalse(handler.canHandle(textMessage("表格是什么意思")));
         assertFalse(handler.canHandle(textMessage("")));
+    }
+
+    /** 解析器不识别但带强表格意图的模糊说法：接管并交给 LLM 翻译。 */
+    @Test
+    void claimsFuzzyExcelIntentForLlmFallback() {
+        assertTrue(handler.canHandle(
+            textMessage("帮我把表格里数量最大的那条找出来")));
+        assertTrue(handler.canHandle(textMessage("把工作簿导出来发我")));
+        assertTrue(handler.canHandle(textMessage("生成一张汇总页")));
+    }
+
+    @Test
+    void chatWithoutExcelIntentIsNotClaimed() {
+        assertFalse(handler.canHandle(textMessage("晚上一起吃饭吗")));
+        assertFalse(handler.canHandle(textMessage("最近工作怎么样")));
     }
 
     @Test
@@ -85,6 +108,40 @@ class ExcelTextMessageHandlerTests {
                 && req.instruction().contains("=A2*B2")
                 && req.instruction().contains("覆盖")));
         verify(client).sendText(eq("user-1"), contains("表格已生成"));
+    }
+
+    /** 模糊说法：LLM 翻译成规范指令后仍走技能真实执行，不再落到聊天层假装成功。 */
+    @Test
+    void handleFuzzyIntentTranslatesAndExecutes() throws Exception {
+        when(deepSeekClient.mapper()).thenReturn(mapper);
+        when(deepSeekClient.chat(any(ArrayNode.class), any(ArrayNode.class), anyDouble()))
+            .thenReturn(mapper.readTree(
+                "{\"choices\":[{\"message\":{\"content\":\"查询数量的最大值\"}}]}"));
+        when(skills.execute(eq("excel-operation"), any(SkillRequest.class)))
+            .thenReturn(SkillResult.success("📊 数量 列的最大值：20"));
+        ILinkClient client = mock(ILinkClient.class);
+
+        handler.handle(client,
+            textMessage("帮我把表格里数量最大的那条找出来"));
+
+        verify(skills).execute(eq("excel-operation"),
+            argThat(req -> req.instruction().contains("查询数量的最大值")));
+        verify(client).sendText(eq("user-1"), contains("最大值"));
+    }
+
+    /** LLM 判断与表格无关：不执行技能，给出友好提示，不假装成功。 */
+    @Test
+    void handleUnrecognizedIntentDoesNotExecute() throws Exception {
+        when(deepSeekClient.mapper()).thenReturn(mapper);
+        when(deepSeekClient.chat(any(ArrayNode.class), any(ArrayNode.class), anyDouble()))
+            .thenReturn(mapper.readTree(
+                "{\"choices\":[{\"message\":{\"content\":\"UNRECOGNIZED\"}}]}"));
+        ILinkClient client = mock(ILinkClient.class);
+
+        handler.handle(client, textMessage("表格这个词是什么意思"));
+
+        verify(client).sendText(eq("user-1"), contains("换个说法"));
+        verify(skills, never()).execute(anyString(), any(SkillRequest.class));
     }
 
     private MessageItem imageItem() {

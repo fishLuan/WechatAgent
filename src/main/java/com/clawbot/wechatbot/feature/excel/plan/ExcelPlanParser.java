@@ -25,7 +25,7 @@ public final class ExcelPlanParser {
     private static final Pattern ROW_NUMBER = Pattern.compile(
         "第\\s*(\\d{1,3}|[一二两三四五六七八九十百]{1,4})\\s*行");
     private static final Pattern QUERY = Pattern.compile(
-        "(?:查询|计算|看看|统计|找一下)?\\s*(?:表格里)?\\s*(.+?)\\s*的\\s*"
+        "(?:查询|计算|看看|统计|找一下)?\\s*(?:表格里)?\\s*(.+?)\\s*的?\\s*"
             + "(最大值|最小(?:值)?|合计|总和|平均值|平均数|平均|行数|总数|总行数|多少行)");
     private static final Pattern SUM_PREFIX = Pattern.compile(
         "^(?:合计|统计)\\s*(.+?)(?:的)?(?:金额|总和|合计|数值|值)?$");
