@@ -120,6 +120,14 @@ public final class ExcelPlanParser {
         "^(?:请|帮我\\s*)*重命名(?:表格|工作簿)?\\s*(.+?)为(.+?)\\s*$");
     private static final Pattern WORKBOOK_RENAME_PREFIX = Pattern.compile(
         "^(?:请|帮我\\s*)*把表格\\s*(.+?)改名为(.+?)\\s*$");
+    /** 重命名表格指令（通用说法）：X[名字/名称][改为/改成/改名为/更名为/重命名为]Y，可带「把」前缀。 */
+    private static final Pattern RENAME_CMD = Pattern.compile(
+        "^(?:(?:请|帮我)\\s*)*(?:把\\s*)?[“«\"']?([^”»\"']+?)[”»\"']?\\s*"
+            + "(?:名字|名称)?\\s*(?:改为|改成|改名为|更名为|重命名为)\\s*"
+            + "[“«\"']?([^”»\"']+?)[”»\"']?\\s*$");
+    /** 通用重命名防误判：以其他操作动词开头的指令不按重命名处理（如「添加行：把金额改为100」）。 */
+    private static final Pattern RENAME_FORBIDDEN_PREFIX = Pattern.compile(
+        "^(?:添加|增加|加入|新增|加|生成|创建|制作|新建|修改|更新|删除|移除|导出|查询|统计|排序|去重|补全|撤销|回滚|恢复)");
     /** 删除表格指令：删除表格/工作簿 X。 */
     private static final Pattern WORKBOOK_DELETE_CMD = Pattern.compile(
         "^(?:请|帮我\\s*)*删除(?:表格|工作簿)\\s*(.+?)\\s*$");
@@ -160,6 +168,11 @@ public final class ExcelPlanParser {
 
     /** 解析用户文本为 ExcelPlan；无法识别时返回 null（由调用方给出兜底提示）。 */
     public ExcelPlan parse(String userId, String text) {
+        // 重命名指令先于归一化判定：避免「把报表改名为X」被表格上下文前缀剥离破坏
+        ExcelOperation rename = tryRename(text);
+        if (rename != null) {
+            return plan(userId, rename);
+        }
         text = normalizeInstruction(text);
         // 1. 回滚/撤销（放最前：避免「撤销删除第2行」这类说法被当成删除再次执行）
         if (isRollbackCommand(text)) {
@@ -245,6 +258,34 @@ public final class ExcelPlanParser {
         }
 
         return null;
+    }
+
+    /** 重命名路由：重命名X为Y / 把表格X改名为Y / X[名字/名称][改为/改成/改名为/更名为/重命名为]Y。 */
+    private static ExcelOperation tryRename(String text) {
+        if (text == null) {
+            return null;
+        }
+        Matcher verb = WORKBOOK_RENAME_VERB.matcher(text);
+        if (verb.matches()) {
+            return renameOperation(verb.group(1), verb.group(2));
+        }
+        Matcher prefix = WORKBOOK_RENAME_PREFIX.matcher(text);
+        if (prefix.matches()) {
+            return renameOperation(prefix.group(1), prefix.group(2));
+        }
+        if (RENAME_FORBIDDEN_PREFIX.matcher(text).find()) {
+            return null; // 以其他操作动词开头，不按重命名处理
+        }
+        Matcher generic = RENAME_CMD.matcher(text);
+        if (generic.matches()) {
+            return renameOperation(generic.group(1), generic.group(2));
+        }
+        return null;
+    }
+
+    private static ExcelOperation renameOperation(String name, String newTitle) {
+        return op("1", ExcelOperationType.WORKBOOK_RENAME,
+            Map.of("name", name.trim(), "newTitle", newTitle.trim()));
     }
 
     /**

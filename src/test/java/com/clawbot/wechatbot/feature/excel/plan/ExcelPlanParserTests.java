@@ -655,6 +655,32 @@ class ExcelPlanParserTests {
         assertEquals("月度销售", prefixed.param("newTitle"));
     }
 
+    /** 自然说法重命名：X名字改为Y / X改名为Y / 把X改名为Y / X更名为Y 等。 */
+    @Test
+    void renameNaturalPhrasesRouteToWorkbookRename() {
+        ExcelOperation op = parseSingle("报表名字改为产品表");
+        assertEquals(ExcelOperationType.WORKBOOK_RENAME, op.type());
+        assertEquals("报表", op.param("name"));
+        assertEquals("产品表", op.param("newTitle"));
+
+        assertEquals("报表", parseSingle("报表改名为产品表").param("name"));
+        assertEquals("报表", parseSingle("把报表改名为产品表").param("name"));
+        assertEquals("报表", parseSingle("把报表名称改成产品表").param("name"));
+        assertEquals("报表", parseSingle("把“报表”更名为产品表").param("name"));
+        assertEquals("产品表", parseSingle("报表重命名为产品表").param("newTitle"));
+    }
+
+    /** 通用重命名不能误判其他操作动词开头的指令（如添加行、生成表格）。 */
+    @Test
+    void renameRoutingDoesNotHijackOtherCommands() {
+        assertEquals(ExcelOperationType.ADD_ROW,
+            parseSingle("添加行：把金额改为100").type());
+        assertEquals(ExcelOperationType.CREATE_TABLE,
+            parseSingle("生成表格：姓名,城市").type());
+        assertEquals(ExcelOperationType.SORT,
+            parseSingle("把报表按数量排序").type());
+    }
+
     @Test
     void workbookDeleteRoutesToWorkbookDelete() {
         ExcelOperation op = parseSingle("删除表格 销售表");
