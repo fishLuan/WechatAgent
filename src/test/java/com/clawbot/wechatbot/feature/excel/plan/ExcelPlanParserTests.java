@@ -629,6 +629,9 @@ class ExcelPlanParserTests {
         assertEquals(ExcelOperationType.WORKBOOK_LIST, parseSingle("表格列表").type());
         assertEquals(ExcelOperationType.WORKBOOK_LIST, parseSingle("查看表格列表").type());
         assertEquals(ExcelOperationType.WORKBOOK_LIST, parseSingle("有哪些表格").type());
+        assertEquals(ExcelOperationType.WORKBOOK_LIST, parseSingle("查看所有工作簿").type());
+        assertEquals(ExcelOperationType.WORKBOOK_LIST, parseSingle("所有工作簿").type());
+        assertEquals(ExcelOperationType.WORKBOOK_LIST, parseSingle("我的工作簿").type());
     }
 
     @Test

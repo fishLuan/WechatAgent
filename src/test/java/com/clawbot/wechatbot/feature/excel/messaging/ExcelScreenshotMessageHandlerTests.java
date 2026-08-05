@@ -70,8 +70,9 @@ class ExcelScreenshotMessageHandlerTests {
 
     @Test
     void handleRecognizesTableAndSaves() throws Exception {
-        ExcelTable table = new ExcelTable("wechat-user", "旧表");
-        when(excelService.getActiveWorkbook(anyString())).thenReturn(table);
+        ExcelTable table = new ExcelTable("wechat-user", "截图表格");
+        when(excelService.createWorkbook(eq("wechat-user"), eq("截图表格")))
+            .thenReturn(table);
         when(visionService.isConfigured()).thenReturn(true);
         when(visionService.understandImage(any(), anyString()))
             .thenReturn("姓名,年龄\n张三,25\n李四,30");
@@ -85,10 +86,11 @@ class ExcelScreenshotMessageHandlerTests {
         // 解析成功：表头与数据行写入表格
         assertEquals(List.of("姓名", "年龄"), table.getHeaders());
         assertEquals(2, table.getRows().size());
+        verify(excelService).createWorkbook("wechat-user", "截图表格");
         verify(excelService).save(table);
         assertLastReplyContains(client, "已从截图识别出 2 行数据（2列）");
-        assertLastReplyContains(client, "可直接继续编辑");
-        // 新表没有原数据可替换，不产生快照
+        assertLastReplyContains(client, "已新建「截图表格」并切换为当前表格");
+        // 新表没有原数据，不产生替换快照
         verify(excelService, never()).snapshotVersion(any(), anyString());
         // 附 xlsx 附件
         verify(client).sendFile(anyString(), any(byte[].class), anyString(), anyString());
@@ -109,12 +111,12 @@ class ExcelScreenshotMessageHandlerTests {
         verify(excelService, never()).save(any());
     }
 
+    /** 即使已有活动表，截图转表格也总是新建一张「截图表格」，绝不替换现有数据。 */
     @Test
-    void handleRepliesReplacedWhenTableHadData() throws Exception {
-        ExcelTable table = new ExcelTable("wechat-user", "旧表");
-        table.setHeaders(List.of("旧列"));
-        table.setRows(List.of(List.of("旧数据")));
-        when(excelService.getActiveWorkbook(anyString())).thenReturn(table);
+    void handleAlwaysCreatesNewWorkbookInsteadOfReplacing() throws Exception {
+        ExcelTable fresh = new ExcelTable("wechat-user", "截图表格");
+        when(excelService.createWorkbook(eq("wechat-user"), eq("截图表格")))
+            .thenReturn(fresh);
         when(visionService.isConfigured()).thenReturn(true);
         when(visionService.understandImage(any(), anyString()))
             .thenReturn("姓名,年龄\n张三,25");
@@ -124,13 +126,15 @@ class ExcelScreenshotMessageHandlerTests {
 
         handler.handle(client, imageMessage("做成表格"));
 
-        assertLastReplyContains(client, "已替换原来的表格");
-        // 替换已有表格前先快照，保留原数据以便回滚
-        verify(excelService).snapshotVersion(table, "覆盖生成表格");
-        verify(excelService).save(table);
+        // 数据落入新建的「截图表格」，原活动表不受影响
+        assertEquals(List.of("姓名", "年龄"), fresh.getHeaders());
+        assertEquals(1, fresh.getRows().size());
+        verify(excelService).createWorkbook("wechat-user", "截图表格");
+        verify(excelService, never()).snapshotVersion(any(), anyString());
+        assertLastReplyContains(client, "已新建「截图表格」并切换为当前表格");
     }
 
-    /** 没有活动表时：以「截图表格」新建一张并导入（多工作簿语义）。 */
+    /** 截图转表格始终走新建路径（多工作簿语义）。 */
     @Test
     void handleCreatesNewWorkbookWhenNoActiveTable() throws Exception {
         ExcelTable table = new ExcelTable("wechat-user", "截图表格");
@@ -151,7 +155,7 @@ class ExcelScreenshotMessageHandlerTests {
         verify(excelService).createWorkbook("wechat-user", "截图表格");
         verify(excelService, never()).snapshotVersion(any(), anyString());
         verify(excelService).save(table);
-        assertLastReplyContains(client, "可直接继续编辑");
+        assertLastReplyContains(client, "已新建「截图表格」并切换为当前表格");
     }
 
     /** 断言至少有一条回复包含指定文本。 */

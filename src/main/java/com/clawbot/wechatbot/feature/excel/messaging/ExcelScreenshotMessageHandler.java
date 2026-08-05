@@ -108,13 +108,8 @@ public final class ExcelScreenshotMessageHandler implements MessageHandler {
             }
 
             // 5. 组装 CREATE_TABLE 计划并走「校验 → 执行」：
-            //    用户主动发截图转表格视为显式替换意图，overwrite 恒为 true；
-            //    导入到当前活动表，没有活动表时以「截图表格」新建一张并设为活动表
-            ExcelTable table = excelService.getActiveWorkbook(from);
-            if (table == null) {
-                table = excelService.createWorkbook(from, TABLE_TITLE);
-            }
-            boolean replaced = !table.getHeaders().isEmpty() || !table.getRows().isEmpty();
+            //    截图转表格总是新建一张「截图表格」并设为活动表，绝不替换任何现有数据
+            ExcelTable table = excelService.createWorkbook(from, TABLE_TITLE);
             ExcelPlan plan = buildPlan(from, parsed);
             Optional<String> validationError = planValidator.validate(plan, table);
             if (validationError.isPresent()) {
@@ -127,11 +122,10 @@ public final class ExcelScreenshotMessageHandler implements MessageHandler {
                 return;
             }
 
-            // 6. 成功：回复识别出的行数列数 + 替换说明，附 xlsx 附件
+            // 6. 成功：回复识别出的行数列数 + 新建说明，附 xlsx 附件
             String reply = "✅ 已从截图识别出 " + parsed.rows().size() + " 行数据（"
                 + parsed.headers().size() + "列）"
-                + (replaced ? "，已替换原来的表格。"
-                    : "，可直接继续编辑。");
+                + "，已新建「" + TABLE_TITLE + "」并切换为当前表格。";
             safeSendText(client, from, reply);
             sendXlsx(client, from, result.attachment(), table);
         } catch (Exception e) {

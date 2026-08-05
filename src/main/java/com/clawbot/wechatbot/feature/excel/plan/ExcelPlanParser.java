@@ -108,9 +108,10 @@ public final class ExcelPlanParser {
     /** 工作簿管理指令：新建表格/新建工作簿 X（名称像表格数据时让位给生成表格）。 */
     private static final Pattern WORKBOOK_CREATE_CMD = Pattern.compile(
         "^(?:请|帮我\\s*)*新建(?:表格|工作簿)(?:名字)?\\s*[:：]?\\s*(.+)$");
-    /** 工作簿列表指令：我的表格/表格列表/查看表格列表/有哪些表格。 */
+    /** 工作簿列表指令：我的表格/表格列表/查看表格列表/有哪些表格/查看所有工作簿/所有工作簿/我的工作簿。 */
     private static final Pattern WORKBOOK_LIST_CMD = Pattern.compile(
-        "^(?:请|帮我\\s*)*(?:我的表格|表格列表|查看表格列表|有哪些表格)\\s*$");
+        "^(?:请|帮我\\s*)*(?:我的表格|表格列表|查看表格列表|有哪些表格|"
+            + "查看所有工作簿|所有工作簿|我的工作簿)\\s*$");
     /** 选择表格指令：选择/切换到/打开表格 X。 */
     private static final Pattern WORKBOOK_SELECT_CMD = Pattern.compile(
         "^(?:请|帮我\\s*)*(?:选择|切换到|打开)表格\\s*(.+?)\\s*$");
