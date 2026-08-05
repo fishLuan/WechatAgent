@@ -34,4 +34,26 @@ class UserFacingResultFormatterTests {
         assertEquals("city：杭州\ntemperature：35", formatter.format(
             "{\"city\":\"杭州\",\"temperature\":35}"));
     }
+
+    @Test
+    void extractsDescriptionFromJsonCodeFence() {
+        assertEquals(
+            "杭州到北京全程约1253公里。",
+            formatter.format("```json\n"
+                + "{\"description\":\"杭州到北京全程约1253公里。\"}\n```"));
+    }
+
+    @Test
+    void extractsDescriptionFromUnlabelledCodeFence() {
+        assertEquals(
+            "杭州到北京全程约1253公里。",
+            formatter.format("```\n"
+                + "{\"description\":\"杭州到北京全程约1253公里。\"}\n```"));
+    }
+
+    @Test
+    void keepsNonJsonCodeFenceUnchanged() {
+        String javaCode = "```java\nSystem.out.println(\"hello\");\n```";
+        assertEquals(javaCode, formatter.format(javaCode));
+    }
 }
