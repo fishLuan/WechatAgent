@@ -732,6 +732,24 @@ class ExcelServiceTests {
         }
     }
 
+    /** 多图表导出：每张图各占一个工作表（图表、图表2）。 */
+    @Test
+    void toXlsxWithChartsCreatesOneSheetPerChart() throws Exception {
+        ExcelTable table = new ExcelTable("user-1", "销售表");
+        table.setHeaders(List.of("产品", "销售额"));
+        table.setRows(List.of(
+            List.of("A", "100"), List.of("B", "200"), List.of("C", "150")));
+        byte[] bytes = service.toXlsxWithCharts(table, List.of(
+            new ExcelService.ChartSpec("BAR", "产品", "销售额"),
+            new ExcelService.ChartSpec("PIE", "产品", "销售额")));
+        assertTrue(bytes.length > 0);
+
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(bytes))) {
+            assertNotNull(workbook.getSheet("图表"));
+            assertNotNull(workbook.getSheet("图表2"));
+        }
+    }
+
     @Test
     void exportsLineAndPieCharts() throws Exception {
         ExcelTable table = new ExcelTable("user-1", "销售表");

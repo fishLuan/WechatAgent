@@ -41,7 +41,7 @@ public final class ExcelPlanValidator {
         Map.entry(ExcelOperationType.AUDIT_LIST, Set.of()),
         Map.entry(ExcelOperationType.VERSION_DIFF, Set.of()),
         Map.entry(ExcelOperationType.FORMAT_TABLE, Set.of("title", "freezeHeader", "autoFilter")),
-        Map.entry(ExcelOperationType.CHART, Set.of("chartType", "categoryColumn", "valueColumn")),
+        Map.entry(ExcelOperationType.CHART, Set.of("chartType", "categoryColumn", "valueColumn", "extraCharts")),
         Map.entry(ExcelOperationType.DASHBOARD, Set.of()),
         Map.entry(ExcelOperationType.EXPORT, Set.of()));
 

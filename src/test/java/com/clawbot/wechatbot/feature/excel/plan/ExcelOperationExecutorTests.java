@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.inOrder;
@@ -911,6 +912,29 @@ class ExcelOperationExecutorTests {
         assertTrue(result.text().contains("'图表'"));
         assertNotNull(result.attachment());
         verify(excelService, never()).save(table);
+        verify(excelService, never()).snapshotVersion(any(), anyString());
+    }
+
+    /** 多图表：extraCharts 生成多张图（一张工作簿多工作表），不落库、不快照。 */
+    @Test
+    void chartHandlerGeneratesMultipleChartsFromExtraSpecs() throws Exception {
+        ExcelTable table = existingTable();
+        table.setHeaders(List.of("地区", "销售额"));
+        table.setRows(new ArrayList<>(List.of(
+            List.of("华东", "100"), List.of("华北", "50"),
+            List.of("华南", "80"), List.of("西北", "60"))));
+        when(excelService.toXlsxWithCharts(any(), any())).thenReturn(new byte[]{1, 2, 3});
+
+        OperationResult result = executor.execute(plan(
+            op(1, ExcelOperationType.CHART,
+                Map.of("chartType", "LINE", "categoryColumn", "地区", "valueColumn", "销售额",
+                    "extraCharts", "PIE|地区|销售额"))), table);
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("2 张图表"));
+        verify(excelService).toXlsxWithCharts(eq(table),
+            argThat(specs -> specs.size() == 2));
+        verify(excelService, never()).save(any());
         verify(excelService, never()).snapshotVersion(any(), anyString());
     }
 

@@ -559,6 +559,11 @@ public final class ExcelPlanParser {
      * 「按X生成Y图（V）」或「按X生成V图」三种形态；数值列缺失时不产出该参数交给校验器提示。
      */
     private ExcelOperation tryChart(String text) {
+        // 多图表：一句话多张图（如「生成折线图：A,B、生成饼图：C,D」）→ 一张工作簿多张图
+        List<ChartFragment> fragments = splitChartFragments(text);
+        if (fragments.size() >= 2) {
+            return multiChartOperation(fragments);
+        }
         Matcher plain = CHART_PLAIN.matcher(text);
         if (plain.matches()) {
             List<String> columns = splitChartColumns(plain.group(2));
@@ -595,6 +600,47 @@ public final class ExcelPlanParser {
             return op("1", ExcelOperationType.CHART, params);
         }
         return null;
+    }
+
+    /** 多图表片段：图表类型 + 分类列 + 数值列。 */
+    private record ChartFragment(String chartType, String categoryColumn,
+                                 String valueColumn) {}
+
+    /** 按「、；;」切分多图表指令，仅保留自包含的图表片段（列数 ≥ 2）。 */
+    private static List<ChartFragment> splitChartFragments(String text) {
+        List<ChartFragment> fragments = new ArrayList<>();
+        for (String part : text.split("[、；;]")) {
+            String fragment = part.trim();
+            if (fragment.isBlank()) continue;
+            Matcher plain = CHART_PLAIN.matcher(fragment);
+            if (plain.matches()) {
+                List<String> columns = splitChartColumns(plain.group(2));
+                if (columns.size() >= 2) {
+                    fragments.add(new ChartFragment(
+                        chartType(plain.group(1)), columns.get(0), columns.get(1)));
+                }
+            }
+        }
+        return fragments;
+    }
+
+    /** 多图表操作：首图参数 + extraCharts（"类型|分类|数值" 用 | 连接）。 */
+    private static ExcelOperation multiChartOperation(List<ChartFragment> fragments) {
+        Map<String, String> params = new LinkedHashMap<>();
+        ChartFragment first = fragments.get(0);
+        params.put("chartType", first.chartType());
+        params.put("categoryColumn", first.categoryColumn());
+        params.put("valueColumn", first.valueColumn());
+        StringBuilder extra = new StringBuilder();
+        for (int i = 1; i < fragments.size(); i++) {
+            ChartFragment f = fragments.get(i);
+            if (extra.length() > 0) extra.append('|');
+            extra.append(f.chartType()).append('|')
+                .append(f.categoryColumn()).append('|')
+                .append(f.valueColumn());
+        }
+        params.put("extraCharts", extra.toString());
+        return op("1", ExcelOperationType.CHART, params);
     }
 
     /** 汇总页路由：生成汇总页/汇总页/dashboard（大小写不敏感）。 */

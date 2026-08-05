@@ -589,6 +589,54 @@ public class ExcelService {
         }
     }
 
+    /** 单张图表的规格（多图表导出用）。 */
+    public record ChartSpec(String chartType, String categoryColumn, String valueColumn) {}
+
+    /**
+     * 导出带多张图表的 .xlsx：每张图表各占一个工作表（「图表」「图表2」…），
+     * 与数据工作表同名冲突时自动加后缀；任一张图数据不足即整体失败。
+     */
+    public byte[] toXlsxWithCharts(ExcelTable table, List<ChartSpec> charts) throws IOException {
+        if (charts == null || charts.isEmpty()) {
+            throw new IllegalArgumentException("图表列表为空。");
+        }
+        try (XSSFWorkbook workbook = buildWorkbook(table);
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Set<String> usedNames = new HashSet<>();
+            usedNames.add(safeSheetName(table.getTitle()));
+            for (int i = 0; i < charts.size(); i++) {
+                ChartSpec chart = charts.get(i);
+                int categoryIndex = findColumnIndex(table.getHeaders(), chart.categoryColumn());
+                int valueIndex = findColumnIndex(table.getHeaders(), chart.valueColumn());
+                List<String> categories = new ArrayList<>();
+                List<Double> values = new ArrayList<>();
+                for (List<String> row : table.getRows()) {
+                    String category = categoryIndex < row.size() ? row.get(categoryIndex) : "";
+                    if (category == null || category.isBlank()) continue;
+                    Double value = valueIndex < row.size()
+                        ? parseNumber(row.get(valueIndex)) : null;
+                    categories.add(category);
+                    values.add(value == null ? 0.0 : value);
+                }
+                if (categories.size() < 2) {
+                    throw new IllegalArgumentException(
+                        "图表「" + chart.categoryColumn() + "/" + chart.valueColumn()
+                            + "」数据不足，请确认分类列和数值列。");
+                }
+                String baseName = i == 0 ? "图表" : "图表" + (i + 1);
+                String sheetName = baseName;
+                while (!usedNames.add(sheetName)) {
+                    sheetName = sheetName + "2";
+                }
+                XSSFSheet chartSheet = workbook.createSheet(sheetName);
+                buildChartSheet(chartSheet, chart.chartType(), categories, values,
+                    chart.categoryColumn(), chart.valueColumn(), sheetName);
+            }
+            writeWorkbook(workbook, out);
+            return out.toByteArray();
+        }
+    }
+
     /**
      * 导出带汇总页的 .xlsx：数据工作表 + 「汇总」工作表（表标题 + 列数/行数 + 每列数值型合计与平均，
      * 非数值列标「-」+ 简单说明文本）；不修改表格数据。

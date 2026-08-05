@@ -8,6 +8,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 解析路由测试：与重构前 dispatch 的路由行为保持一致（回滚优先、覆盖标记、内容提取）。 */
 class ExcelPlanParserTests {
@@ -848,6 +849,17 @@ class ExcelPlanParserTests {
         assertEquals(ExcelOperationType.DASHBOARD, parseSingle("dashboard").type());
         assertEquals(ExcelOperationType.DASHBOARD, parseSingle("Dashboard").type());
         assertEquals(ExcelOperationType.DASHBOARD, parseSingle("请生成汇总页").type());
+    }
+
+    /** 一句话多张图：生成折线图：A,B、生成饼图：C,D → 单操作多图表（extraCharts 携带其余图）。 */
+    @Test
+    void multiChartMessageBuildsOneChartOpWithExtras() {
+        ExcelOperation op = parseSingle("生成折线图：地区,数量、生成饼图：产品,数量");
+        assertEquals(ExcelOperationType.CHART, op.type());
+        assertEquals("LINE", op.param("chartType"));
+        assertEquals("地区", op.param("categoryColumn"));
+        assertEquals("数量", op.param("valueColumn"));
+        assertTrue(op.param("extraCharts").contains("PIE|产品|数量"));
     }
 
     /** 「加标题」不被添加行路由吞掉；「生成柱状图/生成汇总页」不被生成表格路由吞掉。 */
