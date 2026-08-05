@@ -78,11 +78,13 @@ public class DeepSeekChatService implements ChatService {
         messages.add(message("user", userText));
 
         for (int round = 0; round <= maxToolRounds; round++) {
+            checkInterrupted();
             executionGuard.checkDeadline();
             ArrayNode availableTools = executionGuard.forceFinalResponse()
                 ? mapper.createArrayNode()
                 : toolRegistry.definitionsExcluding(executionGuard.circuitOpenTools());
             JsonNode response = client.chat(messages, availableTools);
+            checkInterrupted();
             executionGuard.checkDeadline();
             JsonNode assistant = response.path("choices").path(0).path("message");
             if (assistant.isMissingNode()) throw new Exception("模型响应中缺少 choices[0].message");
@@ -102,6 +104,7 @@ public class DeepSeekChatService implements ChatService {
 
             messages.add(assistant.deepCopy());
             for (JsonNode call : toolCalls) {
+                checkInterrupted();
                 String callId = call.path("id").asText();
                 String toolName = call.path("function").path("name").asText();
                 String arguments = call.path("function").path("arguments").asText("{}");
@@ -113,6 +116,7 @@ public class DeepSeekChatService implements ChatService {
                     ToolExecutionOutcome outcome = decision.execute()
                         ? toolRegistry.executeWithOutcome(toolName, arguments)
                         : decision.blockedOutcome();
+                    checkInterrupted();
                     if (decision.execute()) {
                         outcome = validationPipeline.validate(
                             userText, toolName, arguments, outcome,
@@ -149,6 +153,7 @@ public class DeepSeekChatService implements ChatService {
                  && continuationRound < longFormPolicy.maxContinuationRounds()
                  && result.length() < longFormPolicy.maxTotalChars();
              continuationRound++) {
+            checkInterrupted();
             executionGuard.checkDeadline();
             messages.add(assistant.deepCopy());
             messages.add(message(
@@ -159,6 +164,7 @@ public class DeepSeekChatService implements ChatService {
                     continuationRound + 1 == longFormPolicy.maxContinuationRounds())));
 
             JsonNode response = client.chat(messages, mapper.createArrayNode());
+            checkInterrupted();
             executionGuard.checkDeadline();
             assistant = response.path("choices").path(0).path("message");
             if (assistant.isMissingNode()) {
@@ -179,6 +185,12 @@ public class DeepSeekChatService implements ChatService {
             completed = trimIncompleteTail(completed);
         }
         return completed.trim();
+    }
+
+    private void checkInterrupted() throws InterruptedException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException("用户已取消当前Agent任务");
+        }
     }
 
     private boolean shouldContinue(

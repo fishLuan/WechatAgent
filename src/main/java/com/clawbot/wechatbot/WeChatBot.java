@@ -10,6 +10,8 @@ import com.clawbot.wechatbot.notification.NotificationService;
 import com.clawbot.wechatbot.service.agent.AgentTask;
 import com.clawbot.wechatbot.service.agent.MultiTaskPlanningGate;
 import com.clawbot.wechatbot.service.agent.TaskPlan;
+import com.clawbot.wechatbot.service.agent.interrupt.AgentExecutionControlService;
+import com.clawbot.wechatbot.service.agent.interrupt.CancelResult;
 import com.clawbot.wechatbot.util.QrCodeDisplay;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.config.ConfigLoader;
@@ -17,10 +19,13 @@ import com.github.wechat.ilink.sdk.core.config.ILinkConfig;
 import com.github.wechat.ilink.sdk.core.listener.OnLoginListener;
 import com.github.wechat.ilink.sdk.core.login.LoginContext;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
+import com.github.wechat.ilink.sdk.core.model.MessageItem;
+import com.github.wechat.ilink.sdk.core.model.VoiceItem;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.awt.Desktop;
 import java.net.URI;
@@ -48,6 +53,7 @@ public class WeChatBot implements SmartLifecycle {
     private final MultiTaskPlanningGate planningGate;
     private final MessageDispatchCoordinator messageDispatcher;
     private final Environment environment;
+    private final AgentExecutionControlService executionControl;
     private final List<BotSession> sessions = new CopyOnWriteArrayList<>();
     private final String routeNamespace = "clawbot-" + UUID.randomUUID();
     private final AtomicBoolean consoleOpened = new AtomicBoolean(false);
@@ -56,13 +62,15 @@ public class WeChatBot implements SmartLifecycle {
     private int maxSessions;
     private int nextSessionIndex = 1;
 
+    @Autowired
     public WeChatBot(BotConfig config, List<MessageHandler> handlers,
                      NotificationService notifications,
                      WeChatClientRegistry clientRegistry,
                      ConversationMemoryService memoryService,
                      MultiTaskPlanningGate planningGate,
                      MessageDispatchCoordinator messageDispatcher,
-                     Environment environment) {
+                     Environment environment,
+                     AgentExecutionControlService executionControl) {
         this.config = config;
         this.handlers = new ArrayList<>(handlers);
         this.handlers.sort(Comparator.comparingInt(MessageHandler::priority));
@@ -72,6 +80,18 @@ public class WeChatBot implements SmartLifecycle {
         this.planningGate = planningGate;
         this.messageDispatcher = messageDispatcher;
         this.environment = environment;
+        this.executionControl = executionControl;
+    }
+
+    WeChatBot(BotConfig config, List<MessageHandler> handlers,
+              NotificationService notifications,
+              WeChatClientRegistry clientRegistry,
+              ConversationMemoryService memoryService,
+              MultiTaskPlanningGate planningGate,
+              MessageDispatchCoordinator messageDispatcher,
+              Environment environment) {
+        this(config, handlers, notifications, clientRegistry, memoryService,
+            planningGate, messageDispatcher, environment, null);
     }
 
     @Override
@@ -199,6 +219,21 @@ public class WeChatBot implements SmartLifecycle {
         for (WeixinMessage message : messages) {
             if (message == null) continue;
             String from = message.getFrom_user_id();
+            String controlText = extractControlText(message);
+            if (executionControl != null && isCancelControl(controlText)) {
+                clientRegistry.bindUser(from, currentClient);
+                CancelResult result = executionControl.cancelCurrent(from);
+                if (result.found()) {
+                    try {
+                        currentClient.sendText(from,
+                            "已收到取消请求，正在停止任务 " + result.executionId()
+                                + "。系统不会再启动新的处理步骤。");
+                    } catch (Exception error) {
+                        notifications.notifyError("发送任务取消状态", error);
+                    }
+                    continue;
+                }
+            }
             boolean accepted = messageDispatcher.dispatch(
                 from,
                 () -> processMessage(currentClient, message),
@@ -213,6 +248,28 @@ public class WeChatBot implements SmartLifecycle {
                 sendBusyMessage(currentClient, from);
             }
         }
+    }
+
+    private boolean isCancelControl(String text) {
+        if (text == null) return false;
+        String normalized = text.trim().replaceAll("[！!。.]$", "");
+        return normalized.equals("取消") || normalized.equals("取消当前任务")
+            || normalized.equals("停止当前任务") || normalized.equals("终止当前任务")
+            || normalized.equalsIgnoreCase("cancel");
+    }
+
+    private String extractControlText(WeixinMessage message) {
+        if (message.getItem_list() == null) return "";
+        StringBuilder text = new StringBuilder();
+        for (MessageItem item : message.getItem_list()) {
+            if (item.getType() == 1 && item.getText_item() != null) {
+                text.append(item.getText_item().getText());
+            } else if (item.getVoice_item() != null) {
+                VoiceItem voice = item.getVoice_item();
+                if (voice.getText() != null) text.append(voice.getText());
+            }
+        }
+        return text.toString();
     }
 
     private void processMessage(

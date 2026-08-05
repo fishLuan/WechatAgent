@@ -228,6 +228,37 @@ public final class AgentExecutionState {
             .forEach(state -> state.markFailed("Agent 请求已终止"));
     }
 
+    public void cancelUnfinished() {
+        aborted = true;
+        tasks.values().stream()
+            .filter(state -> !state.status().terminal())
+            .forEach(state -> state.markCancelled("用户已取消任务"));
+    }
+
+    public List<String> completedTaskIds() {
+        return tasks.values().stream()
+            .filter(state -> state.status() == TaskStatus.VERIFIED)
+            .map(state -> state.task().id()).toList();
+    }
+
+    public List<String> cancelledTaskIds() {
+        return tasks.values().stream()
+            .filter(state -> state.status() == TaskStatus.CANCELLED)
+            .map(state -> state.task().id()).toList();
+    }
+
+    public boolean hasCompletedSideEffects() {
+        return tasks.values().stream()
+            .filter(state -> state.status() == TaskStatus.VERIFIED)
+            .map(state -> state.task().instruction().toLowerCase())
+            .anyMatch(text -> text.contains("发送") || text.contains("订阅")
+                || text.contains("取消") || text.contains("删除")
+                || text.contains("创建定时") || text.contains("写入")
+                || text.contains("send") || text.contains("email")
+                || text.contains("subscribe") || text.contains("delete")
+                || text.contains("create schedule") || text.contains("write"));
+    }
+
     public void incrementReplanCount() {
         replanCount++;
     }
