@@ -43,10 +43,15 @@ public final class BilibiliCommandMessageHandler implements PlanningBypassMessag
         }
         IntentResult intent = intents.recognize(text);
         if (intent.type() == IntentType.WEREAD_QUERY) return false;
+        BilibiliCommandParser.ParsedCommand parsed =
+            BilibiliCommandParser.parse(text);
+        if (parsed.type()
+            == BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION) {
+            return true;
+        }
         // 定时/预约推送请求（含时间词+推送）交给通用 Agent（走 scheduler_manage 创建定时任务），本处理器不拦
         if (looksLikeScheduledPush(text)) return false;
-        if (BilibiliCommandParser.parse(text).type()
-            != BilibiliCommandParser.CmdType.UNKNOWN) {
+        if (parsed.type() != BilibiliCommandParser.CmdType.UNKNOWN) {
             return true;
         }
         return intent.isBilibiliIntent();
@@ -55,17 +60,23 @@ public final class BilibiliCommandMessageHandler implements PlanningBypassMessag
     @Override
     public boolean canBypassPlanning(WeixinMessage message) {
         String text = WeChatMessageTextExtractor.extract(message).trim();
-        if (text.isEmpty() || looksLikeScheduledPush(text) || looksLikeMultipleTasks(text)) {
+        if (text.isEmpty() || looksLikeMultipleTasks(text)) {
             return false;
         }
+        BilibiliCommandParser.ParsedCommand parsed =
+            BilibiliCommandParser.parse(text);
+        if (parsed.type()
+            == BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION) {
+            return true;
+        }
+        if (looksLikeScheduledPush(text)) return false;
         if (isBareIndex(text)) {
             return domains.isActive(message.getFrom_user_id(),
                 ConversationDomainStore.Domain.BILIBILI);
         }
         IntentResult intent = intents.recognize(text);
         return intent.type() != IntentType.WEREAD_QUERY
-            && (BilibiliCommandParser.parse(text).type()
-                != BilibiliCommandParser.CmdType.UNKNOWN
+            && (parsed.type() != BilibiliCommandParser.CmdType.UNKNOWN
                 || intent.isBilibiliIntent());
     }
 
@@ -75,9 +86,10 @@ public final class BilibiliCommandMessageHandler implements PlanningBypassMessag
 
     /** 定时推送请求检测：时间词 + 推送/推荐/提醒 语义 */
     private boolean looksLikeScheduledPush(String text) {
-        boolean hasTime = text.matches(".*(每天|每日|明天|后天|定时|预约|几点|固定时间|\\d+\\s*点|\\d{1,2}[:：]\\d{2}).*");
-        boolean hasPush = text.matches(".*(推送|推荐|提醒|发给我|发一下).*");
-        return hasTime && hasPush;
+        boolean hasContentType = text.matches(
+            ".*(?:动漫|番剧|电影|剧集|电视剧|美剧|日剧|韩剧|国产剧).*");
+        return BilibiliScheduleExpressionParser.looksLikeTimedPush(
+            text, hasContentType);
     }
 
     @Override

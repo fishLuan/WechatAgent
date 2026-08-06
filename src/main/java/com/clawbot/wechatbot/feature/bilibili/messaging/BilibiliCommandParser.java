@@ -399,7 +399,7 @@ public final class BilibiliCommandParser {
 
     private static ParsedCommand parseDailyRecommendation(String text) {
         if (text.contains("推送时间")) return null;
-        if (!(text.contains("推送") || text.contains("推荐"))) return null;
+        if (!BilibiliScheduleExpressionParser.hasPushAction(text)) return null;
         ContentType type = inferType(text);
         if (type == null) return null;
         BilibiliScheduleExpressionParser.ScheduleValue schedule =

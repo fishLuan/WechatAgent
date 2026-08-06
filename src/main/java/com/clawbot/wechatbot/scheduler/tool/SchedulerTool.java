@@ -54,6 +54,7 @@ public class SchedulerTool implements FunctionTool {
         func.put("description",
                 "管理当前对话用户的微信消息定时订阅任务。不用传 user_id，系统自动识别当前对话用户。" +
                 "【重要】只要用户提到具体时间（如『11点』『9点29分』『每天』『明天早上』『几点几分』）并要求推送/提醒/订阅内容，就是在创建定时任务，必须调用本工具创建，绝不能立即执行或立即推送内容。" +
+                "相对时间可直接原样传入 one_time_datetime，例如『半个小时后』『30分钟之后』『两小时后』，服务端会按北京时间计算，不需要调用 get_current_time。" +
                 "取消订阅支持三种方式：① 用户说『取消所有』『全部取消』→ cancel_all=true；② 用户指定『取消订阅编号xxx』→ 填 subscription_id；③ 用户说指定任务类型→ 填 task_type。" +
                 "创建 B 站推荐推送任务：当用户说『几点推送几个电影/动漫/剧集』时，task_type=BILIBILI_PUSH，params_json 里写 {\"content_type\":\"MOVIE或BANGUMI或SERIES\",\"count\":数量}，时间用 time_daily_hhmm（每天重复）或 is_one_time+one_time_datetime（单次）。");
 
@@ -96,7 +97,7 @@ public class SchedulerTool implements FunctionTool {
 
         ObjectNode oneTimeDatetimeNode = props.putObject("one_time_datetime");
         oneTimeDatetimeNode.put("type", "string");
-        oneTimeDatetimeNode.put("description", "[创建时 is_one_time=true 单次提醒时必填] 单次提醒的具体日期时间，格式随意：『今天 15:00』『明天 8:30』『2026-07-28 15:00』『7月29日 20:00』『15:00』（默认今天）都行，记得替换掉中文冒号为英文冒号。如果 is_one_time=false 每天重复，不要填这个字段！");
+        oneTimeDatetimeNode.put("description", "[创建时 is_one_time=true 单次提醒时必填] 可传相对时间『半小时后』『半个小时后』『30分钟之后』『两小时后』，或绝对时间『今天 15:00』『明天 8:30』『2026-07-28 15:00』『15:00』。相对时间由服务端按北京时间计算，不要先调用其他工具查询当前时间。如果 is_one_time=false 每天重复，不要填这个字段！");
 
         ObjectNode cronNode = props.putObject("cron_expression");
         cronNode.put("type", "string");
@@ -231,8 +232,15 @@ public class SchedulerTool implements FunctionTool {
                 if (!timeStr.isBlank()) {
                     fireAt = SchedulerControlService.parseOneTimeFireAt("今天 " + timeStr);
                 }
-                // 实在解析不出来，默认 1 分钟后触发（兜底）
-                if (fireAt <= 0) fireAt = System.currentTimeMillis() + 60_000L;
+                // 时间不明确时禁止猜测，避免把定时任务误变成立即执行。
+                if (fireAt <= 0) {
+                    ObjectNode error = mapper.createObjectNode();
+                    error.put("success", false);
+                    error.put("retryable", false);
+                    error.put("code", "INVALID_SCHEDULE_TIME");
+                    error.put("error", "无法解析单次任务时间，请提供明确时间，例如“5分钟后”或“明天19:00”");
+                    return error.toString();
+                }
             }
             paramsObj.put("is_one_time", true);
             paramsObj.put("fire_timestamp", fireAt);
