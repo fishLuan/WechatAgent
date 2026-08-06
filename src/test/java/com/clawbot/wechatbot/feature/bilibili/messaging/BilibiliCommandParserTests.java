@@ -142,6 +142,13 @@ class BilibiliCommandParserTests {
         assertCmdType("追更列表", BilibiliCommandParser.CmdType.LIST_SUBSCRIPTIONS);
         assertCmdType("订阅列表", BilibiliCommandParser.CmdType.LIST_SUBSCRIPTIONS);
         assertCmdType("列出订阅", BilibiliCommandParser.CmdType.LIST_SUBSCRIPTIONS);
+        assertCmdType("我订阅了哪些作品", BilibiliCommandParser.CmdType.LIST_SUBSCRIPTIONS);
+        assertCmdType("我都订阅了什么", BilibiliCommandParser.CmdType.LIST_SUBSCRIPTIONS);
+        assertCmdType("我订阅过什么作品", BilibiliCommandParser.CmdType.LIST_SUBSCRIPTIONS);
+        assertCmdType("有哪些订阅？", BilibiliCommandParser.CmdType.LIST_SUBSCRIPTIONS);
+        assertCmdType("查看我的订阅", BilibiliCommandParser.CmdType.LIST_SUBSCRIPTIONS);
+        assertCmdType("我的追更有哪些", BilibiliCommandParser.CmdType.LIST_SUBSCRIPTIONS);
+        assertCmdType("列出我订阅的作品", BilibiliCommandParser.CmdType.LIST_SUBSCRIPTIONS);
     }
 
     @Test

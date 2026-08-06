@@ -79,6 +79,14 @@ public final class BilibiliCommandParser {
             + "(\\d{1,2}|[一二两三四五六七八九十]{1,3})\\s*(?:个|部)?\\s*$");
     private static final Pattern MANAGE_SUBSCRIPTION = Pattern.compile(
         "^(取消|删除|移除|暂停|恢复|继续)\\s*订阅\\s*(\\d{1,2}|[0-9a-fA-F]{20,})\\s*$");
+    private static final Pattern LIST_SUBSCRIPTIONS = Pattern.compile(
+        "^(?:我的订阅|查看(?:我的)?订阅|列出(?:我的)?订阅|订阅列表|追更列表"
+            + "|我(?:都)?订阅了(?:哪些|什么)(?:作品)?"
+            + "|我订阅过(?:哪些|什么)(?:作品)?"
+            + "|(?:我)?有哪些订阅"
+            + "|我的追更(?:有)?哪些"
+            + "|列出我订阅的作品)\\s*[？?]?$"
+    );
     private static final Pattern EXACT_TIME = Pattern.compile(
         "^设置\\s*(动漫|番剧|电影|剧集|电视剧)\\s*推送时间\\s*([0-2]?\\d[:：][0-5]\\d)\\s*$");
     private static final Pattern EXACT_RATING = Pattern.compile(
@@ -200,7 +208,7 @@ public final class BilibiliCommandParser {
                 null, null, null, null, null, null, null, null, null);
         }
 
-        if (text.matches("^(我的|查看|列出)?\\s*(订阅|订阅列表|追更列表)$")) {
+        if (LIST_SUBSCRIPTIONS.matcher(text).matches()) {
             return ParsedCommand.of(CmdType.LIST_SUBSCRIPTIONS);
         }
         if (text.matches("^(查看|我的|显示|列出)\\s*(偏好|设置|推荐设置)$")) {
