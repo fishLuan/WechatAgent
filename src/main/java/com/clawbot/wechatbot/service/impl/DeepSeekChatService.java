@@ -74,10 +74,22 @@ public class DeepSeekChatService implements ChatService {
     public String chatWithAllowedTools(
         String userText, String history, Set<String> allowedTools
     ) throws Exception {
+        Set<String> effectiveTools = expandSupportingTools(allowedTools);
         try (AgentExecutionGuard.ChatScope ignored = executionGuard.enterChat()) {
             return runToolLoop(userText, history,
-                allowedTools == null ? null : Set.copyOf(allowedTools));
+                effectiveTools);
         }
+    }
+
+    private Set<String> expandSupportingTools(Set<String> allowedTools) {
+        if (allowedTools == null) return null;
+        java.util.LinkedHashSet<String> expanded =
+            new java.util.LinkedHashSet<>(allowedTools);
+        // 兼容仍选择先读取当前时间的模型；实际相对时间由调度器自行计算。
+        if (expanded.contains("scheduler_manage")) {
+            expanded.add("get_current_time");
+        }
+        return Set.copyOf(expanded);
     }
 
     private String runToolLoop(

@@ -150,6 +150,7 @@ public class BilibiliRecommendationServiceImpl implements BilibiliRecommendation
         double minRating = pref.getMinimumRating();
         int targetCount = (count > 0) ? count : pref.getRecommendationCount();
         Set<String> userGenres = pref.getPreferredGenres();
+        Map<String, Integer> tagWeights = pref.getTagWeights();
         // 用户指定了 tag → 用它；泛词（动漫/番/剧）忽略，走偏好
         Set<String> userTags;
         if (tag != null && !tag.isBlank()
@@ -216,12 +217,17 @@ public class BilibiliRecommendationServiceImpl implements BilibiliRecommendation
         }
 
         // 5. 打分排序
-        List<BilibiliContent> ranked = RecommendationCandidateScorer.scoreAndRank(
-            filtered, targetCount, userGenres, userTags);
+        List<BilibiliContent> ranked = contentType == ContentType.BANGUMI
+            ? RecommendationCandidateScorer.scoreAndRank(
+                filtered, targetCount, userGenres, userTags)
+            : FilmSeriesRecommendationScorer.scoreAndRank(
+                contentType, filtered, targetCount,
+                userGenres, userTags, tagWeights);
 
         // 6. 转换为推荐条目
         List<RecommendedContent> items = ranked.stream()
-            .map(c -> toRecommendedContent(c, userGenres, userTags))
+            .map(c -> toRecommendedContent(
+                c, userGenres, userTags, tagWeights))
             .toList();
 
         // 7. 记录推荐历史
@@ -239,10 +245,14 @@ public class BilibiliRecommendationServiceImpl implements BilibiliRecommendation
     }
 
     private RecommendedContent toRecommendedContent(
-            BilibiliContent c, Set<String> userGenres, Set<String> userTags) {
-        String reason = RecommendationCandidateScorer.generateReason(c, userGenres, userTags);
-        // 标签模式：显示具体匹配标签
-        if (!userTags.isEmpty()) {
+            BilibiliContent c, Set<String> userGenres, Set<String> userTags,
+            Map<String, Integer> tagWeights) {
+        String reason = c.getContentType() == ContentType.BANGUMI
+            ? RecommendationCandidateScorer.generateReason(c, userGenres, userTags)
+            : FilmSeriesRecommendationScorer.reason(
+                c.getContentType(), c, userGenres, userTags, tagWeights);
+        // 保持动漫原有理由格式；电影和电视剧由独立评分器生成加权理由。
+        if (c.getContentType() == ContentType.BANGUMI && !userTags.isEmpty()) {
             Set<String> matched = new LinkedHashSet<>();
             if (c.getTags() != null) {
                 c.getTags().stream().filter(userTags::contains).forEach(matched::add);

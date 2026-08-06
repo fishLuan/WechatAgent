@@ -25,7 +25,7 @@ final class BilibiliScheduleExpressionParser {
         "(凌晨|早上|上午|中午|下午|晚上)?\\s*"
             + "([0-9]{1,2}|[零〇一二两三四五六七八九十]{1,3})[点时](一刻|三刻|整)");
     private static final Pattern RELATIVE_TIME = Pattern.compile(
-        "([0-9]{1,4}|[零〇一二两三四五六七八九十百]{1,5})(小时|分钟)后");
+        "([0-9]{1,4}|[零〇一二两三四五六七八九十百]{1,5})(小时|分钟)(?:之后|后)");
 
     private BilibiliScheduleExpressionParser() {}
 
@@ -59,11 +59,16 @@ final class BilibiliScheduleExpressionParser {
     }
 
     static boolean looksLikeTimedPush(String text, boolean hasContentType) {
-        if (!(text.contains("推送") || text.contains("推荐")) || !hasContentType) return false;
+        if (!hasPushAction(text) || !hasContentType) return false;
         return text.matches(".*(?:[0-9]{1,2}\\s*[点时]|[0-9]{1,2}[:：][0-9]{1,2}).*")
             || CHINESE_TIME.matcher(text).find() || RELATIVE_TIME.matcher(text).find()
             || text.contains("明天") || text.contains("后天")
             || text.contains("每周") || text.contains("每星期");
+    }
+
+    static boolean hasPushAction(String text) {
+        return text != null && (text.contains("推送") || text.contains("推荐")
+            || text.matches(".*(?:给我|帮我|请)?推(?:一下)?(?:动漫|番剧|电影|剧集|电视剧).*") );
     }
 
     private static LocalTime extractTime(String text) {

@@ -58,6 +58,21 @@ public class SchedulerControlService implements SmartLifecycle {
                 .replaceAll("[\\s\\u00a0]", " ").replace("  ", " ").trim();
 
             LocalDateTime now = LocalDateTime.now(SHANGHAI_ZONE);
+            // 相对时间直接在服务端按北京时间计算，不依赖模型查询当前时间。
+            if (s.matches("^半个?小时(?:之后|以后|后)$")) {
+                return now.plusMinutes(30).atZone(SHANGHAI_ZONE)
+                    .toInstant().toEpochMilli();
+            }
+            java.util.regex.Matcher relative = java.util.regex.Pattern.compile(
+                "^([0-9]{1,4}|[零〇一二两三四五六七八九十百]{1,5})"
+                    + "(分钟|个?小时)(?:之后|以后|后)$").matcher(s);
+            if (relative.matches()) {
+                int amount = parseNaturalNumber(relative.group(1));
+                if (amount <= 0) return 0L;
+                LocalDateTime target = relative.group(2).contains("小时")
+                    ? now.plusHours(amount) : now.plusMinutes(amount);
+                return target.atZone(SHANGHAI_ZONE).toInstant().toEpochMilli();
+            }
             java.util.regex.Matcher mHhmm = java.util.regex.Pattern.compile("^(\\d{1,2}):(\\d{2})$").matcher(s);
 
             // 情况1：只有 "HH:mm" → 今天
@@ -107,6 +122,42 @@ public class SchedulerControlService implements SmartLifecycle {
             }
         } catch (Exception ignored) {}
         return 0L;
+    }
+
+    private static int parseNaturalNumber(String value) {
+        if (value == null || value.isBlank()) return 0;
+        if (value.matches("\\d+")) return Integer.parseInt(value);
+        String normalized = value.replace('两', '二').replace('〇', '零');
+        if ("十".equals(normalized)) return 10;
+        if ("百".equals(normalized)) return 100;
+        int hundred = normalized.indexOf('百');
+        int total = 0;
+        if (hundred >= 0) {
+            total = (hundred == 0 ? 1 : chineseDigit(normalized.charAt(hundred - 1))) * 100;
+            normalized = normalized.substring(hundred + 1);
+        }
+        int ten = normalized.indexOf('十');
+        if (ten >= 0) {
+            total += (ten == 0 ? 1 : chineseDigit(normalized.charAt(ten - 1))) * 10;
+            if (ten + 1 < normalized.length()) {
+                total += chineseDigit(normalized.charAt(ten + 1));
+            }
+            return total;
+        }
+        if (total > 0 && normalized.startsWith("零")) {
+            normalized = normalized.substring(1);
+        }
+        int remainder = 0;
+        for (int index = 0; index < normalized.length(); index++) {
+            int digit = chineseDigit(normalized.charAt(index));
+            if (digit < 0) return 0;
+            remainder = remainder * 10 + digit;
+        }
+        return total + remainder;
+    }
+
+    private static int chineseDigit(char value) {
+        return "零一二三四五六七八九".indexOf(value);
     }
 
     @Override

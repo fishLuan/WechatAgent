@@ -273,6 +273,21 @@ class BilibiliCommandParserTests {
         assertEquals("ONCE", command.state());
         assertTrue(Long.parseLong(command.fieldValue()) > System.currentTimeMillis());
 
+        command = BilibiliCommandParser.parse("5分钟之后给我推动漫");
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals(ContentType.BANGUMI, command.contentType());
+        assertEquals("ONCE", command.state());
+
+        command = BilibiliCommandParser.parse("晚上七点给我推动漫");
+        assertEquals(
+            BilibiliCommandParser.CmdType.CONFIGURE_DAILY_RECOMMENDATION,
+            command.type());
+        assertEquals(ContentType.BANGUMI, command.contentType());
+        assertEquals("19:00", command.fieldValue());
+        assertEquals("DAILY", command.state());
+
         command = BilibiliCommandParser.parse("明天十点推送电影");
         assertEquals("ONCE", command.state());
 
