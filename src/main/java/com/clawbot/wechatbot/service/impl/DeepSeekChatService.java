@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.OptionalInt;
+import java.util.Set;
 
 /** 负责对话和 function-calling 流程，不再承担 HTTP 或具体工具执行细节。 */
 public class DeepSeekChatService implements ChatService {
@@ -66,14 +67,26 @@ public class DeepSeekChatService implements ChatService {
 
     @Override
     public String chat(String userText, String history) throws Exception {
+        return chatWithAllowedTools(userText, history, null);
+    }
+
+    @Override
+    public String chatWithAllowedTools(
+        String userText, String history, Set<String> allowedTools
+    ) throws Exception {
         try (AgentExecutionGuard.ChatScope ignored = executionGuard.enterChat()) {
-            return runToolLoop(userText, history);
+            return runToolLoop(userText, history,
+                allowedTools == null ? null : Set.copyOf(allowedTools));
         }
     }
 
-    private String runToolLoop(String userText, String history) throws Exception {
+    private String runToolLoop(
+        String userText, String history, Set<String> allowedTools
+    ) throws Exception {
         ArrayNode messages = mapper.createArrayNode();
-        messages.add(message("system", systemPrompt + TOOL_VALIDATION_PROMPT));
+        boolean toolsEnabled = allowedTools == null || !allowedTools.isEmpty();
+        messages.add(message("system", systemPrompt
+            + (toolsEnabled ? TOOL_VALIDATION_PROMPT : "")));
         appendHistory(messages, history);
         messages.add(message("user", userText));
 
@@ -82,7 +95,8 @@ public class DeepSeekChatService implements ChatService {
             executionGuard.checkDeadline();
             ArrayNode availableTools = executionGuard.forceFinalResponse()
                 ? mapper.createArrayNode()
-                : toolRegistry.definitionsExcluding(executionGuard.circuitOpenTools());
+                : toolRegistry.definitionsIncluding(
+                    allowedTools, executionGuard.circuitOpenTools());
             JsonNode response = client.chat(messages, availableTools);
             checkInterrupted();
             executionGuard.checkDeadline();
@@ -108,6 +122,9 @@ public class DeepSeekChatService implements ChatService {
                 String callId = call.path("id").asText();
                 String toolName = call.path("function").path("name").asText();
                 String arguments = call.path("function").path("arguments").asText("{}");
+                if (allowedTools != null && !allowedTools.contains(toolName)) {
+                    throw new Exception("模型尝试调用当前任务未授权的工具：" + toolName);
+                }
                 AgentExecutionGuard.ToolCallDecision decision =
                     executionGuard.beforeTool(toolName, arguments);
                 String toolContent;

@@ -30,6 +30,8 @@ import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
 import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
 import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
+import com.clawbot.wechatbot.service.agent.routing.DynamicToolSelector;
+import com.clawbot.wechatbot.memory.ConversationContextSelector;
 import com.clawbot.wechatbot.service.reply.LongReplyManager;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -130,10 +132,13 @@ public class BotBeanConfiguration {
         BotConfig config, ConversationMemoryService memory, MemoryProperties memoryProperties,
         LongReplyManager replies, IntentRecognizer intents,
         AgentInputAttachmentLoader attachments,
-        com.clawbot.wechatbot.confirmation.ConfirmationReplyService confirmationReplies
+        com.clawbot.wechatbot.confirmation.ConfirmationReplyService confirmationReplies,
+        DynamicToolSelector toolSelector,
+        ConversationContextSelector contextSelector
     ) {
         SpeechSynthesisService optionalSpeech = config.isDashscopeConfigured() ? speech : null;
         return new TextMessageHandler(chat, orchestrator, optionalSpeech, documents, news,
-            memory, memoryProperties, replies, intents, attachments, confirmationReplies);
+            memory, memoryProperties, replies, intents, attachments, confirmationReplies,
+            toolSelector, contextSelector);
     }
 }

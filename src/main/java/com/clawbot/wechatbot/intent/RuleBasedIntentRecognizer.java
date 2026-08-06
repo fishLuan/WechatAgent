@@ -136,9 +136,17 @@ public class RuleBasedIntentRecognizer implements IntentRecognizer {
 
     private boolean isWereadRequest(String text) {
         if (text == null || text.isBlank()) return false;
-        return containsAny(text, "微信读书", "书架", "阅读统计", "读了多久",
-            "读书笔记", "划线", "书籍", "图书", "小说", "名著", "书单",
-            "作者", "出版社", "这本书", "找书", "搜书", "推荐书", "推荐几本");
+        if (containsAny(text, "微信读书", "书架", "阅读统计", "读了多久",
+            "读书笔记", "划线", "这本书", "找书", "搜书", "推荐书",
+            "推荐几本", "推书")) {
+            return true;
+        }
+        boolean bookDomain = containsAny(text,
+            "书籍", "图书", "小说", "名著", "书单", "作者", "出版社", "书");
+        boolean queryAction = containsAny(text,
+            "搜索", "搜一下", "查找", "找一下", "查询", "推荐", "介绍",
+            "打开", "阅读", "加入书架");
+        return bookDomain && queryAction;
     }
 
     private String bilibiliContentType(String text) {

@@ -35,6 +35,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
@@ -231,6 +232,21 @@ public final class AgentOrchestrator implements AutoCloseable {
 
     public AgentResponse execute(String userText, String history) throws Exception {
         return execute(userText, history, AgentRequestContext.anonymous());
+    }
+
+    /** Executes a high-confidence simple request without invoking the planner. */
+    public AgentResponse executeDirect(
+        String userText,
+        String history,
+        AgentRequestContext requestContext,
+        Set<String> allowedTools
+    ) throws Exception {
+        AgentRequestContext actualContext = requestContext == null
+            ? AgentRequestContext.anonymous() : requestContext;
+        long deadlineNanos = System.nanoTime() + executionTimeout.toNanos();
+        return executeFallback(
+            userText, history, deadlineNanos, actualContext,
+            allowedTools == null ? null : Set.copyOf(allowedTools));
     }
 
     public AgentResponse execute(
@@ -655,6 +671,17 @@ public final class AgentOrchestrator implements AutoCloseable {
         long deadlineNanos,
         AgentRequestContext requestContext
     ) throws Exception {
+        return executeFallback(
+            userText, history, deadlineNanos, requestContext, null);
+    }
+
+    private AgentResponse executeFallback(
+        String userText,
+        String history,
+        long deadlineNanos,
+        AgentRequestContext requestContext,
+        Set<String> allowedTools
+    ) throws Exception {
         AgentExecutionSession executionSession = executionControl == null
             ? null : executionControl.begin(requestContext, userText);
         long remainingNanos = deadlineNanos - System.nanoTime();
@@ -665,7 +692,8 @@ public final class AgentOrchestrator implements AutoCloseable {
         Future<String> future = executor.submit(
             () -> requestContextHolder.callWith(
                 requestContext,
-                () -> fallbackChatService.chat(userText, history)));
+                () -> fallbackChatService.chatWithAllowedTools(
+                    userText, history, allowedTools)));
         if (executionSession != null) executionSession.register(future);
         try {
             AgentResponse response = AgentResponse.text(

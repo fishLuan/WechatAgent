@@ -8,20 +8,20 @@ import java.util.List;
 import java.util.Map;
 
 /** Converts internal structured task output into text suitable for end users. */
-final class UserFacingResultFormatter {
+public final class UserFacingResultFormatter {
 
     private static final List<String> PREFERRED_TEXT_FIELDS = List.of(
         "display_text", "message", "description", "text", "weather_text",
-        "weather_info", "reply", "poem", "summary"
+        "weather_info", "route_info", "reply", "poem", "summary", "result"
     );
 
     private final ObjectMapper mapper;
 
-    UserFacingResultFormatter(ObjectMapper mapper) {
+    public UserFacingResultFormatter(ObjectMapper mapper) {
         this.mapper = mapper;
     }
 
-    String format(String rawText) {
+    public String format(String rawText) {
         if (rawText == null || rawText.isBlank()) return "";
         String trimmed = unwrapJsonCodeFence(rawText.trim());
         if (!looksLikeJson(trimmed)) return rawText;
@@ -35,7 +35,7 @@ final class UserFacingResultFormatter {
         }
     }
 
-    List<String> formatAll(List<String> texts) {
+    public List<String> formatAll(List<String> texts) {
         return texts.stream().map(this::format).toList();
     }
 

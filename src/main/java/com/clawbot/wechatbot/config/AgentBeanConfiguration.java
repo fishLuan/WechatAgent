@@ -16,6 +16,7 @@ import com.clawbot.wechatbot.service.agent.replan.TaskReplanner;
 import com.clawbot.wechatbot.service.agent.replan.AgentReplanPolicy;
 import com.clawbot.wechatbot.service.agent.reference.ReferencePolicy;
 import com.clawbot.wechatbot.service.agent.reference.ResultReferenceResolver;
+import com.clawbot.wechatbot.service.agent.routing.DynamicToolSelector;
 import com.clawbot.wechatbot.service.client.DeepSeekClient;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
 import com.clawbot.wechatbot.service.longform.LongFormGenerationPolicy;
@@ -155,8 +156,13 @@ public class AgentBeanConfiguration {
         return new MultiTaskPlanningGate(planner, config.isAgentEnabled());
     }
     @Bean AgentRequestContextHolder agentRequestContextHolder() { return new AgentRequestContextHolder(); }
-    @Bean AgentTaskHandler chatAgentTaskHandler(DeepSeekChatService chat) {
-        return new ChatAgentTaskHandler(chat);
+    @Bean DynamicToolSelector dynamicToolSelector() {
+        return new DynamicToolSelector();
+    }
+    @Bean AgentTaskHandler chatAgentTaskHandler(
+        DeepSeekChatService chat, DynamicToolSelector toolSelector
+    ) {
+        return new ChatAgentTaskHandler(chat, toolSelector);
     }
     @Bean AgentTaskHandler imageGenerationAgentTaskHandler(ImageGenService images) {
         return new ImageGenerationAgentTaskHandler(images);

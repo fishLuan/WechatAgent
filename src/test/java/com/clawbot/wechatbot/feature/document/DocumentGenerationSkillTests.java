@@ -49,6 +49,20 @@ class DocumentGenerationSkillTests {
         assertTrue(result.attachments().getFirst().fileName().endsWith(".pdf"));
     }
 
+    @Test
+    void extractsTextFieldInsteadOfWritingDependencyJson() throws Exception {
+        DocumentService documents = mock(DocumentService.class);
+        when(documents.createPdf("生成内容", "杭州今天晴，气温30℃。"))
+            .thenReturn(new byte[] {1});
+
+        new DocumentGenerationSkill(documents).execute(
+            DEFINITION,
+            new SkillRequest("user", "生成PDF文档", "", "",
+                "【查询杭州天气】\n{\"weather_text\":\"杭州今天晴，气温30℃。\"}"));
+
+        verify(documents).createPdf("生成内容", "杭州今天晴，气温30℃。");
+    }
+
     private static SkillDefinition definition() {
         return new SkillDefinition(
             "document-generation", "1.0.0", true, "文档生成",

@@ -76,6 +76,26 @@ public final class LlmTaskPlanner implements TaskPlanner {
         语音 Skill 会从 dependencyText 读取需要合成的文字。
         """;
 
+    private static final String NEWS_OUTPUT_RULE = """
+
+        新闻查询任务（调用 get_news）使用固定数据契约：
+        - expected_output 必须包含 {"items":"array"}；
+        - items 中每项使用 title、description、source、publish_time、url 字段；
+        - 如果后续任务需要新闻数据，必须依赖新闻任务，并在 input 中使用
+          {"items":{"$ref":"新闻任务id.output.items"}}；
+        - 禁止自行改名为 news、news_list、articles 或 results。
+        """;
+
+    private static final String TOOL_CONTRACT_RULE = """
+
+        天气和路线工具的稳定下游字段：
+        - get_weather：自然语言使用 display_text，结构化数据使用 weather_info；
+        - get_route_plan：自然语言使用 display_text，结构化数据使用 route_info；
+        - 后续文档、语音、Excel或图片任务应优先引用这些稳定字段，禁止直接依赖
+          lives、forecasts、steps、segments 等随工具模式变化的原始字段；
+        - expected_output 只声明后续任务真正使用的稳定字段。
+        """;
+
     private static final SkillCatalog EMPTY_CATALOG = new SkillCatalog() {
         @Override
         public List<SkillDefinition> definitions() {
@@ -120,6 +140,8 @@ public final class LlmTaskPlanner implements TaskPlanner {
         }
         ArrayNode messages = mapper.createArrayNode();
         messages.add(message("system", PROMPT + IMAGE_OUTPUT_RULE + VOICE_INPUT_RULE
+            + NEWS_OUTPUT_RULE
+            + TOOL_CONTRACT_RULE
             + "\n动态技能目录：\n" + skillCatalog.plannerCatalog()
             + "\n系统单次安全上限为 " + maxTasks
             + " 项任务。若实际需求超过上限，仍须完整列出，由系统统一拒绝。"));

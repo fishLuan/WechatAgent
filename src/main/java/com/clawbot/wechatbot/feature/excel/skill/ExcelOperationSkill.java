@@ -3,14 +3,18 @@ package com.clawbot.wechatbot.feature.excel.skill;
 import com.clawbot.wechatbot.feature.excel.ExcelService;
 import com.clawbot.wechatbot.feature.excel.model.ExcelTable;
 import com.clawbot.wechatbot.service.agent.AgentAttachment;
+import com.clawbot.wechatbot.service.agent.contract.NewsDataContract;
 import com.clawbot.wechatbot.skills.SkillDefinition;
 import com.clawbot.wechatbot.skills.SkillExecutor;
 import com.clawbot.wechatbot.skills.SkillRequest;
 import com.clawbot.wechatbot.skills.SkillResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -68,6 +72,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
         "^(?:添加|增加|加入|新增|加)\\s*(?:一行|一条|1行|1条)?\\s*[:：]?\\s*(.+)$");
 
     private final ExcelService excelService;
+    private final ObjectMapper mapper = new ObjectMapper();
 
     public ExcelOperationSkill(ExcelService excelService) {
         this.excelService = excelService;
@@ -92,6 +97,12 @@ public final class ExcelOperationSkill implements SkillExecutor {
             return SkillResult.failure("Excel skill requires an instruction");
         }
         try {
+            JsonNode structuredItems = resolveStructuredItems(request);
+            if (isCreateInstruction(instruction)
+                && structuredItems != null && !structuredItems.isEmpty()) {
+                return createTableFromItems(
+                    request.userId(), instruction, structuredItems);
+            }
             return dispatch(request.userId(), instruction);
         } catch (IllegalArgumentException error) {
             return SkillResult.failure(error.getMessage());
@@ -465,6 +476,126 @@ public final class ExcelOperationSkill implements SkillExecutor {
             "✅ 表格已生成（" + parsed.headers().size() + "列×"
                 + parsed.rows().size() + "行）：" + table.getTitle(),
             table);
+    }
+
+    private SkillResult createTableFromItems(
+        String userId, String instruction, JsonNode items
+    ) throws Exception {
+        boolean newsItems = items.path(0).isObject()
+            && items.path(0).has("title")
+            && (items.path(0).has("description") || items.path(0).has("source"));
+        List<String> fields = newsItems
+            ? NewsDataContract.ITEM_FIELDS
+            : collectFields(items);
+        if (fields.isEmpty()) {
+            return SkillResult.failure("前置任务没有提供可转换为表格的结构化字段。");
+        }
+        List<String> headers = fields.stream()
+            .map(this::displayHeader)
+            .toList();
+        List<List<String>> rows = new ArrayList<>();
+        for (JsonNode item : items) {
+            List<String> row = new ArrayList<>();
+            for (String field : fields) {
+                JsonNode value = item.isObject() ? item.path(field) : item;
+                row.add(cellText(value));
+            }
+            rows.add(row);
+        }
+        String title = newsItems ? "新闻" : resolveTitle(instruction);
+        ExcelTable table = excelService.loadOrCreate(userId, title);
+        table.setTitle(title);
+        table.setHeaders(headers);
+        table.setRows(rows);
+        excelService.save(table);
+        return attachmentResult(
+            "✅ 表格已生成（" + headers.size() + "列×" + rows.size()
+                + "行）：" + title,
+            table);
+    }
+
+    private JsonNode resolveStructuredItems(SkillRequest request) {
+        JsonNode fromInput = findItems(request.resolvedInput(), 0);
+        if (fromInput != null) return fromInput;
+        String dependency = request.dependencyText();
+        if (dependency.isBlank()) return null;
+        try {
+            JsonNode parsed = mapper.readTree(dependency);
+            JsonNode found = findItems(parsed, 0);
+            if (found != null) return found;
+        } catch (Exception ignored) {
+            // Dependency labels may surround the JSON; extract the embedded object below.
+        }
+        int start = dependency.indexOf('{');
+        int end = dependency.lastIndexOf('}');
+        if (start < 0 || end <= start) return null;
+        try {
+            return findItems(mapper.readTree(dependency.substring(start, end + 1)), 0);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private JsonNode findItems(JsonNode node, int depth) {
+        if (node == null || node.isMissingNode() || node.isNull() || depth > 4) {
+            return null;
+        }
+        if (node.isArray()) return node;
+        for (String field : List.of("weather_info", "route_info")) {
+            JsonNode structuredObject = node.path(field);
+            if (structuredObject.isObject() && !structuredObject.isEmpty()) {
+                return mapper.createArrayNode().add(structuredObject.deepCopy());
+            }
+        }
+        for (String field : List.of(
+            NewsDataContract.ITEMS, "news_list", "news", "articles", "results", "value")) {
+            JsonNode child = node.path(field);
+            if (child.isArray()) return child;
+            if (child.isObject()) {
+                JsonNode nested = findItems(child, depth + 1);
+                if (nested != null) return nested;
+            }
+        }
+        return null;
+    }
+
+    private List<String> collectFields(JsonNode items) {
+        LinkedHashSet<String> fields = new LinkedHashSet<>();
+        for (JsonNode item : items) {
+            if (!item.isObject()) return List.of("value");
+            item.fieldNames().forEachRemaining(fields::add);
+        }
+        return List.copyOf(fields);
+    }
+
+    private String displayHeader(String field) {
+        String newsHeader = NewsDataContract.DISPLAY_HEADERS.get(field);
+        if (newsHeader != null) return newsHeader;
+        return switch (field) {
+            case "city" -> "城市";
+            case "date" -> "日期";
+            case "weather" -> "天气";
+            case "temperature" -> "气温";
+            case "humidity" -> "湿度";
+            case "wind_direction" -> "风向";
+            case "wind_power" -> "风力";
+            case "report_time" -> "发布时间";
+            case "origin" -> "起点";
+            case "destination" -> "终点";
+            case "strategy" -> "出行方式";
+            case "total_distance_km" -> "总距离（公里）";
+            case "total_duration_minutes" -> "总时长（分钟）";
+            default -> field;
+        };
+    }
+
+    private String cellText(JsonNode value) {
+        if (value == null || value.isMissingNode() || value.isNull()) return "";
+        return value.isValueNode() ? value.asText() : value.toString();
+    }
+
+    private boolean isCreateInstruction(String text) {
+        return isAction(text, "生成", "创建", "制作", "新建", "做一个", "导出");
     }
 
     /** 跳过不含分隔符的标题行，保留真正的表头和数据。 */
