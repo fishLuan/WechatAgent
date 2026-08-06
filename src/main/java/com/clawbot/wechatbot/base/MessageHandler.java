@@ -29,4 +29,11 @@ public interface MessageHandler {
      * Handler 的优先级（数字小的先尝试）
      */
     default int priority() { return 100; }
+
+    /**
+     * 是否需要绕过统一任务规划直接处理（如表单截图等强领域意图）。
+     * 返回 true 的处理器会在 LLM 规划之前优先尝试 canHandle，避免图片消息
+     * 被规划层改写成无法解析的指令或劫持。
+     */
+    default boolean bypassesPlanning() { return false; }
 }

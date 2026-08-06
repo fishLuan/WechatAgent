@@ -20,7 +20,7 @@ public final class ConversationContextSelector {
         new Domain("news", Set.of("新闻", "头条", "热搜", "资讯")),
         new Domain("bilibili", Set.of("b站", "动漫", "番剧", "电影", "电视剧", "订阅", "追更")),
         new Domain("book", Set.of("书", "图书", "小说", "作者", "微信读书")),
-        new Domain("excel", Set.of("excel", "表格", "行", "列", "工作表")),
+        new Domain("excel", Set.of("excel", "表格", "工作表", "电子表格")),
         new Domain("document", Set.of("文档", "pdf", "word", "文件")),
         new Domain("voice", Set.of("语音", "男声", "女声", "朗读")),
         new Domain("schedule", Set.of("定时", "提醒", "推送", "每天", "每周")),
