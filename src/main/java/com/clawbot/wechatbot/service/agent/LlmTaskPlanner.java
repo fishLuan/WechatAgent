@@ -47,15 +47,19 @@ public final class LlmTaskPlanner implements TaskPlanner {
             voice-reply SKILL，语音任务依赖内容任务。
         11. 如果用户已经在冒号后提供了完整正文，可只创建对应的文档或语音
             SKILL，并将完整正文保留在 instruction 中。
-        12. input 只填写用户已经明确提供或能确定的结构化参数，不得猜测未知值。
-        13. expected_output 描述后续步骤真正需要的输出字段及含义；没有要求时使用 {}。
-        14. acceptance_criteria 给出可机器检查的关键验收条件；path 必须以 $ 开头。
+        12. 涉及表格的 SKILL 任务：用户指令中的「覆盖」「替换」「重新生成」等覆盖确认词
+            必须原样保留在 instruction 的第一行，禁止删除或改写；表格数据必须规范化为
+            首行表头、后续每行一条数据（行间用换行或中文分号分隔），禁止把多行数据合并成
+            一行，禁止把数据改写成自然语言描述。
+        13. input 只填写用户已经明确提供或能确定的结构化参数，不得猜测未知值。
+        14. expected_output 描述后续步骤真正需要的输出字段及含义；没有要求时使用 {}。
+        15. acceptance_criteria 给出可机器检查的关键验收条件；path 必须以 $ 开头。
             operator 只能是 EXISTS、NOT_EMPTY、EQUALS、NOT_EQUALS、CONTAINS、
             GREATER_THAN、GREATER_THAN_OR_EQUALS、LESS_THAN、LESS_THAN_OR_EQUALS、
             MATCHES_REGEX、TYPE_IS。无需 expected 的操作符可以省略 expected。
-        15. 地点、日期、时间、币种、作品名称、数量和文件格式等用户硬性约束，
+        16. 地点、日期、时间、币种、作品名称、数量和文件格式等用户硬性约束，
             必须同时保留在 input 或 acceptance_criteria 中。
-        16. 后续任务需要使用前置任务的精确字段时，input 必须使用
+        17. 后续任务需要使用前置任务的精确字段时，input 必须使用
             {"$ref":"前置任务id.output.字段路径"}，并在 depends_on 声明该任务；
             禁止把未知的 ID、日期、金额等值重新猜写到 input。
         """;

@@ -8,6 +8,7 @@ import com.clawbot.wechatbot.feature.document.messaging.PendingWordDocumentInstr
 import com.clawbot.wechatbot.feature.document.messaging.WordDocumentCommandParser;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.messaging.MessageDispatchCoordinator;
+import com.clawbot.wechatbot.messaging.RecentImageCache;
 import com.clawbot.wechatbot.messaging.WeChatClientRegistry;
 import com.clawbot.wechatbot.notification.NotificationService;
 import com.clawbot.wechatbot.service.agent.AgentTask;
@@ -51,6 +52,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Component
 @ConditionalOnProperty(name = "wechat.bot.enabled", havingValue = "true", matchIfMissing = true)
 public class WeChatBot implements SmartLifecycle {
+    /** 最近图片关联窗口：图片发送后 30 秒内的表格意图文字视为同一次操作。 */
+    private static final long RECENT_IMAGE_WINDOW_MS = 30_000L;
     private final BotConfig config;
     private final List<MessageHandler> handlers;
     private final NotificationService notifications;
@@ -64,6 +67,8 @@ public class WeChatBot implements SmartLifecycle {
     private final BotSession session = new BotSession();
     private final String routeNamespace = "clawbot-" + UUID.randomUUID();
     private final AtomicBoolean consoleOpened = new AtomicBoolean(false);
+    private final RecentImageCache recentImageCache =
+        new RecentImageCache(RECENT_IMAGE_WINDOW_MS);
 
     private volatile boolean running;
 
@@ -277,6 +282,26 @@ public class WeChatBot implements SmartLifecycle {
             return;
         }
         clientRegistry.bindUser(from, currentClient);
+        // 强领域意图（表格截图等）：先于统一任务规划直接处理，
+        // 避免带图片的消息被 LLM 规划改写成无法解析的指令或劫持
+        for (MessageHandler handler : handlers) {
+            try {
+                if (handler.bypassesPlanning() && handler.canHandle(message)) {
+                    handler.handle(currentClient, message);
+                    return;
+                }
+            } catch (Exception error) {
+                notifications.notifyError(
+                    "消息处理器/" + handler.getClass().getSimpleName(), error);
+                System.err.println("[ERROR] 消息处理失败: " + error.getMessage());
+                return;
+            }
+        }
+        // 分开发送的「图片 + 表格意图文字」：缓存最近图片，短窗口内合并识别
+        rememberRecentImage(message);
+        if (tryHandleRecentImageWithText(currentClient, message)) {
+            return;
+        }
         recordRecentTextMessage(from, message);
         if (routeWithoutPlanning(currentClient, message)) return;
         Optional<TaskPlan> planningResult =
@@ -335,6 +360,74 @@ public class WeChatBot implements SmartLifecycle {
             System.err.println("[WARN] 发送消息繁忙提示失败: "
                 + safeMessage(error));
         }
+    }
+
+    /** 缓存用户最近一张图片（后发覆盖先发），供分开发送的表格意图文字关联。 */
+    private void rememberRecentImage(WeixinMessage message) {
+        if (message == null || message.getItem_list() == null) return;
+        for (MessageItem item : message.getItem_list()) {
+            if (item != null && item.getImage_item() != null) {
+                recentImageCache.remember(message.getFrom_user_id(), item);
+                return;
+            }
+        }
+    }
+
+    /**
+     * 分开发送关联：当前文字消息无图片，但该用户最近图片窗口内（30 秒）发过图片时，
+     * 把最近图片与当前文字合成一条消息，交给声明 bypassesPlanning 的处理器
+     * （表格截图处理器）识别；非表格意图文字则原样交给后续统一规划。
+     */
+    private boolean tryHandleRecentImageWithText(
+        ILinkClient client, WeixinMessage message
+    ) {
+        if (message == null || message.getFrom_user_id() == null) return false;
+        String text = extractText(message);
+        if (text.isBlank() || hasImage(message)) return false;
+        Optional<MessageItem> recentImage = recentImageCache.take(
+            message.getFrom_user_id(), System.currentTimeMillis());
+        if (recentImage.isEmpty()) return false;
+        WeixinMessage merged = new WeixinMessage();
+        merged.setFrom_user_id(message.getFrom_user_id());
+        merged.setTo_user_id(message.getTo_user_id());
+        merged.setItem_list(List.of(recentImage.get(), MessageItem.text(text)));
+        for (MessageHandler handler : handlers) {
+            if (handler.bypassesPlanning() && handler.canHandle(merged)) {
+                try {
+                    handler.handle(client, merged);
+                } catch (Exception error) {
+                    notifications.notifyError(
+                        "消息处理器/" + handler.getClass().getSimpleName(), error);
+                    System.err.println("[ERROR] 消息处理失败: " + error.getMessage());
+                }
+                return true; // 图片已消费，无论成败不再走统一规划
+            }
+        }
+        return false;
+    }
+
+    private boolean hasImage(WeixinMessage message) {
+        if (message == null || message.getItem_list() == null) return false;
+        for (MessageItem item : message.getItem_list()) {
+            if (item != null && item.getImage_item() != null) return true;
+        }
+        return false;
+    }
+
+    /** 提取消息中的文字内容（过滤 SDK 占位符）。 */
+    private static String extractText(WeixinMessage message) {
+        if (message == null || message.getItem_list() == null) return "";
+        StringBuilder text = new StringBuilder();
+        for (MessageItem item : message.getItem_list()) {
+            if (item != null && item.getType() == 1
+                && item.getText_item() != null) {
+                text.append(item.getText_item().getText());
+            }
+        }
+        return text.toString()
+            .replace("[图片]", "").replace("[语音]", "")
+            .replace("[文件]", "").replace("[视频]", "")
+            .trim();
     }
 
     private String safeMessage(Throwable error) {
@@ -485,17 +578,6 @@ public class WeChatBot implements SmartLifecycle {
 
     private boolean loginCompleted(BotSession session, ILinkClient client) {
         return session.loginSucceeded || client.isLoggedIn();
-    }
-
-    private String extractText(WeixinMessage message) {
-        if (message == null || message.getItem_list() == null) return null;
-        StringBuilder text = new StringBuilder();
-        for (MessageItem item : message.getItem_list()) {
-            if (item.getType() == 1 && item.getText_item() != null) {
-                text.append(item.getText_item().getText());
-            }
-        }
-        return text.toString().trim();
     }
 
     private boolean isDuplicateMessage(String userId, Long messageId) {

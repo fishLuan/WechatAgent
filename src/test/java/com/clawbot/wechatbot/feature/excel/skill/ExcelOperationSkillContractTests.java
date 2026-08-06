@@ -3,6 +3,7 @@ package com.clawbot.wechatbot.feature.excel.skill;
 import com.clawbot.wechatbot.feature.excel.ExcelService;
 import com.clawbot.wechatbot.feature.excel.model.ExcelTable;
 import com.clawbot.wechatbot.feature.excel.repository.ExcelTableRepository;
+import com.clawbot.wechatbot.feature.excel.repository.ExcelTableVersionRepository;
 import com.clawbot.wechatbot.skills.SkillRequest;
 import com.clawbot.wechatbot.skills.SkillResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -11,7 +12,6 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
 import java.util.List;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -24,10 +24,11 @@ class ExcelOperationSkillContractTests {
     @Test
     void createsNewsWorkbookFromStructuredDependency() throws Exception {
         ExcelTableRepository repository = mock(ExcelTableRepository.class);
-        when(repository.findByWechatUserId("user-1")).thenReturn(Optional.empty());
+        when(repository.findByWechatUserId("user-1")).thenReturn(List.of());
         when(repository.save(any(ExcelTable.class)))
             .thenAnswer(invocation -> invocation.getArgument(0));
-        ExcelOperationSkill skill = new ExcelOperationSkill(new ExcelService(repository));
+        ExcelOperationSkill skill = new ExcelOperationSkill(
+            new ExcelService(repository, mock(ExcelTableVersionRepository.class)));
         ObjectMapper mapper = new ObjectMapper();
         SkillRequest request = new SkillRequest(
             "user-1", "把新闻生成一份 Excel 表格", "", "", "",

@@ -60,9 +60,12 @@ public final class BilibiliCommandHandler {
         BilibiliCommandParser.ParsedCommand command = BilibiliCommandParser.parse(input);
         try {
             return switch (command.type()) {
-                case TODAY_RECOMMEND_ANIME -> handleTodayRecommend(userId, ContentType.BANGUMI);
-                case TODAY_RECOMMEND_MOVIE -> handleTodayRecommend(userId, ContentType.MOVIE);
-                case TODAY_RECOMMEND_SERIES -> handleTodayRecommend(userId, ContentType.SERIES);
+                case TODAY_RECOMMEND_ANIME -> handleTodayRecommend(userId, ContentType.BANGUMI,
+                    extractTag(input));
+                case TODAY_RECOMMEND_MOVIE -> handleTodayRecommend(userId, ContentType.MOVIE,
+                    extractTag(input));
+                case TODAY_RECOMMEND_SERIES -> handleTodayRecommend(userId, ContentType.SERIES,
+                    extractTag(input));
                 case CONFIGURE_DAILY_RECOMMENDATION ->
                     preferenceCommands.configureDaily(userId, command, input);
                 case SUBSCRIBE_BY_INDEX ->
@@ -88,7 +91,25 @@ public final class BilibiliCommandHandler {
                     "exclude".equals(command.state()));
                 case TOGGLE_PUSH -> preferenceCommands.toggle(
                     userId, command.contentType(), Boolean.TRUE.equals(command.pushEnabled()));
-                case SHOW_PREFERENCES -> preferenceCommands.show(userId);
+                case SHOW_PREFERENCES -> {
+                    if (input.contains("清除") || input.contains("清空")) {
+                        preferenceCommands.updateField(userId, null, "tags", "");
+                        yield "✅ 偏好标签已清空。";
+                    }
+                    if (input.contains("删除") || input.contains("移除")) {
+                        String tag = input.replaceAll("^(删除|移除)\\s*(偏好)?\\s*标签\\s*", "").trim();
+                        if (!tag.isEmpty()) {
+                            preferenceCommands.updateField(userId, null, "remove_tag", tag);
+                            yield "✅ 已移除标签：" + tag;
+                        }
+                        preferenceCommands.updateField(userId, null, "tags", "");
+                        yield "✅ 偏好标签已清空。";
+                    }
+                    if (input.contains("标签")) {
+                        yield getPreferredTags(userId, null);
+                    }
+                    yield preferenceCommands.show(userId);
+                }
                 case CHECK_UPDATES_NOW -> BilibiliMessageFormatter.formatCheckResult(
                     subscriptions.checkNow(userId));
                 case TODAY_UPDATES_ANIME -> handleUpdates(
@@ -107,13 +128,13 @@ public final class BilibiliCommandHandler {
         }
     }
 
-    public String handleTodayRecommend(String userId, ContentType type) {
+    public String handleTodayRecommend(String userId, ContentType type, String tag) {
         requireUser(userId);
         sessions.markActive(userId);
         ContentType actualType = type == null ? ContentType.BANGUMI : type;
         BilibiliPreference preference = preferences.getOrCreate(userId, actualType);
         int count = Math.max(1, preference.getRecommendationCount());
-        RecommendationResult result = recommendations.recommend(userId, actualType, count);
+        RecommendationResult result = recommendations.recommend(userId, actualType, count, tag);
         return BilibiliMessageFormatter.formatRecommendation(result);
     }
 
@@ -235,5 +256,22 @@ public final class BilibiliCommandHandler {
             ? error.getClass().getSimpleName() : error.getMessage();
         System.err.println("[BILIBILI] " + action + "：" + reason);
         return "❌ " + action + "：" + reason;
+    }
+
+    /** 从"推荐热血动漫""推荐几部校园番"中提取标签词。无则返回 null。 */
+    private static String extractTag(String input) {
+        if (input == null || input.isBlank()) return null;
+        String t = input
+            .replaceFirst("^(推荐几部|给我推荐|推荐|来几部|来点|看看)\\s*", "")
+            .replaceFirst("\\s*(动漫|番|番剧|新番|动画|剧集|电影)$", "")
+            .replaceFirst("^(几部|几集|几个)\\s*", "")
+            .replaceFirst("\\s*(的\\s*)?$", "")
+            .trim();
+        // 过滤掉泛词
+        if (t.isEmpty() || t.length() > 10) return null;
+        for (String g : new String[]{"动漫", "番", "番剧", "新番", "推荐", "好的", "好看的"}) {
+            if (t.equals(g)) return null;
+        }
+        return t;
     }
 }

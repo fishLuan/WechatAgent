@@ -67,7 +67,7 @@ class BilibiliCommandHandlerTests {
             contentRepository, contentSource, properties);
         BilibiliCatalogCommandService catalogCommands = new BilibiliCatalogCommandService(
             subscriptionService, recommendationService, historyService, titleSearch,
-            pendingSearchResults);
+            pendingSearchResults, preferenceService, contentSource);
         BilibiliUpdateQueryService updateQueries = new BilibiliUpdateQueryService(
             contentRepository, contentSource, historyService, preferenceService);
         handler = new BilibiliCommandHandler(

@@ -8,16 +8,22 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
-/** 按微信用户隔离的 Excel 表格状态（Mongo 持久化，重启不丢失）。 */
+/** 按微信用户隔离的 Excel 表格状态（Mongo 持久化，重启不丢失；一个用户可有多张表）。 */
 @Document(collection = "excel_table")
 public class ExcelTable {
     @Id
     private String id;
-    @Indexed(unique = true)
+    @Indexed
     private String wechatUserId;
     private String title;
     private List<String> headers = new ArrayList<>();
     private List<List<String>> rows = new ArrayList<>();
+    /** 表标题行文本（可空）：导出时第 0 行为合并单元格标题，表头行从第 1 行开始。 */
+    private String titleRow;
+    /** 是否冻结表头行（导出时 createFreezePane）。 */
+    private boolean freezeHeader;
+    /** 是否对表头+数据范围启用自动筛选（导出时 setAutoFilter）。 */
+    private boolean autoFilter;
     private Instant createdAt;
     private Instant updatedAt;
 
@@ -57,6 +63,14 @@ public class ExcelTable {
     public void setRows(List<List<String>> values) {
         rows = values == null ? new ArrayList<>() : new ArrayList<>(values);
     }
+    public String getTitleRow() { return titleRow; }
+    public void setTitleRow(String value) {
+        this.titleRow = value == null || value.isBlank() ? null : value.trim();
+    }
+    public boolean isFreezeHeader() { return freezeHeader; }
+    public void setFreezeHeader(boolean value) { this.freezeHeader = value; }
+    public boolean isAutoFilter() { return autoFilter; }
+    public void setAutoFilter(boolean value) { this.autoFilter = value; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant value) { this.createdAt = value; }
     public Instant getUpdatedAt() { return updatedAt; }

@@ -66,7 +66,13 @@ public final class BilibiliCatalogCommandService {
                     .map(BilibiliContent::getGenres).orElse(Set.of());
             } catch (Exception ignored) {}
         }
-        learnTags(userId, item.contentType(), genres, 3);
+        // 统一存到 BANGUMI，不管 B站返回什么类型
+        if (!genres.isEmpty()) {
+            var pref = preferenceService.getOrCreate(userId, ContentType.BANGUMI);
+            var merged = new LinkedHashSet<>(pref.getPreferredTags());
+            merged.addAll(genres);
+            preferenceService.setPreferredTags(userId, ContentType.BANGUMI, merged);
+        }
         return BilibiliMessageFormatter.formatSubscription(result) + genreSuffix(genres);
     }
 
@@ -191,9 +197,24 @@ public final class BilibiliCatalogCommandService {
         Set<String> learned = new LinkedHashSet<>();
         if (content.getTags() != null) learned.addAll(content.getTags());
         learned.addAll(content.getGenres());
-        learnTags(userId, content.getContentType(), learned, 3);
-        return BilibiliMessageFormatter.formatSubscription(result)
-            + genreSuffix(learned);
+        // 搜索结果可能不带 genres/tags，补查 B站详情
+        if (learned.isEmpty() && hasText(content.getSeasonId())) {
+            try {
+                contentSource.findBySeasonId(content.getContentType(), content.getSeasonId())
+                    .ifPresent(d -> {
+                        if (d.getTags() != null) learned.addAll(d.getTags());
+                        learned.addAll(d.getGenres());
+                    });
+            } catch (Exception ignored) {}
+        }
+        // 统一存到 BANGUMI
+        if (!learned.isEmpty()) {
+            var pref = preferenceService.getOrCreate(userId, ContentType.BANGUMI);
+            var merged = new LinkedHashSet<>(pref.getPreferredTags());
+            merged.addAll(learned);
+            preferenceService.setPreferredTags(userId, ContentType.BANGUMI, merged);
+        }
+        return BilibiliMessageFormatter.formatSubscription(result) + genreSuffix(learned);
     }
 
     private List<BilibiliContent> search(String title) throws Exception {

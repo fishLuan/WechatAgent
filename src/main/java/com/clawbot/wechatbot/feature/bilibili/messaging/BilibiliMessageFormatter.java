@@ -131,7 +131,10 @@ public final class BilibiliMessageFormatter {
     }
 
     public static String formatPreference(BilibiliPreference preference) {
+        Set<String> tags = preference.getPreferredTags();
+        String tagStr = tags.isEmpty() ? "（未设置）" : String.join("、", tags);
         return typeName(preference.getContentType()) + "推荐设置："
+            + "\n偏好标签：" + tagStr
             + "\n推送：" + (preference.isPushEnabled() ? "已开启" : "已关闭")
             + "\n时间：" + preference.getPushTime()
             + "\n不推送日期：" + formatExcludedDays(preference)

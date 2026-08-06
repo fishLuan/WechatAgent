@@ -158,7 +158,7 @@ public final class BilibiliCommandMessageHandler implements PlanningBypassMessag
                 commands.handleMarkStateByTitle(
                     userId, intent.slot("title"), intent.slot("state"));
             case BILIBILI_RECOMMEND -> commands.handleTodayRecommend(
-                userId, contentType(intent.slot("content_type")));
+                userId, contentType(intent.slot("content_type")), null);
             default -> intent.type() == IntentType.GENERAL_CHAT
                 ? "[UNHANDLED-BILIBILI-UNKNOWN]"
                 : commands.handle(userId, original);

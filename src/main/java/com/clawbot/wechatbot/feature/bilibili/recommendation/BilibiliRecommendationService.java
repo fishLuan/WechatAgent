@@ -13,6 +13,9 @@ public interface BilibiliRecommendationService {
     RecommendationResult recommend(
         String wechatUserId, ContentType contentType, int count);
 
+    RecommendationResult recommend(
+        String wechatUserId, ContentType contentType, int count, String tag);
+
     RecommendationResult refresh(
         String wechatUserId, ContentType contentType, int count);
 
