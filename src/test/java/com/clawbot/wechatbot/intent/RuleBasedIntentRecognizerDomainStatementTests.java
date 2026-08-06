@@ -33,4 +33,10 @@ class RuleBasedIntentRecognizerDomainStatementTests {
         assertEquals(IntentType.BILIBILI_RECOMMEND,
             recognizer.recognize("给我推荐三部动漫").type());
     }
+
+    @Test
+    void subscriptionListQuestionIsNotA_TitleSubscription() {
+        assertEquals(IntentType.GENERAL_CHAT,
+            recognizer.recognize("我订阅了哪些作品").type());
+    }
 }

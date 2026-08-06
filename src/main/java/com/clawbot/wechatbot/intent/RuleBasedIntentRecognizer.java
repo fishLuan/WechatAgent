@@ -69,6 +69,12 @@ public class RuleBasedIntentRecognizer implements IntentRecognizer {
                 matcher.group(1));
         }
 
+        // 查询已有订阅不是创建订阅，必须在标题订阅规则之前拦截，
+        // 避免把“了哪些作品”识别成作品名。
+        if (isSubscriptionListQuery(text)) {
+            return result(IntentType.GENERAL_CHAT, 0.96);
+        }
+
         matcher = SUBSCRIBE_TITLE.matcher(text);
         if (matcher.matches() && isUsableTitle(matcher.group(1))) {
             return result(
@@ -147,6 +153,17 @@ public class RuleBasedIntentRecognizer implements IntentRecognizer {
             "搜索", "搜一下", "查找", "找一下", "查询", "推荐", "介绍",
             "打开", "阅读", "加入书架");
         return bookDomain && queryAction;
+    }
+
+    private boolean isSubscriptionListQuery(String text) {
+        return text != null && text.matches(
+            "^(?:我的订阅|查看(?:我的)?订阅|列出(?:我的)?订阅|订阅列表|追更列表"
+                + "|我(?:都)?订阅了(?:哪些|什么)(?:作品)?"
+                + "|我订阅过(?:哪些|什么)(?:作品)?"
+                + "|(?:我)?有哪些订阅"
+                + "|我的追更(?:有)?哪些"
+                + "|列出我订阅的作品)\\s*[？?]?$"
+        );
     }
 
     private String bilibiliContentType(String text) {
