@@ -105,6 +105,25 @@ public class ExcelRagService {
     }
 
     /**
+     * 删除指定类别下全部知识；类别名支持内部值（如 FIELD_MAPPING）或中文名（如 字段映射），
+     * 返回删除条数（0 表示没有该类别的知识）。
+     */
+    public int deleteByCategory(String categoryOrLabel) {
+        if (categoryOrLabel == null || categoryOrLabel.isBlank()) {
+            return 0;
+        }
+        List<ExcelRagKnowledge> matches = repository.findAll().stream()
+            .filter(knowledge -> categoryOrLabel.equals(knowledge.getCategory())
+                || categoryOrLabel.equals(ExcelRagKnowledge.labelOf(knowledge.getCategory())))
+            .toList();
+        if (matches.isEmpty()) {
+            return 0;
+        }
+        repository.deleteAll(matches);
+        return matches.size();
+    }
+
+    /**
      * 列别名解析：精确匹配优先；互相包含时取**最短**触发词（"销售"命中"销售额"而非"销售收入"）；
      * 未命中返回 null（供计划执行前把别名替换为表内真实列名）。
      */

@@ -187,7 +187,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
         // 4. 校验：按操作类型校验参数与当前表格状态，返回统一中文错误提示
         Optional<String> validationError = planValidator.validate(resolved.plan(), table);
         if (validationError.isPresent()) {
-            return SkillResult.failure(validationError.get());
+            return SkillResult.failure(withNotes(resolved.notes(), validationError.get()));
         }
         // 5. 执行：按计划顺序执行，遇到失败立即返回失败；异常（如公式错误取消导出）也写入审计
         OperationResult result;
@@ -205,6 +205,9 @@ public final class ExcelOperationSkill implements SkillExecutor {
             if (!keepsAttachment(resolved.plan())) {
                 result = OperationResult.success(result.text());
             }
+        } else {
+            // 失败回复同样带上别名映射说明，避免只看到“找不到列”而不知道映射过程
+            result = OperationResult.failure(withNotes(resolved.notes(), result.text()));
         }
         // 6. 审计：无论成败记录本次操作（operation 为各操作类型名拼接，detail 为结果文案）
         recordAudit(userId, resolved.plan(), table, result);
@@ -286,6 +289,14 @@ public final class ExcelOperationSkill implements SkillExecutor {
         return OperationResult.success(
             "✅ 已完成 " + plan.operations().size() + " 步操作（最后一步：" + lastStep + "）。",
             result.attachment());
+    }
+
+    /** 失败回复前加注知识库映射说明（与成功路径标注一致，便于理解映射结果）。 */
+    private static String withNotes(List<String> notes, String message) {
+        if (notes.isEmpty()) {
+            return message;
+        }
+        return String.join("\n", notes) + "\n" + message;
     }
 
     /** 把操作结果转成 SkillResult：失败直接返回；成功且带附件时导出 xlsx 附件。 */

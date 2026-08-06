@@ -58,7 +58,14 @@ public final class KnowledgeAliasResolver {
                     newParams = new LinkedHashMap<>(params);
                 }
                 newParams.put(key, standard);
-                notes.add("📚 已按知识库将「" + term + "」映射为「" + standard + "」");
+                if (ExcelService.findColumnIndex(table.getHeaders(), standard) >= 0) {
+                    notes.add("📚 已按知识库将「" + term + "」映射为「" + standard + "」");
+                } else {
+                    // 映射目标列不存在：保留映射以便下游按目标列报错，同时提示目标列不在现有列中
+                    notes.add("📚 已按知识库将「" + term + "」映射为「" + standard
+                        + "」，但当前表没有「" + standard + "」列（现有列："
+                        + String.join("、", table.getHeaders()) + "）");
+                }
             }
             resolved.add(newParams == null ? operation
                 : new ExcelOperation(operation.id(), operation.type(), newParams,

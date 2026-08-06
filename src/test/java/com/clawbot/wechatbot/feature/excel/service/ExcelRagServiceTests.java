@@ -163,6 +163,27 @@ class ExcelRagServiceTests {
         assertEquals(4, fake.count());
     }
 
+    @Test
+    void deleteByCategoryRemovesAllMatchingCategory() {
+        FakeRagRepository fake = new FakeRagRepository();
+        ExcelRagService service = seededService(fake);
+
+        // 中文类别名（用户视角）可删除：种子含 2 条字段映射
+        assertEquals(2, service.deleteByCategory("字段映射"));
+        assertEquals(3, fake.count());
+        assertNull(service.resolveColumnAlias("营收"));
+        assertNull(service.resolveColumnAlias("销售额"));
+    }
+
+    @Test
+    void deleteByCategoryReturnsZeroWhenNoMatch() {
+        FakeRagRepository fake = new FakeRagRepository();
+        ExcelRagService service = seededService(fake);
+
+        assertEquals(0, service.deleteByCategory("不存在的类别"));
+        assertEquals(5, fake.count());
+    }
+
     // ============================
     // 列别名解析
     // ============================

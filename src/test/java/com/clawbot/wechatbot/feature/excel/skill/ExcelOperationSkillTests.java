@@ -619,6 +619,24 @@ class ExcelOperationSkillTests {
         assertTrue(result.text().contains("未找到"));
     }
 
+    /** 触发词未命中但关键词是类别名（如「字段映射」）：按类别删除并回复删除条数。 */
+    @Test
+    void knowledgeDeleteByCategoryEndToEnd() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(existingTable());
+        ExcelRagService ragService = mock(ExcelRagService.class);
+        when(ragService.deleteByKeyword("字段映射")).thenReturn(false);
+        when(ragService.deleteByCategory("字段映射")).thenReturn(2);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, ragService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "删除知识 字段映射", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已按类别「字段映射」删除 2 条知识"));
+        verify(ragService).deleteByCategory("字段映射");
+    }
+
     // ============================
     // 知识库别名解析端到端
     // ============================
@@ -644,6 +662,30 @@ class ExcelOperationSkillTests {
         assertTrue(result.text().contains("📚 已按知识库将「营业额」映射为「营业收入」"));
         assertTrue(result.text().contains("营业收入列的合计"));
         verify(excelService).queryColumn(eq(table), eq("营业收入"), eq(ExcelService.QueryType.SUM));
+    }
+
+    /** 映射目标列不在当前表：失败回复仍带“目标列不存在”提示（截图场景回归）。 */
+    @Test
+    void aliasMappingToMissingColumnIncludesWarning() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        table.setHeaders(List.of("单价", "数量", "金额"));
+        table.setRows(new ArrayList<>(List.of(List.of("10", "2", "20"))));
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        when(excelService.queryColumn(eq(table), eq("销售额"), eq(ExcelService.QueryType.MAX)))
+            .thenReturn("❌ 找不到列「销售额」，现有列：单价、数量、金额");
+        ExcelRagService ragService = mock(ExcelRagService.class);
+        when(ragService.resolveColumnAlias("销量")).thenReturn("销售额");
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService, ragService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "查询销量的最大值", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("映射为「销售额」"));
+        assertTrue(result.text().contains("但当前表没有「销售额」列"));
+        assertTrue(result.text().contains("现有列：单价、数量、金额"));
+        verify(excelService).queryColumn(eq(table), eq("销售额"), eq(ExcelService.QueryType.MAX));
     }
 
     /** 命中的业务规则在成功回复前加注（知识库标注）。 */

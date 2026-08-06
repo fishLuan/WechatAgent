@@ -91,6 +91,24 @@ class KnowledgeAliasResolverTests {
         assertEquals(List.of("📚 已按知识库将「营业额」映射为「营业收入」"), resolved.notes());
     }
 
+    /** 映射目标列不在当前表：仍替换列名，并提示目标列不在现有列中（供失败回复说明）。 */
+    @Test
+    void warnsWhenMappedTargetColumnMissingInTable() {
+        when(ragService.resolveColumnAlias("销量")).thenReturn("销售额");
+        ExcelTable table = new ExcelTable("user-1", "销售表");
+        table.setHeaders(List.of("单价", "数量", "金额"));
+        table.setRows(List.of(List.of("1", "2", "3")));
+        ExcelPlan plan = new ExcelPlan("user-1", List.of(
+            op(ExcelOperationType.QUERY, Map.of("column", "销量", "queryType", "MAX"))));
+
+        KnowledgeAliasResolver.ResolvedPlan resolved = resolver.resolve(plan, table);
+
+        assertEquals("销售额", resolved.plan().operations().get(0).param("column"));
+        assertEquals(1, resolved.notes().size());
+        assertTrue(resolved.notes().get(0).contains("但当前表没有「销售额」列"));
+        assertTrue(resolved.notes().get(0).contains("现有列：单价、数量、金额"));
+    }
+
     @Test
     void withoutRagServicePlanIsUnchanged() {
         KnowledgeAliasResolver nullResolver = new KnowledgeAliasResolver(null);
