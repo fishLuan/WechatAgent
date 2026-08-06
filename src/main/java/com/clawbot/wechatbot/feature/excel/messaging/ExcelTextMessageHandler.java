@@ -39,6 +39,14 @@ public final class ExcelTextMessageHandler implements MessageHandler {
         "表格", "工作簿", "Excel", "excel", "xlsx", "做成表", "导出",
         "图表", "柱状图", "折线图", "饼图", "汇总页", "版本历史",
         "操作日志", "知识库");
+
+    /** 是否带强表格意图（供控制台等复用：解析器未识别但带表格意图词的指令）。 */
+    public static boolean hasStrongExcelIntent(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        return STRONG_EXCEL_WORDS.stream().anyMatch(text::contains);
+    }
     /** LLM 改写提示词：只输出规范指令文本或 UNRECOGNIZED，保留数据/公式/覆盖等关键字。 */
     private static final String TRANSLATE_PROMPT = """
         你是 Excel 表格操作指令翻译器。用户的话可能是模糊的自然语言，把它改写成系统可解析的规范指令。
@@ -153,12 +161,6 @@ public final class ExcelTextMessageHandler implements MessageHandler {
             System.err.println("[WARN] Excel 指令翻译失败: " + error.getMessage());
             return null;
         }
-    }
-
-    /** 是否带明显表格意图（用于解析器未识别时的 LLM 兜底接管判定）。 */
-    private static boolean hasStrongExcelIntent(String text) {
-        if (text == null || text.isBlank()) return false;
-        return STRONG_EXCEL_WORDS.stream().anyMatch(text::contains);
     }
 
     private void sendAttachments(ILinkClient client, String from,
