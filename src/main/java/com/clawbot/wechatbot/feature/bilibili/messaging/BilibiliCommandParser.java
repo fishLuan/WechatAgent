@@ -203,7 +203,12 @@ public final class BilibiliCommandParser {
         if (text.matches("^(我的|查看|列出)?\\s*(订阅|订阅列表|追更列表)$")) {
             return ParsedCommand.of(CmdType.LIST_SUBSCRIPTIONS);
         }
-        if (text.matches("^(查看|我的|显示|列出)\\s*(偏好|设置|推荐设置)$")) {
+        // 查看偏好 → 走 B站处理器；清除/设置标签 → 放给 Agent 调 BilibiliTool
+        if (text.matches("^(查看|我的|显示|列出)\\s*(偏好|设置|推荐设置|偏好标签|标签偏好|标签)$")) {
+            return ParsedCommand.of(CmdType.SHOW_PREFERENCES);
+        }
+        // 清除/清空/删除/设置 偏好标签 → 全部拦截到 B站处理器
+        if (text.matches("^(清除|清空|删除|移除|设置|追加)\\s*(偏好)?\\s*标签.*$")) {
             return ParsedCommand.of(CmdType.SHOW_PREFERENCES);
         }
         if (text.matches("^(立即|马上|现在)?\\s*(检查更新|刷新更新|扫一下更新)$")) {
