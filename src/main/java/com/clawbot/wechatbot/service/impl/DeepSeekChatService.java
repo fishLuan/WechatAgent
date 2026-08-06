@@ -2,6 +2,7 @@ package com.clawbot.wechatbot.service.impl;
 
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.agent.guard.AgentExecutionGuard;
+import com.clawbot.wechatbot.service.agent.validation.ToolValidationPipeline;
 import com.clawbot.wechatbot.service.client.DeepSeekClient;
 import com.clawbot.wechatbot.service.longform.LongFormGenerationPolicy;
 import com.clawbot.wechatbot.tools.FunctionToolRegistry;
@@ -12,9 +13,17 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.OptionalInt;
+import java.util.Set;
 
 /** 负责对话和 function-calling 流程，不再承担 HTTP 或具体工具执行细节。 */
 public class DeepSeekChatService implements ChatService {
+    private static final String TOOL_VALIDATION_PROMPT = """
+
+        工具串联执行规则：调用工具前先依据用户原始需求明确当前步骤目标和验收条件。
+        后续工具只能使用已经返回到 messages 中且 success=true 的工具结果，禁止猜测、补写或改写其中的标识、日期、地点、币种等关键字段。
+        如果工具结果 success=false 或 verified=false，必须遵循 action：RETRY 表示修正参数后重试当前步骤；REPLAN 表示重新规划当前步骤或更换工具；ABORT 表示停止依赖该结果的后续步骤。
+        被标记 discarded_untrusted_result=true 的结果绝不能作为后续工具参数；无法获得可信前置结果时，应明确告知用户失败原因，不得沿错误结果继续执行。
+        """;
     private final DeepSeekClient client;
     private final FunctionToolRegistry toolRegistry;
     private final String systemPrompt;
@@ -22,18 +31,30 @@ public class DeepSeekChatService implements ChatService {
     private final ObjectMapper mapper;
     private final AgentExecutionGuard executionGuard;
     private final LongFormGenerationPolicy longFormPolicy;
+    private final ToolValidationPipeline validationPipeline;
 
     public DeepSeekChatService(DeepSeekClient client, FunctionToolRegistry toolRegistry,
                                String systemPrompt, int maxToolRounds,
                                AgentExecutionGuard executionGuard) {
         this(client, toolRegistry, systemPrompt, maxToolRounds, executionGuard,
-            LongFormGenerationPolicy.disabled());
+            LongFormGenerationPolicy.disabled(),
+            new ToolValidationPipeline(client.mapper(), java.util.List.of(), 0.6D));
     }
 
     public DeepSeekChatService(DeepSeekClient client, FunctionToolRegistry toolRegistry,
                                String systemPrompt, int maxToolRounds,
                                AgentExecutionGuard executionGuard,
                                LongFormGenerationPolicy longFormPolicy) {
+        this(client, toolRegistry, systemPrompt, maxToolRounds, executionGuard,
+            longFormPolicy,
+            new ToolValidationPipeline(client.mapper(), java.util.List.of(), 0.6D));
+    }
+
+    public DeepSeekChatService(DeepSeekClient client, FunctionToolRegistry toolRegistry,
+                               String systemPrompt, int maxToolRounds,
+                               AgentExecutionGuard executionGuard,
+                               LongFormGenerationPolicy longFormPolicy,
+                               ToolValidationPipeline validationPipeline) {
         this.client = client;
         this.toolRegistry = toolRegistry;
         this.systemPrompt = systemPrompt;
@@ -41,27 +62,43 @@ public class DeepSeekChatService implements ChatService {
         this.mapper = client.mapper();
         this.executionGuard = executionGuard;
         this.longFormPolicy = longFormPolicy;
+        this.validationPipeline = validationPipeline;
     }
 
     @Override
     public String chat(String userText, String history) throws Exception {
+        return chatWithAllowedTools(userText, history, null);
+    }
+
+    @Override
+    public String chatWithAllowedTools(
+        String userText, String history, Set<String> allowedTools
+    ) throws Exception {
         try (AgentExecutionGuard.ChatScope ignored = executionGuard.enterChat()) {
-            return runToolLoop(userText, history);
+            return runToolLoop(userText, history,
+                allowedTools == null ? null : Set.copyOf(allowedTools));
         }
     }
 
-    private String runToolLoop(String userText, String history) throws Exception {
+    private String runToolLoop(
+        String userText, String history, Set<String> allowedTools
+    ) throws Exception {
         ArrayNode messages = mapper.createArrayNode();
-        messages.add(message("system", systemPrompt));
+        boolean toolsEnabled = allowedTools == null || !allowedTools.isEmpty();
+        messages.add(message("system", systemPrompt
+            + (toolsEnabled ? TOOL_VALIDATION_PROMPT : "")));
         appendHistory(messages, history);
         messages.add(message("user", userText));
 
         for (int round = 0; round <= maxToolRounds; round++) {
+            checkInterrupted();
             executionGuard.checkDeadline();
             ArrayNode availableTools = executionGuard.forceFinalResponse()
                 ? mapper.createArrayNode()
-                : toolRegistry.definitionsExcluding(executionGuard.circuitOpenTools());
+                : toolRegistry.definitionsIncluding(
+                    allowedTools, executionGuard.circuitOpenTools());
             JsonNode response = client.chat(messages, availableTools);
+            checkInterrupted();
             executionGuard.checkDeadline();
             JsonNode assistant = response.path("choices").path(0).path("message");
             if (assistant.isMissingNode()) throw new Exception("模型响应中缺少 choices[0].message");
@@ -81,9 +118,13 @@ public class DeepSeekChatService implements ChatService {
 
             messages.add(assistant.deepCopy());
             for (JsonNode call : toolCalls) {
+                checkInterrupted();
                 String callId = call.path("id").asText();
                 String toolName = call.path("function").path("name").asText();
                 String arguments = call.path("function").path("arguments").asText("{}");
+                if (allowedTools != null && !allowedTools.contains(toolName)) {
+                    throw new Exception("模型尝试调用当前任务未授权的工具：" + toolName);
+                }
                 AgentExecutionGuard.ToolCallDecision decision =
                     executionGuard.beforeTool(toolName, arguments);
                 String toolContent;
@@ -92,6 +133,12 @@ public class DeepSeekChatService implements ChatService {
                     ToolExecutionOutcome outcome = decision.execute()
                         ? toolRegistry.executeWithOutcome(toolName, arguments)
                         : decision.blockedOutcome();
+                    checkInterrupted();
+                    if (decision.execute()) {
+                        outcome = validationPipeline.validate(
+                            userText, toolName, arguments, outcome,
+                            executionGuard.verifiedResults()).outcome();
+                    }
                     toolContent = executionGuard.completeTool(decision, outcome);
                     completed = true;
                 } finally {
@@ -123,6 +170,7 @@ public class DeepSeekChatService implements ChatService {
                  && continuationRound < longFormPolicy.maxContinuationRounds()
                  && result.length() < longFormPolicy.maxTotalChars();
              continuationRound++) {
+            checkInterrupted();
             executionGuard.checkDeadline();
             messages.add(assistant.deepCopy());
             messages.add(message(
@@ -133,6 +181,7 @@ public class DeepSeekChatService implements ChatService {
                     continuationRound + 1 == longFormPolicy.maxContinuationRounds())));
 
             JsonNode response = client.chat(messages, mapper.createArrayNode());
+            checkInterrupted();
             executionGuard.checkDeadline();
             assistant = response.path("choices").path(0).path("message");
             if (assistant.isMissingNode()) {
@@ -153,6 +202,12 @@ public class DeepSeekChatService implements ChatService {
             completed = trimIncompleteTail(completed);
         }
         return completed.trim();
+    }
+
+    private void checkInterrupted() throws InterruptedException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException("用户已取消当前Agent任务");
+        }
     }
 
     private boolean shouldContinue(

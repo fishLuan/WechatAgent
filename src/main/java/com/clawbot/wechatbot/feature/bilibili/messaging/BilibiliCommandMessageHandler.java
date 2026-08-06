@@ -1,9 +1,12 @@
 package com.clawbot.wechatbot.feature.bilibili.messaging;
 
 import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.base.PlanningBypassMessageHandler;
 import com.clawbot.wechatbot.intent.IntentRecognizer;
 import com.clawbot.wechatbot.intent.IntentResult;
 import com.clawbot.wechatbot.intent.IntentType;
+import com.clawbot.wechatbot.intent.ConversationDomainStore;
+import com.clawbot.wechatbot.feature.bilibili.model.ContentType;
 import com.github.wechat.ilink.sdk.ILinkClient;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import org.springframework.stereotype.Component;
@@ -12,32 +15,62 @@ import org.springframework.stereotype.Component;
  * B站结构化命令入口。能确定的命令直接执行，无法确定的文本继续交给普通Agent。
  */
 @Component
-public final class BilibiliCommandMessageHandler implements MessageHandler {
+public final class BilibiliCommandMessageHandler implements PlanningBypassMessageHandler {
     private final BilibiliCommandHandler commands;
     private final WeChatOutboundGateway gateway;
     private final IntentRecognizer intents;
+    private final ConversationDomainStore domains;
 
     public BilibiliCommandMessageHandler(
         BilibiliCommandHandler commands,
         WeChatOutboundGateway gateway,
-        IntentRecognizer intents
+        IntentRecognizer intents,
+        ConversationDomainStore domains
     ) {
         this.commands = commands;
         this.gateway = gateway;
         this.intents = intents;
+        this.domains = domains;
     }
 
     @Override
     public boolean canHandle(WeixinMessage message) {
         String text = WeChatMessageTextExtractor.extract(message).trim();
         if (text.isEmpty()) return false;
+        if (isBareIndex(text)) {
+            return domains.isActive(message.getFrom_user_id(),
+                ConversationDomainStore.Domain.BILIBILI);
+        }
+        IntentResult intent = intents.recognize(text);
+        if (intent.type() == IntentType.WEREAD_QUERY) return false;
         // 定时/预约推送请求（含时间词+推送）交给通用 Agent（走 scheduler_manage 创建定时任务），本处理器不拦
         if (looksLikeScheduledPush(text)) return false;
         if (BilibiliCommandParser.parse(text).type()
             != BilibiliCommandParser.CmdType.UNKNOWN) {
             return true;
         }
-        return intents.recognize(text).isBilibiliIntent();
+        return intent.isBilibiliIntent();
+    }
+
+    @Override
+    public boolean canBypassPlanning(WeixinMessage message) {
+        String text = WeChatMessageTextExtractor.extract(message).trim();
+        if (text.isEmpty() || looksLikeScheduledPush(text) || looksLikeMultipleTasks(text)) {
+            return false;
+        }
+        if (isBareIndex(text)) {
+            return domains.isActive(message.getFrom_user_id(),
+                ConversationDomainStore.Domain.BILIBILI);
+        }
+        IntentResult intent = intents.recognize(text);
+        return intent.type() != IntentType.WEREAD_QUERY
+            && (BilibiliCommandParser.parse(text).type()
+                != BilibiliCommandParser.CmdType.UNKNOWN
+                || intent.isBilibiliIntent());
+    }
+
+    private boolean looksLikeMultipleTasks(String text) {
+        return text.matches(".*(?:然后|并且|同时|另外|接着|顺便).+");
     }
 
     /** 定时推送请求检测：时间词 + 推送/推荐/提醒 语义 */
@@ -53,6 +86,15 @@ public final class BilibiliCommandMessageHandler implements MessageHandler {
         String userId = message.getFrom_user_id();
         String text = WeChatMessageTextExtractor.extract(message).trim();
         if (userId == null || userId.isBlank() || text.isEmpty()) return;
+        domains.activate(userId, ConversationDomainStore.Domain.BILIBILI);
+
+        if (isBareIndex(text)) {
+            String reply = commands.handleSearchResultByIndex(
+                userId, Integer.parseInt(text));
+            gateway.sendText(userId, reply);
+            System.out.println("[SEND-BILIBILI] " + summarize(reply));
+            return;
+        }
 
         BilibiliCommandParser.ParsedCommand parsed =
             BilibiliCommandParser.parse(text);
@@ -103,11 +145,24 @@ public final class BilibiliCommandMessageHandler implements MessageHandler {
             case BILIBILI_MARK_TITLE ->
                 commands.handleMarkStateByTitle(
                     userId, intent.slot("title"), intent.slot("state"));
-            case BILIBILI_RECOMMEND -> commands.handle(userId, original);
+            case BILIBILI_RECOMMEND -> commands.handleTodayRecommend(
+                userId, contentType(intent.slot("content_type")));
             default -> intent.type() == IntentType.GENERAL_CHAT
                 ? "[UNHANDLED-BILIBILI-UNKNOWN]"
                 : commands.handle(userId, original);
         };
+    }
+
+    private ContentType contentType(String value) {
+        try {
+            return ContentType.valueOf(value == null ? "BANGUMI" : value);
+        } catch (IllegalArgumentException ignored) {
+            return ContentType.BANGUMI;
+        }
+    }
+
+    private boolean isBareIndex(String text) {
+        return text != null && text.matches("(?:[1-9]|1\\d|20)");
     }
 
     private String summarize(String reply) {

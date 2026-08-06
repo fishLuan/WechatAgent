@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.scheduler.model;
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 @Document(collection = "scheduled_subscription")
@@ -13,6 +14,8 @@ public class ScheduledSubscription {
     private String paramsJson = "{}";
     private boolean enabled = true;
     private Long createdAt;
+    @Indexed(unique = true, sparse = true)
+    private String idempotencyKey;
 
     public ScheduledSubscription() {}
     public String getId() { return id; }
@@ -29,4 +32,6 @@ public class ScheduledSubscription {
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
     public Long getCreatedAt() { return createdAt; }
     public void setCreatedAt(Long createdAt) { this.createdAt = createdAt; }
+    public String getIdempotencyKey() { return idempotencyKey; }
+    public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
 }

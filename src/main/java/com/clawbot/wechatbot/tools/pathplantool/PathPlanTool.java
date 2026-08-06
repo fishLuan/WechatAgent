@@ -155,9 +155,46 @@ public class PathPlanTool implements FunctionTool {
             result.put("strategy", strategy);
             result.put("origin", origin);
             result.put("destination", destination);
+            addStableRouteEnvelope(result, strategy, origin, destination);
             return mapper.writeValueAsString(result);
         } catch (Exception e) {
             return error("路线规划失败：" + (e.getMessage() == null ? "未知错误" : e.getMessage()));
+        }
+    }
+
+    private void addStableRouteEnvelope(
+        ObjectNode result, String strategy, String origin, String destination
+    ) {
+        double distance = result.path("total_distance_km").asDouble(0D);
+        int duration = result.path("total_duration_minutes").asInt(0);
+        String mode = switch (strategy) {
+            case "transit" -> "公共交通";
+            case "walking" -> "步行";
+            case "riding" -> "骑行";
+            default -> "驾车";
+        };
+        String summary = String.format(
+            Locale.ROOT,
+            "%s到%s推荐%s路线，全程约%.2f公里，预计%d分钟。",
+            origin, destination, mode, distance, duration);
+        result.put("data_type", "route_plan");
+        result.put("display_text", summary);
+        ObjectNode routeInfo = result.putObject("route_info");
+        routeInfo.put("origin", origin);
+        routeInfo.put("destination", destination);
+        routeInfo.put("strategy", strategy);
+        routeInfo.put("total_distance_km", distance);
+        routeInfo.put("total_duration_minutes", duration);
+        for (String costField : List.of(
+            "taxi_cost_yuan", "toll_cost_yuan", "transit_cost_yuan")) {
+            if (result.has(costField)) {
+                routeInfo.set(costField, result.path(costField));
+            }
+        }
+        if (result.path("steps").isArray()) {
+            routeInfo.set("details", result.path("steps").deepCopy());
+        } else if (result.path("segments").isArray()) {
+            routeInfo.set("details", result.path("segments").deepCopy());
         }
     }
 

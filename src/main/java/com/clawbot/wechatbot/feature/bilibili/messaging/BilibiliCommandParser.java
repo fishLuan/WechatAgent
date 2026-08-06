@@ -107,7 +107,7 @@ public final class BilibiliCommandParser {
             + "(新番|新动漫|新剧|新电视剧)(?:呢|吗|啊|呀)?\\s*$");
 
     private static final Pattern SEARCH_BY_TITLE = Pattern.compile(
-        "^(?:搜索|查找|搜一下|找一下|帮我找(?:一下)?)\\s*(?:B站)?\\s*(.+?)\\s*$");
+        "^(?:搜索|查找|搜一下|搜|找一下|帮我找(?:一下)?)\\s*(?:B站)?\\s*(.+?)\\s*$");
     private static final Pattern TITLE_SUBSCRIBE = Pattern.compile(
         "^(?:(?:我想|我要|请|帮我)\\s*)?(?:订阅|追更)\\s*(?:一下|下)?\\s*(?:作品)?\\s*(.+?)\\s*$");
     private static final Pattern TITLE_STATE = Pattern.compile(
@@ -118,6 +118,9 @@ public final class BilibiliCommandParser {
         "^(?:推荐|找|来点|有没有)\\s*(?:几部|一些)?\\s*(?:类似|像)\\s*(?:《(.+?)》|(.+?))\\s*(?:的)?\\s*(动漫|番剧|电影|剧集|电视剧|番)?\\s*$");
     private static final Pattern RAG_INTENT = Pattern.compile(
         ".*(智能推荐|为什么推荐|为啥推荐|类似|相似|适合我|按我的偏好|我适合|有没有好看的|最近看什么|订阅.*更新).*");
+    private static final Pattern RAG_DISCOVERY = Pattern.compile(
+        "^(?:我)?(?:想看|想找|来点|找点|有没有|推荐我|给我推荐)"
+            + ".*(?:动漫|番剧|电影|剧集|电视剧|番)(?:推荐|看看)?$");
     private static final Pattern WEEKDAY = Pattern.compile(
         "(?:周|星期)([一二三四五六日天])");
     private static final Pattern RATING = Pattern.compile(
@@ -230,9 +233,11 @@ public final class BilibiliCommandParser {
 
         matcher = SEARCH_BY_TITLE.matcher(text);
         if (matcher.find() && !matcher.group(1).isBlank()) {
+            String title = cleanTitle(matcher.group(1)).replaceFirst(
+                "\\s*(?:动漫|动画|番剧|电影|影片|电视剧|剧集)$", "").trim();
             return new ParsedCommand(CmdType.SEARCH_BY_TITLE,
                 null, null, null, null, null, null, null,
-                matcher.group(1).trim(), null, null, null);
+                title, null, null, null);
         }
 
         matcher = TITLE_STATE.matcher(text);
@@ -353,7 +358,7 @@ public final class BilibiliCommandParser {
                 CmdType.RAG_SIMILAR, null, null, typeOfNullable(similar.group(3)),
                 null, null, null, null, cleanTitle(title), null, null, null);
         }
-        if (RAG_INTENT.matcher(text).matches()) {
+        if (RAG_INTENT.matcher(text).matches() || RAG_DISCOVERY.matcher(text).matches()) {
             return new ParsedCommand(
                 CmdType.RAG_QA, null, null, inferType(text), null, null, null,
                 null, text, null, null, null);

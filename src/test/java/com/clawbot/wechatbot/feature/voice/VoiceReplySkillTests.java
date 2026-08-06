@@ -20,7 +20,8 @@ class VoiceReplySkillTests {
         when(speech.synthesize("天气晴朗", "Ethan"))
             .thenReturn(new byte[] {1, 2});
         when(speech.getFileExtension()).thenReturn("mp3");
-        VoiceReplySkill skill = new VoiceReplySkill(speech);
+        VoiceReplyContextStore contexts = mock(VoiceReplyContextStore.class);
+        VoiceReplySkill skill = new VoiceReplySkill(speech, contexts);
 
         SkillResult result = skill.execute(
             new SkillDefinition(
@@ -33,5 +34,21 @@ class VoiceReplySkillTests {
         assertTrue(result.success());
         assertTrue(result.attachments().getFirst().fileName().endsWith(".mp3"));
         verify(speech).synthesize("天气晴朗", "Ethan");
+    }
+
+    @Test
+    void speaksStructuredDependencyValueInsteadOfJson() throws Exception {
+        SpeechSynthesisService speech = mock(SpeechSynthesisService.class);
+        when(speech.synthesize("北京今天晴，气温32℃。", "Cherry"))
+            .thenReturn(new byte[] {1});
+        when(speech.getFileExtension()).thenReturn("mp3");
+        VoiceReplySkill skill = new VoiceReplySkill(
+            speech, mock(VoiceReplyContextStore.class));
+
+        skill.execute(null, new SkillRequest(
+            "user", "用女声回复", "", "",
+            "【查询北京天气】\n{\"display_text\":\"北京今天晴，气温32℃。\"}"));
+
+        verify(speech).synthesize("北京今天晴，气温32℃。", "Cherry");
     }
 }

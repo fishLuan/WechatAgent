@@ -2,6 +2,8 @@ package com.clawbot.wechatbot.config;
 
 import com.clawbot.wechatbot.base.MessageHandler;
 import com.clawbot.wechatbot.handler.DocumentMessageHandler;
+import com.clawbot.wechatbot.feature.document.application.WordDocumentCommandService;
+import com.clawbot.wechatbot.feature.document.messaging.PendingWordDocumentInstructionStore;
 import com.clawbot.wechatbot.handler.ImageMessageHandler;
 import com.clawbot.wechatbot.handler.TextMessageHandler;
 import com.clawbot.wechatbot.intent.IntentRecognizer;
@@ -28,6 +30,8 @@ import com.clawbot.wechatbot.service.impl.DashScopeImageGenService;
 import com.clawbot.wechatbot.service.impl.DashScopeSpeechSynthesisService;
 import com.clawbot.wechatbot.service.impl.DashScopeVisionService;
 import com.clawbot.wechatbot.service.impl.DeepSeekChatService;
+import com.clawbot.wechatbot.service.agent.routing.DynamicToolSelector;
+import com.clawbot.wechatbot.memory.ConversationContextSelector;
 import com.clawbot.wechatbot.service.reply.LongReplyManager;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -62,7 +66,9 @@ public class BotBeanConfiguration {
         return new DeepSeekClient(config.getDeepSeekApiKey(), config.getDeepSeekModel(),
             config.getDeepSeekUrl(), config.getDeepSeekTemperature(),
             config.getDeepSeekMaxTokens(), config.getDeepSeekConnectTimeoutSeconds(),
-            config.getDeepSeekRequestTimeoutSeconds());
+            config.getDeepSeekRequestTimeoutSeconds(),
+            config.getDeepSeekTransientRetries(),
+            config.getDeepSeekCircuitBreakSeconds());
     }
 
     @Bean DashScopeClient dashScopeClient(BotConfig config) {
@@ -113,19 +119,26 @@ public class BotBeanConfiguration {
         return new ImageMessageHandler(service);
     }
     @Bean MessageHandler documentMessageHandler(
-        DeepSeekChatService chat, DocumentService documents
+        DeepSeekChatService chat, DocumentService documents,
+        WordDocumentCommandService wordDocuments,
+        PendingWordDocumentInstructionStore pendingWordInstructions
     ) {
-        return new DocumentMessageHandler(chat, documents);
+        return new DocumentMessageHandler(
+            chat, documents, wordDocuments, pendingWordInstructions);
     }
     @Bean MessageHandler textMessageHandler(
         DeepSeekChatService chat, AgentOrchestrator orchestrator,
         SpeechSynthesisService speech, DocumentService documents, TianNewsTool news,
         BotConfig config, ConversationMemoryService memory, MemoryProperties memoryProperties,
         LongReplyManager replies, IntentRecognizer intents,
-        AgentInputAttachmentLoader attachments
+        AgentInputAttachmentLoader attachments,
+        com.clawbot.wechatbot.confirmation.ConfirmationReplyService confirmationReplies,
+        DynamicToolSelector toolSelector,
+        ConversationContextSelector contextSelector
     ) {
         SpeechSynthesisService optionalSpeech = config.isDashscopeConfigured() ? speech : null;
         return new TextMessageHandler(chat, orchestrator, optionalSpeech, documents, news,
-            memory, memoryProperties, replies, intents, attachments);
+            memory, memoryProperties, replies, intents, attachments, confirmationReplies,
+            toolSelector, contextSelector);
     }
 }

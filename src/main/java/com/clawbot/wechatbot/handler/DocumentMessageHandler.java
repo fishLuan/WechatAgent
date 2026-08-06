@@ -5,6 +5,10 @@ import com.github.wechat.ilink.sdk.core.model.FileItem;
 import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import com.clawbot.wechatbot.base.MessageHandler;
+import com.clawbot.wechatbot.feature.document.application.WordDocumentCommandService;
+import com.clawbot.wechatbot.feature.document.messaging.PendingWordDocumentInstructionStore;
+import com.clawbot.wechatbot.feature.document.messaging.WordDocumentCommandParser;
+import com.clawbot.wechatbot.feature.document.model.WordDocumentEditResult;
 import com.clawbot.wechatbot.service.ChatService;
 import com.clawbot.wechatbot.service.DocumentService;
 
@@ -18,10 +22,19 @@ public class DocumentMessageHandler implements MessageHandler {
 
     private final ChatService chatService;
     private final DocumentService documentService;
+    private final WordDocumentCommandService wordDocuments;
+    private final PendingWordDocumentInstructionStore pendingWordInstructions;
 
-    public DocumentMessageHandler(ChatService chatService, DocumentService documentService) {
+    public DocumentMessageHandler(
+        ChatService chatService,
+        DocumentService documentService,
+        WordDocumentCommandService wordDocuments,
+        PendingWordDocumentInstructionStore pendingWordInstructions
+    ) {
         this.chatService = chatService;
         this.documentService = documentService;
+        this.wordDocuments = wordDocuments;
+        this.pendingWordInstructions = pendingWordInstructions;
     }
 
     @Override
@@ -56,7 +69,11 @@ public class DocumentMessageHandler implements MessageHandler {
         if (fileItem == null) return;
 
         String fileName = fileItem.getFile_name();
-        safeSendText(client, from, "📄 收到文件：" + fileName + "，正在帮你读取并总结...");
+        System.out.println("[WORD-DOC] 收到文件：" + fileName);
+        boolean editableWord = fileName != null && fileName.toLowerCase().endsWith(".docx");
+        if (!editableWord) {
+            safeSendText(client, from, "📄 收到文件：" + fileName + "，正在读取...");
+        }
 
         try {
             // 1. 从消息下载文件
@@ -64,6 +81,35 @@ public class DocumentMessageHandler implements MessageHandler {
             byte[] fileBytes = (msgItem != null) ? client.downloadFileFromMessageItem(msgItem) : null;
             if (fileBytes == null || fileBytes.length == 0) {
                 safeSendText(client, from, "文件下载失败，请稍后重试。");
+                return;
+            }
+            if (editableWord) {
+                System.out.println("[WORD-DOC] 创建 Word 编辑会话：" + fileName);
+                WordDocumentEditResult result =
+                    wordDocuments.createSession(from, fileName, fileBytes);
+                if (result.success()) {
+                    String pendingInstruction = pendingWordInstructions.takeLatest(
+                        from, this::looksLikeWordEditInstruction);
+                    if (pendingInstruction != null) {
+                        WordDocumentEditResult edited =
+                            wordDocuments.applyInstruction(from, pendingInstruction);
+                        if (edited.success()) {
+                            safeSendText(client, from,
+                                edited.message() + "\n正在回传修改后的 Word 文档。");
+                            sendWord(client, from, edited);
+                        } else {
+                            safeSendText(client, from,
+                                wordDocuments.createdMessage(result.session())
+                                    + "\n\n自动应用刚才的需求失败："
+                                    + edited.message());
+                        }
+                        return;
+                    }
+                    safeSendText(client, from,
+                        wordDocuments.createdMessage(result.session()));
+                } else {
+                    safeSendText(client, from, result.message());
+                }
                 return;
             }
             // 2. 提取文本
@@ -140,6 +186,31 @@ public class DocumentMessageHandler implements MessageHandler {
         } catch (Exception e) {
             System.err.println("[WARN] 发送文字失败: " + e.getMessage());
         }
+    }
+
+    private void sendWord(ILinkClient client, String from, WordDocumentEditResult result) {
+        if (result.session() == null) return;
+        try {
+            client.sendFile(
+                from,
+                result.session().getContent(),
+                result.session().getFileName(),
+                "修改后的 Word 文档：" + result.session().getFileName());
+        } catch (Exception e) {
+            safeSendText(client, from, "Word 文档回传失败：" + e.getMessage());
+        }
+    }
+
+    private boolean looksLikeWordEditInstruction(String text) {
+        if (text == null || text.isBlank()) return false;
+        if (WordDocumentCommandParser.looksLikeWordDocumentCommandBatch(text)) return true;
+        boolean mentionsWord = text.contains("文档") || text.contains("Word")
+            || text.contains("word") || text.contains(".docx");
+        boolean mentionsEdit = text.contains("修改") || text.contains("编辑")
+            || text.contains("字体") || text.contains("字号") || text.contains("居中")
+            || text.contains("排版") || text.contains("替换") || text.contains("追加")
+            || text.contains("删除") || text.contains("重命名") || text.contains("导出");
+        return mentionsWord && mentionsEdit;
     }
 
     @Override

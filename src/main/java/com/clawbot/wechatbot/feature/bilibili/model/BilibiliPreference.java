@@ -23,6 +23,8 @@ public class BilibiliPreference {
     private String wechatUserId;
     private ContentType contentType;
     private Set<String> preferredGenres = new LinkedHashSet<>();
+    private Set<String> preferredTags = new LinkedHashSet<>();
+    private java.util.Map<String, Integer> tagWeights = new java.util.LinkedHashMap<>();
     private double minimumRating;
     private int recommendationCount;
     private LocalTime pushTime;
@@ -61,6 +63,21 @@ public class BilibiliPreference {
     public void setPreferredGenres(Set<String> values) {
         preferredGenres =
             values == null ? new LinkedHashSet<>() : new LinkedHashSet<>(values);
+    }
+    public Set<String> getPreferredTags() {
+        if (preferredTags == null) preferredTags = new LinkedHashSet<>();
+        return preferredTags;
+    }
+    public void setPreferredTags(Set<String> values) {
+        preferredTags =
+            values == null ? new LinkedHashSet<>() : new LinkedHashSet<>(values);
+    }
+    public java.util.Map<String, Integer> getTagWeights() {
+        if (tagWeights == null) tagWeights = new java.util.LinkedHashMap<>();
+        return tagWeights;
+    }
+    public void setTagWeights(java.util.Map<String, Integer> values) {
+        tagWeights = values == null ? new java.util.LinkedHashMap<>() : new java.util.LinkedHashMap<>(values);
     }
     public double getMinimumRating() { return minimumRating; }
     public void setMinimumRating(double value) { this.minimumRating = value; }

@@ -1,5 +1,7 @@
 package com.clawbot.wechatbot.service;
 
+import java.util.Set;
+
 /**
  * 文本对话服务 —— 接口层
  * 未来想换模型（如换成 GPT、通义千问），只要再写一个实现类即可
@@ -13,6 +15,18 @@ public interface ChatService {
      * @return          AI 回复文本
      */
     String chat(String userText, String history) throws Exception;
+
+    /**
+     * Executes a chat request with an explicit tool allow-list.
+     * A null allow-list preserves the legacy all-tools behavior; an empty set
+     * disables function calling. Implementations that do not support dynamic
+     * selection retain the legacy behavior for compatibility.
+     */
+    default String chatWithAllowedTools(
+        String userText, String history, Set<String> allowedTools
+    ) throws Exception {
+        return chat(userText, history);
+    }
 
     /**
      * 是否已配置 Key（方便 UI 层判断要不要给用户提示）

@@ -1,5 +1,9 @@
 package com.clawbot.wechatbot.scheduler.tool;
 
+import com.clawbot.wechatbot.idempotency.IdempotencyClaim;
+import com.clawbot.wechatbot.idempotency.IdempotencyExecution;
+import com.clawbot.wechatbot.idempotency.IdempotencyService;
+import com.clawbot.wechatbot.idempotency.IdempotencyStatus;
 import com.clawbot.wechatbot.scheduler.controller.SchedulerControlService;
 import com.clawbot.wechatbot.scheduler.model.ScheduledSubscription;
 import com.clawbot.wechatbot.scheduler.model.TaskType;
@@ -24,15 +28,18 @@ public class SchedulerTool implements FunctionTool {
     private final SchedulerControlService controlService;
     private final ObjectMapper mapper;
     private final AgentRequestContextHolder requestContextHolder;
+    private final IdempotencyService idempotencyService;
 
     public SchedulerTool(
         @Lazy SchedulerControlService controlService,
         ObjectMapper mapper,
-        AgentRequestContextHolder requestContextHolder
+        AgentRequestContextHolder requestContextHolder,
+        IdempotencyService idempotencyService
     ) {
         this.controlService = controlService;
         this.mapper = mapper;
         this.requestContextHolder = requestContextHolder;
+        this.idempotencyService = idempotencyService;
     }
 
     @Override
@@ -67,6 +74,11 @@ public class SchedulerTool implements FunctionTool {
         ObjectNode cancelAllNode = props.putObject("cancel_all");
         cancelAllNode.put("type", "boolean");
         cancelAllNode.put("description", "[取消时必选首选] 用户说以下任何一句话就立刻填 true：『取消所有订阅』『全部取消』『所有订阅都取消』『不想再收到任何定时了』『删掉所有定时』『全取消』『取消全部』——只要用户表达了全部取消的意思，这字段必须是 true，别用其他方式取消！");
+
+        ObjectNode cancelMatchingAllNode = props.putObject("cancel_matching_all");
+        cancelMatchingAllNode.put("type", "boolean");
+        cancelMatchingAllNode.put("description",
+            "按类型批量取消：用户要求关闭某一类型的全部任务时设为true，并同时传task_type。例如关闭所有B站定时推送时传task_type=BILIBILI_PUSH。不要同时设置cancel_all。");
 
         ObjectNode typeNode = props.putObject("task_type");
         typeNode.put("type", "string");
@@ -114,14 +126,70 @@ public class SchedulerTool implements FunctionTool {
         }
 
         switch (action) {
-            case SUB_CREATE: return doCreate(userId, args);
-            case SUB_CANCEL: return doCancel(userId, args);
+            case SUB_CREATE: return executeIdempotently(userId, action, args);
+            case SUB_CANCEL: return executeIdempotently(userId, action, args);
             case SUB_LIST:   return doList(userId);
             default:         return "{\"success\":false,\"error\":\"未知 action：" + action + "\"}";
         }
     }
 
-    private String doCreate(String userId, JsonNode args) {
+    private String executeIdempotently(String userId, String action, JsonNode args) throws Exception {
+        Long messageId = requestContextHolder.current().messageId();
+        String requestScope = messageId == null ? userId : userId + ":message:" + messageId;
+        String key = idempotencyService.key(requestScope, TOOL_NAME + ":" + action, args);
+        IdempotencyClaim claim = idempotencyService.claim(key, TOOL_NAME + ":" + action);
+        if (!claim.acquired()) return previousExecution(key, claim.execution());
+        try {
+            String result = SUB_CREATE.equals(action)
+                ? doCreate(userId, args, key) : doCancel(userId, args);
+            JsonNode parsed = mapper.readTree(result);
+            if (parsed.path("success").asBoolean(false)) {
+                idempotencyService.succeed(key, result);
+            } else {
+                idempotencyService.fail(key, parsed.path("error")
+                    .asText(parsed.path("message").asText("操作失败")));
+            }
+            return addIdempotencyMetadata(result, key, false);
+        } catch (Exception exception) {
+            idempotencyService.fail(key, exception.getMessage());
+            throw exception;
+        }
+    }
+
+    private String previousExecution(String key, IdempotencyExecution execution) throws Exception {
+        if (execution != null && execution.getStatus() == IdempotencyStatus.SUCCEEDED
+            && execution.getResult() != null && !execution.getResult().isBlank()) {
+            return addIdempotencyMetadata(execution.getResult(), key, true);
+        }
+        ScheduledSubscription recovered = controlService.findByIdempotencyKey(key);
+        if (recovered != null) {
+            ObjectNode result = mapper.createObjectNode();
+            result.put("success", true);
+            result.put("subscription_id", recovered.getId());
+            result.put("message", "检测到该订阅已创建，已恢复历史执行结果");
+            result.put("idempotency_recovered", true);
+            String raw = result.toString();
+            idempotencyService.succeed(key, raw);
+            return addIdempotencyMetadata(raw, key, true);
+        }
+        ObjectNode result = mapper.createObjectNode();
+        result.put("success", false);
+        result.put("idempotency_key", key);
+        result.put("execution_status", execution == null ? "UNKNOWN" : execution.getStatus().name());
+        result.put("retryable", execution == null || execution.getStatus() == IdempotencyStatus.FAILED);
+        result.put("error", execution == null ? "幂等执行状态未知" : "相同操作正在执行，请勿重复提交");
+        return result.toString();
+    }
+
+    private String addIdempotencyMetadata(String raw, String key, boolean replayed) throws Exception {
+        ObjectNode result = (ObjectNode) mapper.readTree(raw);
+        result.put("idempotency_key", key);
+        result.put("execution_status", "SUCCEEDED");
+        result.put("idempotency_replayed", replayed);
+        return result.toString();
+    }
+
+    private String doCreate(String userId, JsonNode args, String idempotencyKey) {
         // ============== 单次提醒 还是 每天重复？ ==============
         boolean isOneTime = args.path("is_one_time").asBoolean(false);
         String oneTimeDatetime = args.path("one_time_datetime").asText("");
@@ -144,6 +212,7 @@ public class SchedulerTool implements FunctionTool {
 
         ScheduledSubscription sub = new ScheduledSubscription();
         sub.setUserId(userId);
+        sub.setIdempotencyKey(idempotencyKey);
 
         // ========== 分支1：单次提醒 ==========
         String nextFireTime;
@@ -238,6 +307,28 @@ public class SchedulerTool implements FunctionTool {
             return res.toString();
         }
         // 优先级2：按 subscription_id 精确取消（不会误删）
+        boolean cancelMatchingAll = args.path("cancel_matching_all").asBoolean(false);
+        if (cancelMatchingAll) {
+            String taskType = args.path("task_type").asText("");
+            if (taskType.isBlank()) {
+                res.put("success", false);
+                res.put("error", "按类型批量取消时 task_type 不能为空");
+                return res.toString();
+            }
+            int count = controlService.cancelAllByUserAndType(userId, taskType);
+            if (count < 0) {
+                res.put("success", false);
+                res.put("error", "未知的任务类型：" + taskType);
+                return res.toString();
+            }
+            res.put("success", true);
+            res.put("cancel_count", count);
+            res.put("task_type", taskType);
+            res.put("message", count == 0
+                ? "当前没有启用中的该类型定时任务，无需取消。"
+                : "已成功取消 " + count + " 个 " + taskType + " 类型的定时任务。");
+            return res.toString();
+        }
         String subId = args.path("subscription_id").asText("");
         if (subId != null && !subId.isBlank()) {
             boolean ok = controlService.cancelBySubscriptionId(subId, userId);

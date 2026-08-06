@@ -24,6 +24,7 @@ public class BilibiliContent {
     private String title;
     private String description;
     private Set<String> genres = new LinkedHashSet<>();
+    private Set<String> tags = new LinkedHashSet<>();
     private Double rating;
     private Long viewCount;
     private String coverUrl;
@@ -79,6 +80,10 @@ public class BilibiliContent {
     }
     public void setGenres(Set<String> genres) {
         this.genres = genres == null ? new LinkedHashSet<>() : new LinkedHashSet<>(genres);
+    }
+    public Set<String> getTags() { return tags; }
+    public void setTags(Set<String> tags) {
+        this.tags = tags == null ? new LinkedHashSet<>() : new LinkedHashSet<>(tags);
     }
     public Double getRating() { return rating; }
     public void setRating(Double rating) { this.rating = rating; }

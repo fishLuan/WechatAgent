@@ -1,5 +1,11 @@
 package com.clawbot.wechatbot.tools;
 
+import com.clawbot.wechatbot.confirmation.ConfirmationService;
+import com.clawbot.wechatbot.confirmation.PendingConfirmation;
+import com.clawbot.wechatbot.confirmation.RiskDecision;
+import com.clawbot.wechatbot.confirmation.RiskPolicy;
+import com.clawbot.wechatbot.service.agent.AgentRequestContext;
+import com.clawbot.wechatbot.service.agent.AgentRequestContextHolder;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -14,13 +20,29 @@ import java.util.Set;
 public class FunctionToolRegistry {
     private final Map<String, FunctionTool> tools = new LinkedHashMap<>();
     private final ObjectMapper mapper;
+    private final ConfirmationService confirmations;
+    private final RiskPolicy riskPolicy;
+    private final AgentRequestContextHolder requestContextHolder;
 
     public FunctionToolRegistry(ObjectMapper mapper) {
         this.mapper = mapper;
+        this.confirmations = null;
+        this.riskPolicy = null;
+        this.requestContextHolder = null;
     }
 
     public FunctionToolRegistry(ObjectMapper mapper, List<FunctionTool> tools) {
         this(mapper);
+        tools.forEach(this::register);
+    }
+
+    public FunctionToolRegistry(ObjectMapper mapper, List<FunctionTool> tools,
+                                ConfirmationService confirmations, RiskPolicy riskPolicy,
+                                AgentRequestContextHolder requestContextHolder) {
+        this.mapper = mapper;
+        this.confirmations = confirmations;
+        this.riskPolicy = riskPolicy;
+        this.requestContextHolder = requestContextHolder;
         tools.forEach(this::register);
     }
 
@@ -49,6 +71,18 @@ public class FunctionToolRegistry {
         return result;
     }
 
+    public ArrayNode definitionsIncluding(
+        Set<String> includedNames, Set<String> excludedNames
+    ) {
+        if (includedNames == null) return definitionsExcluding(excludedNames);
+        ArrayNode result = mapper.createArrayNode();
+        tools.values().stream()
+            .filter(tool -> includedNames.contains(tool.name()))
+            .filter(tool -> excludedNames == null || !excludedNames.contains(tool.name()))
+            .forEach(tool -> result.add(tool.definition()));
+        return result;
+    }
+
     public String execute(String name, String rawArguments) {
         return executeWithOutcome(name, rawArguments).content();
     }
@@ -61,6 +95,8 @@ public class FunctionToolRegistry {
         }
         try {
             JsonNode arguments = mapper.readTree(rawArguments == null ? "{}" : rawArguments);
+            ToolExecutionOutcome confirmation = requireConfirmation(name, arguments);
+            if (confirmation != null) return confirmation;
             String content = tool.execute(arguments);
             boolean success = isSuccessful(content);
             return new ToolExecutionOutcome(
@@ -74,11 +110,39 @@ public class FunctionToolRegistry {
         }
     }
 
+    private ToolExecutionOutcome requireConfirmation(String name, JsonNode arguments) throws Exception {
+        if (confirmations == null || riskPolicy == null || requestContextHolder == null
+            || confirmations.isAuthorized()) return null;
+        AgentRequestContext context = requestContextHolder.current();
+        if (!context.hasUser()) return null;
+        RiskDecision risk = riskPolicy.evaluate(name, arguments);
+        if (!risk.confirmationRequired()) return null;
+        PendingConfirmation pending = confirmations.create(context, name, arguments, risk);
+        ObjectNode result = mapper.createObjectNode();
+        result.put("success", true);
+        result.put("confirmation_required", true);
+        result.put("confirmation_id", pending.getId());
+        result.put("execution_status", "WAITING_CONFIRMATION");
+        result.put("message", "是否确认" + risk.summary() + "？\n\n"
+            + "回复“确认”继续执行；\n"
+            + "回复“不执行”保留现有设置。\n\n"
+            + "在你确认前，系统不会执行该操作。\n"
+            + "任务编号：" + pending.getId() + "（仅在同时有多个待确认任务时使用）");
+        return new ToolExecutionOutcome(result.toString(), true, false, "CONFIRMATION_REQUIRED");
+    }
+
     private boolean isSuccessful(String content) {
         if (content == null || content.isBlank()) return false;
         try {
             JsonNode result = mapper.readTree(content);
             if (result.has("success")) return result.path("success").asBoolean(false);
+            if (result.has("status")) {
+                JsonNode statusNode = result.path("status");
+                if (statusNode.isBoolean()) return statusNode.asBoolean(false);
+                String status = statusNode.asText("").trim().toLowerCase(java.util.Locale.ROOT);
+                if (Set.of("ok", "success", "succeeded").contains(status)) return true;
+                if (Set.of("error", "failed", "failure").contains(status)) return false;
+            }
             if (result.has("error_code")) return result.path("error_code").asInt(-1) == 0;
             if (result.has("error") && !result.path("error").asText("").isBlank()) return false;
         } catch (Exception ignored) {

@@ -78,6 +78,45 @@ public class BotConfig {
     public int getAgentExecutionTimeoutSeconds() {
         return getInt("agent.guard.execution-timeout-seconds");
     }
+    public double getAgentToolValidationMinConfidence() {
+        return getDouble("agent.validation.min-confidence");
+    }
+    public boolean isAgentReplanEnabled() {
+        return getBoolean("agent.replan.enabled");
+    }
+    public int getAgentReplanMaxCount() {
+        return getInt("agent.replan.max-count");
+    }
+    public int getAgentReplanMaxMutations() {
+        return getInt("agent.replan.max-mutations");
+    }
+    public int getAgentReplanMaxGeneratedTasks() {
+        return getInt("agent.replan.max-generated-tasks");
+    }
+    public int getAgentReplanMaxTotalTasks() {
+        return getInt("agent.replan.max-total-tasks");
+    }
+    public int getAgentReplanMaxRetriesPerTask() {
+        return getInt("agent.replan.max-retries-per-task");
+    }
+    public int getAgentReplanMaxTotalTaskExecutions() {
+        return getInt("agent.replan.max-total-task-executions");
+    }
+    public int getAgentReplanTimeoutSeconds() {
+        return getInt("agent.replan.timeout-seconds");
+    }
+    public int getAgentReferenceMaxPerTask() {
+        return getInt("agent.reference.max-per-task");
+    }
+    public int getAgentReferenceMaxDepth() {
+        return getInt("agent.reference.max-depth");
+    }
+    public int getAgentReferenceMaxPathLength() {
+        return getInt("agent.reference.max-path-length");
+    }
+    public int getAgentReferenceMaxResolvedInputChars() {
+        return getInt("agent.reference.max-resolved-input-chars");
+    }
     public int getAgentMaxInputAttachments() {
         return getInt("agent.input.max-attachments");
     }
@@ -110,9 +149,14 @@ public class BotConfig {
     }
     public int getDeepSeekConnectTimeoutSeconds() { return getInt("deepseek.connect-timeout-seconds"); }
     public int getDeepSeekRequestTimeoutSeconds() { return getInt("deepseek.request-timeout-seconds"); }
+    public int getDeepSeekTransientRetries() { return getInt("deepseek.transient-retries"); }
+    public int getDeepSeekCircuitBreakSeconds() { return getInt("deepseek.circuit-break-seconds"); }
 
     public String getDashscopeApiKey() { return get("dashscope.api.key"); }
     public String getDashscopeEndpoint() { return get("dashscope.multimodal.url"); }
+    public String getDashscopeEmbeddingEndpoint() { return get("dashscope.embedding.url"); }
+    public String getDashscopeEmbeddingModel() { return get("dashscope.embedding.model"); }
+    public int getDashscopeEmbeddingDimension() { return getInt("dashscope.embedding.dimension"); }
     public int getDashscopeConnectTimeoutSeconds() { return getInt("dashscope.connect-timeout-seconds"); }
     public int getDashscopeRequestTimeoutSeconds() { return getInt("dashscope.request-timeout-seconds"); }
     public String getVisionModel() { return get("dashscope.vision.model"); }
@@ -166,7 +210,6 @@ public class BotConfig {
 
     public String getTianapiApiKey() { return get("tianapi.api.key"); }
     public int getLoginTimeoutMs() { return getInt("wechat.login.timeout-ms"); }
-    public int getMaxSessions() { return getInt("wechat.max-sessions"); }
     public int getMessageDispatchParallelism() {
         return getInt("wechat.dispatch.parallelism");
     }

@@ -388,6 +388,19 @@ class BilibiliCommandParserTests {
         command = BilibiliCommandParser.parse("推荐葬送的芙莉莲类似的番");
         assertEquals(BilibiliCommandParser.CmdType.RAG_SIMILAR, command.type());
         assertEquals("葬送的芙莉莲", command.title());
+
+        command = BilibiliCommandParser.parse("想看治愈冒险动漫");
+        assertEquals(BilibiliCommandParser.CmdType.RAG_QA, command.type());
+        assertEquals(ContentType.BANGUMI, command.contentType());
+        assertEquals("想看治愈冒险动漫", command.title());
+
+        command = BilibiliCommandParser.parse("想看悬疑推理剧集");
+        assertEquals(BilibiliCommandParser.CmdType.RAG_QA, command.type());
+        assertEquals(ContentType.SERIES, command.contentType());
+
+        command = BilibiliCommandParser.parse("想看夏目友人帐");
+        assertEquals(BilibiliCommandParser.CmdType.MARK_TITLE, command.type());
+        assertEquals("夏目友人帐", command.title());
     }
 
     // ============================

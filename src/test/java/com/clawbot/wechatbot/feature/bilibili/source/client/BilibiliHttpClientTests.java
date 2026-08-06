@@ -81,6 +81,29 @@ class BilibiliHttpClientTests {
             any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
     }
 
+    @Test
+    void htmlSearchResponseIsDiagnosticErrorAndDoesNotOpenRiskCircuit() throws Exception {
+        HttpClient delegate = mock(HttpClient.class);
+        HttpResponse<String> htmlResponse = response(200,
+            "<!DOCTYPE html><html><title>request error</title></html>");
+        when(delegate.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+            .thenReturn(htmlResponse);
+        BilibiliHttpClient client = new BilibiliHttpClient(
+            delegate, Duration.ofSeconds(1), 0,
+            "SESSDATA=test", Duration.ofMinutes(30));
+
+        IllegalStateException first = assertThrows(IllegalStateException.class,
+            () -> client.getAnonymousSearchText(
+                "https://api.bilibili.com/x/web-interface/search/type?page=1"));
+        assertEquals(true, first.getMessage().contains("响应类型=HTML"));
+        assertThrows(IllegalStateException.class,
+            () -> client.getAnonymousSearchText(
+                "https://api.bilibili.com/x/web-interface/search/type?page=1"));
+
+        verify(delegate, times(2)).send(
+            any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+    }
+
     @SuppressWarnings("unchecked")
     private HttpResponse<String> response(int status, String body) {
         HttpResponse<String> response = mock(HttpResponse.class);

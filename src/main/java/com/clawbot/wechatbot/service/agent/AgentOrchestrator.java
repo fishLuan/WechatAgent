@@ -1,6 +1,33 @@
 package com.clawbot.wechatbot.service.agent;
 
 import com.clawbot.wechatbot.service.ChatService;
+import com.clawbot.wechatbot.service.agent.acceptance.DefaultTaskAcceptanceEvaluator;
+import com.clawbot.wechatbot.service.agent.acceptance.TaskAcceptanceEvaluator;
+import com.clawbot.wechatbot.service.agent.acceptance.TaskEvaluation;
+import com.clawbot.wechatbot.service.agent.state.AgentExecutionState;
+import com.clawbot.wechatbot.service.agent.state.AgentTaskState;
+import com.clawbot.wechatbot.service.agent.state.TaskStatus;
+import com.clawbot.wechatbot.service.agent.replan.AgentReplanPolicy;
+import com.clawbot.wechatbot.service.agent.replan.NoOpTaskReplanner;
+import com.clawbot.wechatbot.service.agent.replan.PlanMutationApplier;
+import com.clawbot.wechatbot.service.agent.replan.ReplanRequest;
+import com.clawbot.wechatbot.service.agent.replan.ReplanResult;
+import com.clawbot.wechatbot.service.agent.replan.TaskReplanner;
+import com.clawbot.wechatbot.service.agent.reference.DataLineageRecord;
+import com.clawbot.wechatbot.service.agent.reference.ReferenceResolutionException;
+import com.clawbot.wechatbot.service.agent.reference.ReferencePolicy;
+import com.clawbot.wechatbot.service.agent.reference.ResolvedTaskInput;
+import com.clawbot.wechatbot.service.agent.reference.ResultReferenceResolver;
+import com.clawbot.wechatbot.service.agent.interrupt.AgentExecutionControlService;
+import com.clawbot.wechatbot.service.agent.interrupt.AgentExecutionSession;
+import com.clawbot.wechatbot.service.agent.interrupt.AgentRunStatus;
+import com.clawbot.wechatbot.service.agent.checkpoint.AgentCheckpointExecutionStatus;
+import com.clawbot.wechatbot.service.agent.checkpoint.AgentCheckpointRecorder;
+import com.clawbot.wechatbot.service.agent.checkpoint.AgentCheckpointStore;
+import com.clawbot.wechatbot.service.agent.checkpoint.AgentExecutionSnapshot;
+import com.clawbot.wechatbot.service.agent.checkpoint.AgentTaskCheckpoint;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -8,12 +35,15 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.UUID;
 
 /**
  * 外层 Agent 循环：规划任务、检索处理器、处理依赖、并行执行并汇总文字及附件。
@@ -21,6 +51,9 @@ import java.util.concurrent.TimeoutException;
  * <p>CHAT_TOOL 任务内部仍由 DeepSeekChatService 完成 function-calling 内循环。</p>
  */
 public final class AgentOrchestrator implements AutoCloseable {
+
+    private final UserFacingResultFormatter resultFormatter =
+        new UserFacingResultFormatter(new ObjectMapper());
     private static final String SUPPORTING_CONTEXT_MARKER = "\n用户问题：";
 
     private final ChatService fallbackChatService;
@@ -32,6 +65,13 @@ public final class AgentOrchestrator implements AutoCloseable {
     private final Duration executionTimeout;
     private final ExecutorService executor;
     private final AgentRequestContextHolder requestContextHolder;
+    private final TaskAcceptanceEvaluator acceptanceEvaluator;
+    private final TaskReplanner replanner;
+    private final PlanMutationApplier mutationApplier;
+    private final AgentReplanPolicy replanPolicy;
+    private final ResultReferenceResolver referenceResolver;
+    private AgentExecutionControlService executionControl;
+    private AgentCheckpointStore checkpointStore;
 
     public AgentOrchestrator(
         ChatService fallbackChatService,
@@ -107,11 +147,61 @@ public final class AgentOrchestrator implements AutoCloseable {
         Duration executionTimeout,
         AgentRequestContextHolder requestContextHolder
     ) {
+        this(fallbackChatService, planner, handlers, enabled, maxOuterRounds,
+            maxTasksPerBatch, maxParallelism, executionTimeout,
+            requestContextHolder,
+            new DefaultTaskAcceptanceEvaluator(new ObjectMapper()));
+    }
+
+    public AgentOrchestrator(
+        ChatService fallbackChatService,
+        TaskPlanner planner,
+        List<AgentTaskHandler> handlers,
+        boolean enabled,
+        int maxOuterRounds,
+        int maxTasksPerBatch,
+        int maxParallelism,
+        Duration executionTimeout,
+        AgentRequestContextHolder requestContextHolder,
+        TaskAcceptanceEvaluator acceptanceEvaluator
+    ) {
+        this(fallbackChatService, planner, handlers, enabled, maxOuterRounds,
+            maxTasksPerBatch, maxParallelism, executionTimeout,
+            requestContextHolder, acceptanceEvaluator,
+            new NoOpTaskReplanner(), null, AgentReplanPolicy.disabled(),
+            new ResultReferenceResolver(
+                new ObjectMapper(), ReferencePolicy.defaults()));
+    }
+
+    public AgentOrchestrator(
+        ChatService fallbackChatService,
+        TaskPlanner planner,
+        List<AgentTaskHandler> handlers,
+        boolean enabled,
+        int maxOuterRounds,
+        int maxTasksPerBatch,
+        int maxParallelism,
+        Duration executionTimeout,
+        AgentRequestContextHolder requestContextHolder,
+        TaskAcceptanceEvaluator acceptanceEvaluator,
+        TaskReplanner replanner,
+        PlanMutationApplier mutationApplier,
+        AgentReplanPolicy replanPolicy,
+        ResultReferenceResolver referenceResolver
+    ) {
         this.fallbackChatService = fallbackChatService;
         this.planner = planner;
         this.handlers = List.copyOf(handlers);
         this.requestContextHolder = java.util.Objects.requireNonNull(
             requestContextHolder, "requestContextHolder");
+        this.acceptanceEvaluator = java.util.Objects.requireNonNull(
+            acceptanceEvaluator, "acceptanceEvaluator");
+        this.replanner = java.util.Objects.requireNonNull(replanner, "replanner");
+        this.mutationApplier = mutationApplier;
+        this.replanPolicy = java.util.Objects.requireNonNull(
+            replanPolicy, "replanPolicy");
+        this.referenceResolver = java.util.Objects.requireNonNull(
+            referenceResolver, "referenceResolver");
         this.enabled = enabled;
         this.maxOuterRounds = Math.max(1, maxOuterRounds);
         this.maxTasksPerBatch = Math.max(1, maxTasksPerBatch);
@@ -130,8 +220,33 @@ public final class AgentOrchestrator implements AutoCloseable {
             });
     }
 
+    public AgentOrchestrator enableInterrupts(AgentExecutionControlService control) {
+        this.executionControl = control;
+        return this;
+    }
+
+    public AgentOrchestrator enableCheckpoints(AgentCheckpointStore store) {
+        this.checkpointStore = store;
+        return this;
+    }
+
     public AgentResponse execute(String userText, String history) throws Exception {
         return execute(userText, history, AgentRequestContext.anonymous());
+    }
+
+    /** Executes a high-confidence simple request without invoking the planner. */
+    public AgentResponse executeDirect(
+        String userText,
+        String history,
+        AgentRequestContext requestContext,
+        Set<String> allowedTools
+    ) throws Exception {
+        AgentRequestContext actualContext = requestContext == null
+            ? AgentRequestContext.anonymous() : requestContext;
+        long deadlineNanos = System.nanoTime() + executionTimeout.toNanos();
+        return executeFallback(
+            userText, history, deadlineNanos, actualContext,
+            allowedTools == null ? null : Set.copyOf(allowedTools));
     }
 
     public AgentResponse execute(
@@ -255,9 +370,37 @@ public final class AgentOrchestrator implements AutoCloseable {
         AgentRequestContext requestContext,
         List<AgentInputAttachment> inputAttachments
     ) throws Exception {
+        return executeTasks(userText, history, input, tasks, deadlineNanos,
+            requestContext, inputAttachments, null);
+    }
+
+    public AgentResponse resume(AgentExecutionSnapshot snapshot) throws Exception {
+        if (snapshot == null || snapshot.execution() == null) {
+            throw new IllegalArgumentException("恢复快照不能为空");
+        }
+        AgentExecutionState state = restoreState(snapshot);
+        AgentRequestContext context = new AgentRequestContext(
+            snapshot.execution().getUserId(),
+            snapshot.execution().getSourceMessageId());
+        String request = snapshot.execution().getOriginalRequest();
+        return executeTasks(request, "", splitSupportingContext(request),
+            state.tasks(), System.nanoTime() + executionTimeout.toNanos(),
+            context, List.of(), new RecoveryContext(snapshot, state));
+    }
+
+    private AgentResponse executeTasks(
+        String userText,
+        String history,
+        PlanningInput input,
+        List<AgentTask> tasks,
+        long deadlineNanos,
+        AgentRequestContext requestContext,
+        List<AgentInputAttachment> inputAttachments,
+        RecoveryContext recovery
+    ) throws Exception {
 
         // 单一文本任务走原始输入，避免规划器改写造成语义或附加上下文丢失。
-        if (tasks.size() == 1
+        if (recovery == null && tasks.size() == 1
             && tasks.get(0).type() == AgentTaskType.CHAT_TOOL
             && tasks.get(0).dependencies().isEmpty()
             && inputAttachments.isEmpty()) {
@@ -265,48 +408,261 @@ public final class AgentOrchestrator implements AutoCloseable {
                 userText, history, deadlineNanos, requestContext);
         }
 
-        Map<String, AgentTask> pending = new LinkedHashMap<>();
-        tasks.stream()
-            .sorted(Comparator.comparingInt(AgentTask::order))
-            .forEach(task -> pending.put(task.id(), task));
-        Map<String, AgentTaskResult> completed = new LinkedHashMap<>();
+        AgentExecutionState state = recovery == null
+            ? new AgentExecutionState(userText, tasks) : recovery.state();
+        AgentExecutionSession executionSession = executionControl == null
+            ? null : (recovery == null
+                ? executionControl.begin(requestContext, userText)
+                : executionControl.resume(
+                    recovery.snapshot().execution().getId(), requestContext, userText));
+        String checkpointExecutionId = recovery != null
+            ? recovery.snapshot().execution().getId()
+            : executionSession == null
+            ? "TASK-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase()
+            : executionSession.executionId();
+        AgentCheckpointRecorder checkpoints = recovery == null
+            ? AgentCheckpointRecorder.begin(
+                checkpointStore, new ObjectMapper(), checkpointExecutionId,
+                requestContext, userText, tasks)
+            : AgentCheckpointRecorder.resume(
+                checkpointStore, new ObjectMapper(), recovery.snapshot());
 
         for (int round = 0;
-             round < maxOuterRounds
-                 && !pending.isEmpty()
-                 && System.nanoTime() < deadlineNanos;
+            round < maxOuterRounds
+                && state.hasUnfinishedTasks()
+                && !state.aborted()
+                && System.nanoTime() < deadlineNanos;
              round++) {
-            List<AgentTask> ready = pending.values().stream()
-                .filter(task -> completed.keySet().containsAll(task.dependencies()))
-                .limit(maxTasksPerBatch)
-                .toList();
-            if (ready.isEmpty()) break;
-
-            List<AgentTaskResult> roundResults = executeReadyTasks(
-                ready,
-                completed,
-                input.supportingContext(),
-                history,
-                deadlineNanos,
-                requestContext,
-                inputAttachments);
-            for (AgentTaskResult result : roundResults) {
-                pending.remove(result.task().id());
-                completed.put(result.task().id(), result);
+            if (isCancellationRequested(executionSession)) {
+                state.cancelUnfinished();
+                break;
             }
+            state.nextOuterRound();
+            checkpoints.outerRound(state);
+            if (state.totalTaskExecutions()
+                >= replanPolicy.maxTotalTaskExecutions()) {
+                failActionableTasks(state, "任务执行总次数超过限制");
+                break;
+            }
+
+            boolean progressed = false;
+            List<AgentTask> ready = state.readyTasks(maxTasksPerBatch);
+            if (!ready.isEmpty()) {
+                int remainingExecutions = replanPolicy.maxTotalTaskExecutions()
+                    - state.totalTaskExecutions();
+                ready = ready.stream().limit(Math.max(0, remainingExecutions)).toList();
+                List<AgentTask> executableTasks = new ArrayList<>();
+                Map<String, List<DataLineageRecord>> lineageByTask =
+                    new LinkedHashMap<>();
+                for (AgentTask task : ready) {
+                    state.markRunning(task);
+                    try {
+                        ResolvedTaskInput resolved = referenceResolver.resolve(task, state);
+                        state.recordLineage(resolved.lineage());
+                        checkpoints.taskStarted(
+                            state.taskState(task.id()), resolved.input());
+                        AgentTask executable = withInput(task, resolved.input());
+                        executableTasks.add(executable);
+                        lineageByTask.put(task.id(), resolved.lineage());
+                    } catch (ReferenceResolutionException error) {
+                        AgentTaskResult failed = AgentTaskResult.failure(
+                            task, error.getMessage());
+                        state.recordResult(failed, new TaskEvaluation(
+                            com.clawbot.wechatbot.service.agent.acceptance.TaskDecision.REPLAN,
+                            error.code(), error.getMessage(),
+                            new ObjectMapper().createObjectNode(), List.of(),
+                            "修正任务依赖或引用路径后重新规划"));
+                        checkpoints.taskEvaluated(state.taskState(task.id()));
+                    }
+                }
+
+                List<AgentTaskResult> roundResults = executeReadyTasks(
+                    executableTasks,
+                    state.verifiedResults(),
+                    input.supportingContext(),
+                    history,
+                    deadlineNanos,
+                    requestContext,
+                    inputAttachments,
+                    lineageByTask,
+                    executionSession);
+                if (isCancellationRequested(executionSession)) {
+                    state.cancelUnfinished();
+                    break;
+                }
+                for (AgentTaskResult result : roundResults) {
+                    TaskEvaluation evaluation = acceptanceEvaluator.evaluate(
+                        result.task(), result,
+                        state.verifiedDependencies(result.task()));
+                    state.recordResult(result, evaluation);
+                    checkpoints.taskEvaluated(
+                        state.taskState(result.task().id()));
+                }
+                progressed = true;
+            }
+
+            if (isCancellationRequested(executionSession)) {
+                state.cancelUnfinished();
+                break;
+            }
+            boolean retriesScheduled = schedulePermittedRetries(state);
+            progressed |= retriesScheduled;
+            if (retriesScheduled) {
+                checkpoints.retryOrReplanState(
+                    state, state.hasReplanRequiredTasks()
+                        ? AgentCheckpointExecutionStatus.REPLANNING
+                        : AgentCheckpointExecutionStatus.RUNNING);
+            }
+            boolean schemaAdapted = acceptUsableSchemaMismatches(state, checkpoints);
+            progressed |= schemaAdapted;
+            if (!isCancellationRequested(executionSession)) {
+                progressed |= executeRequiredReplan(
+                    state, deadlineNanos, executionSession, checkpoints);
+            }
+            if (!progressed) break;
         }
 
-        // 循环达到上限、依赖不存在或出现依赖环时，不静默丢弃任务。
+        if (isCancellationRequested(executionSession)) {
+            state.cancelUnfinished();
+            boolean partial = state.hasCompletedSideEffects();
+            if (executionControl != null) {
+                executionControl.finish(executionSession,
+                    partial ? AgentRunStatus.PARTIALLY_CANCELLED : AgentRunStatus.CANCELLED,
+                    state.completedTaskIds(), state.cancelledTaskIds(), partial,
+                    requestContext.userId());
+            }
+            checkpoints.finish(
+                state,
+                partial
+                    ? AgentCheckpointExecutionStatus.PARTIALLY_CANCELLED
+                    : AgentCheckpointExecutionStatus.CANCELLED,
+                "AGENT_CANCELLED", "用户取消了当前任务");
+            return cancellationResponse(executionSession, state, partial);
+        }
+
         boolean timedOut = System.nanoTime() >= deadlineNanos;
-        for (AgentTask task : pending.values()) {
-            completed.put(task.id(), AgentTaskResult.failure(
-                task,
-                timedOut
-                    ? "Agent 执行时间超过 " + executionTimeout.toSeconds() + " 秒"
-                    : "任务依赖无法满足或超过外循环次数限制"));
+        state.failUnresolvedTasks(
+            timedOut
+                ? "Agent 执行时间超过 " + executionTimeout.toSeconds() + " 秒"
+                : "任务依赖未通过验收、依赖不存在或超过外循环次数限制");
+
+        AgentResponse response = aggregate(state);
+        boolean succeeded = state.taskStates().stream()
+            .allMatch(item -> item.status() == TaskStatus.VERIFIED);
+        checkpoints.finish(
+            state,
+            succeeded
+                ? AgentCheckpointExecutionStatus.SUCCEEDED
+                : AgentCheckpointExecutionStatus.FAILED,
+            succeeded ? "" : (timedOut ? "AGENT_TIMEOUT" : "AGENT_TASK_FAILED"),
+            succeeded ? "" : (timedOut
+                ? "Agent执行超时" : "一个或多个任务未通过验收"));
+        if (executionControl != null) {
+            executionControl.finish(executionSession, AgentRunStatus.SUCCEEDED,
+                state.completedTaskIds(), List.of(), state.hasCompletedSideEffects(),
+                requestContext.userId());
+        }
+        return response;
+    }
+
+    private boolean schedulePermittedRetries(AgentExecutionState state) {
+        boolean changed = false;
+        for (AgentTaskState taskState : state.retryPendingTaskStates()) {
+            int retriesAlreadyUsed = Math.max(0, taskState.attemptCount() - 1);
+            if (replanPolicy.enabled()
+                && retriesAlreadyUsed < replanPolicy.maxRetriesPerTask()
+                && state.totalTaskExecutions()
+                    < replanPolicy.maxTotalTaskExecutions()) {
+                state.scheduleRetry(taskState.task().id());
+            } else if (replanPolicy.enabled()) {
+                state.requireReplan(taskState.task().id());
+            } else {
+                continue;
+            }
+            changed = true;
+        }
+        return changed;
+    }
+
+    private boolean executeRequiredReplan(
+        AgentExecutionState state, long deadlineNanos,
+        AgentExecutionSession executionSession,
+        AgentCheckpointRecorder checkpoints
+    ) {
+        List<AgentTaskState> candidates = state.replanRequiredTaskStates();
+        if (candidates.isEmpty()) return false;
+        AgentTaskState failed = candidates.get(0);
+        if (!replanPolicy.enabled()) return false;
+        if (!replanner.isConfigured() || mutationApplier == null) {
+            state.failTask(failed.task().id(), "局部重规划不可用");
+            return true;
+        }
+        if (state.replanCount() >= replanPolicy.maxReplans()) {
+            state.failTask(failed.task().id(), "局部重规划次数超过限制");
+            return true;
         }
 
-        return aggregate(tasks, completed);
+        int remainingBudget = Math.max(
+            0, replanPolicy.maxTotalTasks() - state.tasks().size());
+        List<AgentTask> remaining = state.taskStates().stream()
+            .filter(item -> item.status() != TaskStatus.VERIFIED)
+            .map(AgentTaskState::task)
+            .toList();
+        ReplanRequest request = new ReplanRequest(
+            state.originalUserRequest(), failed.task(), failed.lastResult(),
+            failed.lastEvaluation(), state.verifiedResults(), remaining,
+            remainingBudget);
+        try {
+            checkpoints.retryOrReplanState(
+                state, AgentCheckpointExecutionStatus.REPLANNING);
+            ReplanResult result = callReplanner(
+                request, deadlineNanos, executionSession);
+            mutationApplier.apply(state, result);
+            checkpoints.planRevised(state);
+        } catch (Exception error) {
+            state.failTask(
+                failed.task().id(), "局部重规划失败：" + safeMessage(error));
+            checkpoints.taskEvaluated(
+                state.taskState(failed.task().id()));
+        }
+        return true;
+    }
+
+    private ReplanResult callReplanner(
+        ReplanRequest request, long deadlineNanos,
+        AgentExecutionSession executionSession
+    ) throws Exception {
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        long timeoutNanos = Math.min(
+            remainingNanos, replanPolicy.timeout().toNanos());
+        if (timeoutNanos <= 0) throw new TimeoutException("局部重规划超时");
+        Future<ReplanResult> future = executor.submit(() -> replanner.replan(request));
+        if (executionSession != null) executionSession.register(future);
+        try {
+            return future.get(timeoutNanos, TimeUnit.NANOSECONDS);
+        } catch (TimeoutException error) {
+            future.cancel(true);
+            throw new TimeoutException("局部重规划超过 "
+                + replanPolicy.timeout().toSeconds() + " 秒");
+        } catch (ExecutionException error) {
+            Throwable cause = error.getCause();
+            if (cause instanceof Exception exception) throw exception;
+            throw new Exception("局部重规划执行失败", cause);
+        } catch (InterruptedException error) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new Exception("局部重规划被中断", error);
+        } finally {
+            if (executionSession != null) executionSession.unregister(future);
+        }
+    }
+
+    private void failActionableTasks(AgentExecutionState state, String reason) {
+        state.retryPendingTaskStates().forEach(item ->
+            state.failTask(item.task().id(), reason));
+        state.replanRequiredTaskStates().forEach(item ->
+            state.failTask(item.task().id(), reason));
+        state.failUnresolvedTasks(reason);
     }
 
     private AgentResponse executeFallback(
@@ -315,6 +671,19 @@ public final class AgentOrchestrator implements AutoCloseable {
         long deadlineNanos,
         AgentRequestContext requestContext
     ) throws Exception {
+        return executeFallback(
+            userText, history, deadlineNanos, requestContext, null);
+    }
+
+    private AgentResponse executeFallback(
+        String userText,
+        String history,
+        long deadlineNanos,
+        AgentRequestContext requestContext,
+        Set<String> allowedTools
+    ) throws Exception {
+        AgentExecutionSession executionSession = executionControl == null
+            ? null : executionControl.begin(requestContext, userText);
         long remainingNanos = deadlineNanos - System.nanoTime();
         if (remainingNanos <= 0) {
             throw new TimeoutException(
@@ -323,22 +692,48 @@ public final class AgentOrchestrator implements AutoCloseable {
         Future<String> future = executor.submit(
             () -> requestContextHolder.callWith(
                 requestContext,
-                () -> fallbackChatService.chat(userText, history)));
+                () -> fallbackChatService.chatWithAllowedTools(
+                    userText, history, allowedTools)));
+        if (executionSession != null) executionSession.register(future);
         try {
-            return AgentResponse.text(
+            AgentResponse response = AgentResponse.text(
                 future.get(remainingNanos, TimeUnit.NANOSECONDS));
+            if (executionControl != null) {
+                executionControl.finish(executionSession, AgentRunStatus.SUCCEEDED,
+                    List.of("task-1"), List.of(), false, requestContext.userId());
+            }
+            return response;
+        } catch (CancellationException error) {
+            if (executionControl != null) {
+                executionControl.finish(executionSession, AgentRunStatus.CANCELLED,
+                    List.of(), List.of("task-1"), false, requestContext.userId());
+            }
+            return AgentResponse.text("任务 " + executionSession.executionId()
+                + " 已取消。没有检测到已完成的副作用操作。");
         } catch (TimeoutException error) {
             future.cancel(true);
+            finishFailed(executionSession, requestContext);
             throw new TimeoutException(
                 "Agent 执行时间超过 " + executionTimeout.toSeconds() + " 秒");
         } catch (ExecutionException error) {
+            finishFailed(executionSession, requestContext);
             Throwable cause = error.getCause();
             if (cause instanceof Exception exception) throw exception;
             throw new Exception("Agent 单任务执行失败", cause);
         } catch (InterruptedException error) {
             future.cancel(true);
+            finishFailed(executionSession, requestContext);
             Thread.currentThread().interrupt();
             throw new Exception("Agent 执行被中断", error);
+        }
+    }
+
+    private void finishFailed(
+        AgentExecutionSession session, AgentRequestContext context
+    ) {
+        if (executionControl != null && session != null) {
+            executionControl.finish(session, AgentRunStatus.FAILED,
+                List.of(), List.of(), false, context.userId());
         }
     }
 
@@ -349,11 +744,13 @@ public final class AgentOrchestrator implements AutoCloseable {
         String history,
         long deadlineNanos,
         AgentRequestContext requestContext,
-        List<AgentInputAttachment> inputAttachments
+        List<AgentInputAttachment> inputAttachments,
+        Map<String, List<DataLineageRecord>> lineageByTask,
+        AgentExecutionSession executionSession
     ) {
         List<Future<AgentTaskResult>> futures = new ArrayList<>();
         for (AgentTask task : ready) {
-            futures.add(executor.submit(
+            Future<AgentTaskResult> future = executor.submit(
                 () -> requestContextHolder.callWith(
                     requestContext,
                     () -> executeTask(
@@ -361,7 +758,10 @@ public final class AgentOrchestrator implements AutoCloseable {
                         completed,
                         supportingContext,
                         history,
-                        inputAttachments))));
+                        inputAttachments,
+                        lineageByTask.getOrDefault(task.id(), List.of()))));
+            futures.add(future);
+            if (executionSession != null) executionSession.register(future);
         }
 
         List<AgentTaskResult> results = new ArrayList<>();
@@ -373,7 +773,15 @@ public final class AgentOrchestrator implements AutoCloseable {
                 break;
             }
             try {
+                if (isCancellationRequested(executionSession)) {
+                    cancelRemaining(futures, index);
+                    break;
+                }
                 results.add(futures.get(index).get(remainingNanos, TimeUnit.NANOSECONDS));
+                if (executionSession != null) executionSession.unregister(futures.get(index));
+            } catch (CancellationException error) {
+                cancelRemaining(futures, index);
+                break;
             } catch (TimeoutException error) {
                 cancelRemaining(futures, index);
                 addTimeoutResults(results, ready, index);
@@ -398,6 +806,26 @@ public final class AgentOrchestrator implements AutoCloseable {
         return results;
     }
 
+    private boolean isCancellationRequested(AgentExecutionSession session) {
+        return session != null && session.token().isCancellationRequested();
+    }
+
+    private AgentResponse cancellationResponse(
+        AgentExecutionSession session, AgentExecutionState state, boolean partial
+    ) {
+        StringBuilder text = new StringBuilder("任务 ")
+            .append(session.executionId()).append(" 已")
+            .append(partial ? "部分取消" : "取消").append("。\n")
+            .append("已完成步骤：").append(state.completedTaskIds().size()).append(" 个；")
+            .append("已停止或未执行步骤：").append(state.cancelledTaskIds().size()).append(" 个。");
+        if (partial) {
+            text.append("\n部分已完成步骤产生了实际变更，系统不会自动撤销；如需回滚请明确提出。");
+        } else {
+            text.append("\n没有检测到已完成的副作用操作。");
+        }
+        return AgentResponse.text(text.toString());
+    }
+
     private void cancelRemaining(List<Future<AgentTaskResult>> futures, int start) {
         for (int index = start; index < futures.size(); index++) {
             futures.get(index).cancel(true);
@@ -419,7 +847,8 @@ public final class AgentOrchestrator implements AutoCloseable {
         Map<String, AgentTaskResult> completed,
         String supportingContext,
         String history,
-        List<AgentInputAttachment> inputAttachments
+        List<AgentInputAttachment> inputAttachments,
+        List<DataLineageRecord> lineage
     ) {
         for (String dependencyId : task.dependencies()) {
             AgentTaskResult dependency = completed.get(dependencyId);
@@ -449,20 +878,18 @@ public final class AgentOrchestrator implements AutoCloseable {
                     history,
                     supportingContext,
                     dependencies,
-                    inputAttachments));
+                    inputAttachments,
+                    task.input(),
+                    lineage));
         } catch (Exception error) {
             return AgentTaskResult.failure(task, "处理失败：" + safeMessage(error));
         }
     }
 
-    private AgentResponse aggregate(
-        List<AgentTask> tasks,
-        Map<String, AgentTaskResult> completed
-    ) {
-        List<AgentTaskResult> results = tasks.stream()
-            .sorted(Comparator.comparingInt(AgentTask::order))
-            .map(task -> completed.getOrDefault(
-                task.id(), AgentTaskResult.failure(task, "任务未执行")))
+    private AgentResponse aggregate(AgentExecutionState state) {
+        List<AgentTaskResult> results = state.taskStates().stream()
+            .sorted(Comparator.comparingInt(item -> item.task().order()))
+            .map(this::resultForAggregation)
             .toList();
         List<AgentAttachment> attachments = results.stream()
             .flatMap(result -> result.attachments().stream())
@@ -470,9 +897,12 @@ public final class AgentOrchestrator implements AutoCloseable {
 
         if (results.size() == 1) {
             AgentTaskResult result = results.get(0);
+            if (result.hasMultipleTexts()) {
+                return AgentResponse.multi(resultFormatter.formatAll(result.texts()));
+            }
             return new AgentResponse(
-                result.succeeded() ? result.text() : result.error(),
-                attachments);
+                result.succeeded() ? resultFormatter.format(result.text()) : result.error(),
+                List.of(), attachments);
         }
 
         StringBuilder reply = new StringBuilder();
@@ -482,14 +912,49 @@ public final class AgentOrchestrator implements AutoCloseable {
             reply.append(index + 1).append(". 【")
                 .append(compactLabel(result.task().instruction()))
                 .append("】\n")
-                .append(result.succeeded() ? result.text() : result.error());
+                .append(result.succeeded()
+                    ? resultFormatter.format(result.text())
+                    : result.error());
         }
-        return new AgentResponse(reply.toString(), attachments);
+        return new AgentResponse(reply.toString(), List.of(), attachments);
+    }
+
+    private AgentTaskResult resultForAggregation(AgentTaskState state) {
+        if (state.status() == TaskStatus.VERIFIED && state.lastResult() != null) {
+            return state.lastResult();
+        }
+        if (state.status() == TaskStatus.FAILED && state.lastResult() != null) {
+            return state.lastResult();
+        }
+        TaskEvaluation evaluation = state.lastEvaluation();
+        if (evaluation == null) {
+            return AgentTaskResult.failure(
+                state.task(), "任务未完成，当前状态：" + state.status());
+        }
+        StringBuilder error = new StringBuilder("任务验收未通过 [")
+            .append(evaluation.decision()).append('/')
+            .append(evaluation.code()).append("]：")
+            .append(evaluation.reason());
+        if (!evaluation.failedCriteria().isEmpty()) {
+            error.append("；失败条件：")
+                .append(String.join("、", evaluation.failedCriteria()));
+        }
+        if (!evaluation.correctiveHint().isBlank()) {
+            error.append("；建议：").append(evaluation.correctiveHint());
+        }
+        error.append("；当前状态：").append(state.status());
+        return AgentTaskResult.failure(state.task(), error.toString());
     }
 
     private String compactLabel(String instruction) {
         String label = instruction.replaceAll("\\s+", " ").trim();
         return label.length() <= 36 ? label : label.substring(0, 36) + "…";
+    }
+
+    private AgentTask withInput(AgentTask task, com.fasterxml.jackson.databind.JsonNode input) {
+        return new AgentTask(
+            task.id(), task.order(), task.type(), task.skillName(), task.instruction(),
+            input, task.expectedOutput(), task.acceptanceCriteria(), task.dependencies());
     }
 
     private PlanningInput splitSupportingContext(String input) {
@@ -509,6 +974,123 @@ public final class AgentOrchestrator implements AutoCloseable {
             : message;
     }
 
+    private boolean acceptUsableSchemaMismatches(
+        AgentExecutionState state, AgentCheckpointRecorder checkpoints
+    ) {
+        boolean changed = false;
+        for (AgentTaskState taskState : state.replanRequiredTaskStates()) {
+            TaskEvaluation evaluation = taskState.lastEvaluation();
+            AgentTaskResult result = taskState.lastResult();
+            if (evaluation == null || result == null || !result.succeeded()
+                || !"TASK_OUTPUT_SCHEMA_MISMATCH".equals(evaluation.code())) {
+                continue;
+            }
+            state.acceptBestEffort(taskState.task().id(), bestEffortOutput(result));
+            checkpoints.taskEvaluated(state.taskState(taskState.task().id()));
+            System.out.println("[AGENT-REPLAN] 已本地适配结果字段，跳过LLM重规划 taskId="
+                + taskState.task().id());
+            changed = true;
+        }
+        return changed;
+    }
+
+    private JsonNode bestEffortOutput(AgentTaskResult result) {
+        ObjectMapper mapper = new ObjectMapper();
+        String text = result.text() == null ? "" : result.text().trim();
+        if (!text.isBlank()) {
+            try {
+                JsonNode parsed = mapper.readTree(text);
+                if (parsed != null) return parsed;
+            } catch (Exception ignored) {
+                // Plain text is wrapped below.
+            }
+        }
+        com.fasterxml.jackson.databind.node.ObjectNode output =
+            mapper.createObjectNode().put("text", text);
+        com.fasterxml.jackson.databind.node.ArrayNode attachments =
+            output.putArray("attachments");
+        result.attachments().forEach(attachment -> attachments.addObject()
+            .put("type", attachment.type().name())
+            .put("fileName", attachment.fileName())
+            .put("size", attachment.content().length));
+        return output;
+    }
+
+    private AgentExecutionState restoreState(AgentExecutionSnapshot snapshot) {
+        ObjectMapper mapper = new ObjectMapper();
+        List<AgentTask> restoredTasks = snapshot.tasks().stream()
+            .sorted(Comparator.comparingInt(AgentTaskCheckpoint::getOrder))
+            .map(checkpointStore::deserializeTask)
+            .toList();
+        AgentExecutionState state = new AgentExecutionState(
+            snapshot.execution().getOriginalRequest(), restoredTasks);
+        state.restoreProgress(snapshot.execution().getCurrentRound(),
+            snapshot.execution().getReplanCount(),
+            snapshot.execution().getTotalTaskExecutions());
+        for (AgentTaskCheckpoint checkpoint : snapshot.tasks()) {
+            AgentTask task = state.taskState(checkpoint.getTaskId()).task();
+            TaskStatus status = recoverableTaskStatus(checkpoint.getStatus());
+            AgentTaskResult result = readCheckpointResult(
+                mapper, task, checkpoint.getResultJson());
+            TaskEvaluation evaluation = readCheckpointEvaluation(
+                mapper, checkpoint.getEvaluationJson());
+            JsonNode verifiedOutput = readCheckpointJson(
+                mapper, checkpoint.getVerifiedOutputJson());
+            state.restoreTask(task.id(), status, checkpoint.getAttemptCount(),
+                checkpoint.getReplanGeneration(), result, evaluation,
+                verifiedOutput);
+        }
+        return state;
+    }
+
+    private TaskStatus recoverableTaskStatus(TaskStatus status) {
+        if (status == null) return TaskStatus.PENDING;
+        return switch (status) {
+            case RUNNING, VERIFYING, RETRY_PENDING -> TaskStatus.PENDING;
+            default -> status;
+        };
+    }
+
+    private AgentTaskResult readCheckpointResult(
+        ObjectMapper mapper, AgentTask task, String json
+    ) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            JsonNode root = mapper.readTree(json);
+            if (!root.path("success").asBoolean(false)) {
+                return AgentTaskResult.failure(task,
+                    root.path("error").asText("任务执行失败"));
+            }
+            List<String> texts = new ArrayList<>();
+            root.path("texts").forEach(item -> texts.add(item.asText()));
+            return texts.isEmpty()
+                ? AgentTaskResult.success(task, root.path("text").asText(), List.of())
+                : AgentTaskResult.successMulti(task, texts);
+        } catch (Exception error) {
+            throw new IllegalStateException("无法恢复任务结果：" + task.id(), error);
+        }
+    }
+
+    private TaskEvaluation readCheckpointEvaluation(
+        ObjectMapper mapper, String json
+    ) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return mapper.readValue(json, TaskEvaluation.class);
+        } catch (Exception error) {
+            throw new IllegalStateException("无法恢复任务验收结果", error);
+        }
+    }
+
+    private JsonNode readCheckpointJson(ObjectMapper mapper, String json) {
+        if (json == null || json.isBlank()) return mapper.createObjectNode();
+        try {
+            return mapper.readTree(json);
+        } catch (Exception error) {
+            throw new IllegalStateException("无法恢复任务结构化输出", error);
+        }
+    }
+
     public boolean isConfigured() {
         return fallbackChatService.isConfigured();
     }
@@ -525,5 +1107,10 @@ public final class AgentOrchestrator implements AutoCloseable {
     }
 
     private record PlanningInput(String supportingContext, String userQuestion) {
+    }
+
+    private record RecoveryContext(
+        AgentExecutionSnapshot snapshot, AgentExecutionState state
+    ) {
     }
 }

@@ -84,9 +84,10 @@ class ApplicationTests {
 
     @Test
     void contextLoads() {
-        assertEquals(13, toolRegistry.size());
+        assertEquals(14, toolRegistry.size());
+        assertTrue(handlers.stream().anyMatch(DocumentMessageHandler.class::isInstance));
         assertEquals(5, agentTaskHandlers.size());
-        assertEquals(4, skillRegistry.size());
+        assertEquals(5, skillRegistry.size());
         assertTrue(skillRegistry.contains("bilibili"));
         assertTrue(skillRegistry.contains("document-generation"));
         assertTrue(skillRegistry.contains("voice-reply"));
@@ -98,6 +99,7 @@ class ApplicationTests {
         assertTrue(handlers.stream().anyMatch(h -> h instanceof ExcelFileMessageHandler));
         assertTrue(handlers.stream().anyMatch(h -> h instanceof ExcelScreenshotMessageHandler));
         assertTrue(handlers.stream().anyMatch(h -> h instanceof BilibiliCommandMessageHandler));
+        assertTrue(skillRegistry.contains("weread"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name").contains("convert_currency"));
         assertTrue(toolRegistry.definitions().findValuesAsText("name")
             .contains("calculate_bazi_fortune"));

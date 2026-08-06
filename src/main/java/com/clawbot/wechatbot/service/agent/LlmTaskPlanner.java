@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.clawbot.wechatbot.service.agent.reference.ResultReference;
+import com.clawbot.wechatbot.service.agent.reference.ReferenceResolutionException;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -21,7 +23,7 @@ public final class LlmTaskPlanner implements TaskPlanner {
     private static final String PROMPT = """
         你是 Agent 任务规划器，只输出严格 JSON，不回答用户问题。
         格式：
-        {"tasks":[{"id":"t1","type":"CHAT_TOOL","skill_name":"","instruction":"完整任务","depends_on":[]}]}
+        {"tasks":[{"id":"t1","type":"CHAT_TOOL","skill_name":"","instruction":"完整任务","input":{},"expected_output":{},"acceptance_criteria":[{"description":"验收说明","path":"$.字段","operator":"EQUALS","expected":"期望值","required":true}],"depends_on":[]}]}
 
         固定任务类型：
         - CHAT_TOOL：普通问答以及 function-calling 工具。
@@ -49,6 +51,53 @@ public final class LlmTaskPlanner implements TaskPlanner {
             必须原样保留在 instruction 的第一行，禁止删除或改写；表格数据必须规范化为
             首行表头、后续每行一条数据（行间用换行或中文分号分隔），禁止把多行数据合并成
             一行，禁止把数据改写成自然语言描述。
+        13. input 只填写用户已经明确提供或能确定的结构化参数，不得猜测未知值。
+        14. expected_output 描述后续步骤真正需要的输出字段及含义；没有要求时使用 {}。
+        15. acceptance_criteria 给出可机器检查的关键验收条件；path 必须以 $ 开头。
+            operator 只能是 EXISTS、NOT_EMPTY、EQUALS、NOT_EQUALS、CONTAINS、
+            GREATER_THAN、GREATER_THAN_OR_EQUALS、LESS_THAN、LESS_THAN_OR_EQUALS、
+            MATCHES_REGEX、TYPE_IS。无需 expected 的操作符可以省略 expected。
+        16. 地点、日期、时间、币种、作品名称、数量和文件格式等用户硬性约束，
+            必须同时保留在 input 或 acceptance_criteria 中。
+        17. 后续任务需要使用前置任务的精确字段时，input 必须使用
+            {"$ref":"前置任务id.output.字段路径"}，并在 depends_on 声明该任务；
+            禁止把未知的 ID、日期、金额等值重新猜写到 input。
+        """;
+
+    private static final String IMAGE_OUTPUT_RULE = """
+
+        图片生成任务（IMAGE_GENERATION）的真实输出是二进制附件，不是网络链接：
+        - expected_output 必须使用 {}；
+        - acceptance_criteria 必须使用 []；
+        - 禁止要求 image_url、url、图片链接或本地路径字段；
+        - 系统会独立校验返回结果中是否存在有效 IMAGE 附件。
+        """;
+
+    private static final String VOICE_INPUT_RULE = """
+
+        voice-reply 需要朗读前置任务结果时，只在 depends_on 中声明前置任务，
+        input 必须使用 {}。禁止把指向字符串的 $ref 直接作为整个 input；
+        语音 Skill 会从 dependencyText 读取需要合成的文字。
+        """;
+
+    private static final String NEWS_OUTPUT_RULE = """
+
+        新闻查询任务（调用 get_news）使用固定数据契约：
+        - expected_output 必须包含 {"items":"array"}；
+        - items 中每项使用 title、description、source、publish_time、url 字段；
+        - 如果后续任务需要新闻数据，必须依赖新闻任务，并在 input 中使用
+          {"items":{"$ref":"新闻任务id.output.items"}}；
+        - 禁止自行改名为 news、news_list、articles 或 results。
+        """;
+
+    private static final String TOOL_CONTRACT_RULE = """
+
+        天气和路线工具的稳定下游字段：
+        - get_weather：自然语言使用 display_text，结构化数据使用 weather_info；
+        - get_route_plan：自然语言使用 display_text，结构化数据使用 route_info；
+        - 后续文档、语音、Excel或图片任务应优先引用这些稳定字段，禁止直接依赖
+          lives、forecasts、steps、segments 等随工具模式变化的原始字段；
+        - expected_output 只声明后续任务真正使用的稳定字段。
         """;
 
     private static final SkillCatalog EMPTY_CATALOG = new SkillCatalog() {
@@ -94,7 +143,9 @@ public final class LlmTaskPlanner implements TaskPlanner {
             return TaskPlan.accepted(List.of(), maxTasks);
         }
         ArrayNode messages = mapper.createArrayNode();
-        messages.add(message("system", PROMPT
+        messages.add(message("system", PROMPT + IMAGE_OUTPUT_RULE + VOICE_INPUT_RULE
+            + NEWS_OUTPUT_RULE
+            + TOOL_CONTRACT_RULE
             + "\n动态技能目录：\n" + skillCatalog.plannerCatalog()
             + "\n系统单次安全上限为 " + maxTasks
             + " 项任务。若实际需求超过上限，仍须完整列出，由系统统一拒绝。"));
@@ -132,6 +183,9 @@ public final class LlmTaskPlanner implements TaskPlanner {
             String rawId;
             String skillName = "";
             AgentTaskType type;
+            JsonNode input = mapper.createObjectNode();
+            JsonNode expectedOutput = mapper.createObjectNode();
+            List<AcceptanceCriterion> acceptanceCriteria = new ArrayList<>();
             List<String> dependencies = new ArrayList<>();
             if (node.isTextual()) {
                 instruction = node.asText("").trim();
@@ -142,6 +196,14 @@ public final class LlmTaskPlanner implements TaskPlanner {
                 rawId = node.path("id").asText("t" + (rawIndex + 1)).trim();
                 type = parseType(node.path("type").asText(""));
                 skillName = node.path("skill_name").asText("").trim();
+                if (node.path("input").isObject()) {
+                    input = node.path("input").deepCopy();
+                }
+                if (node.path("expected_output").isObject()) {
+                    expectedOutput = node.path("expected_output").deepCopy();
+                }
+                parseAcceptanceCriteria(node.path("acceptance_criteria"))
+                    .forEach(acceptanceCriteria::add);
                 JsonNode dependencyNode = node.path("depends_on");
                 if (dependencyNode.isArray()) {
                     dependencyNode.forEach(item -> {
@@ -162,7 +224,8 @@ public final class LlmTaskPlanner implements TaskPlanner {
                 skillName = "";
             }
             rawTasks.add(new RawTask(
-                rawId, type, skillName, instruction, dependencies));
+                rawId, type, skillName, instruction, input,
+                expectedOutput, acceptanceCriteria, dependencies));
         }
         if (rawTasks.isEmpty() || rawTasks.size() > maxTasks) {
             return rawTasks.size() > maxTasks
@@ -184,9 +247,16 @@ public final class LlmTaskPlanner implements TaskPlanner {
                 .filter(java.util.Objects::nonNull)
                 .filter(dependency -> !dependency.equals(id))
                 .distinct().toList();
+            JsonNode canonicalInput = canonicalizeReferences(
+                raw.input(), canonicalIds);
+            if (isVoiceDependencyReference(raw, canonicalInput, dependencies)) {
+                canonicalInput = mapper.createObjectNode();
+            }
             tasks.add(new AgentTask(
                 id, index, raw.type(), raw.skillName(),
-                raw.instruction(), dependencies));
+                raw.instruction(), canonicalInput,
+                raw.expectedOutput(),
+                raw.acceptanceCriteria(), dependencies));
         }
         return TaskPlan.accepted(List.copyOf(tasks), maxTasks);
     }
@@ -204,6 +274,72 @@ public final class LlmTaskPlanner implements TaskPlanner {
             case "SKILL" -> AgentTaskType.SKILL;
             default -> AgentTaskType.CHAT_TOOL;
         };
+    }
+
+    private List<AcceptanceCriterion> parseAcceptanceCriteria(JsonNode node) {
+        if (!node.isArray()) return List.of();
+        List<AcceptanceCriterion> criteria = new ArrayList<>();
+        for (JsonNode item : node) {
+            if (!item.isObject() || criteria.size() >= 16) break;
+            String path = item.path("path").asText("").trim();
+            String operatorText = item.path("operator").asText("").trim();
+            if (path.isBlank() || operatorText.isBlank()) continue;
+            try {
+                AcceptanceOperator operator = AcceptanceOperator.valueOf(
+                    operatorText.toUpperCase(Locale.ROOT));
+                criteria.add(new AcceptanceCriterion(
+                    item.path("description").asText(""),
+                    path,
+                    operator,
+                    item.has("expected") ? item.get("expected") : null,
+                    item.path("required").asBoolean(true)));
+            } catch (IllegalArgumentException ignored) {
+                // 丢弃模型生成的非法条件，不能让单个坏条件破坏整个任务计划。
+            }
+        }
+        return List.copyOf(criteria);
+    }
+
+    private JsonNode canonicalizeReferences(
+        JsonNode node, Map<String, String> canonicalIds
+    ) {
+        if (node == null) return mapper.nullNode();
+        if (node.isObject() && node.size() == 1 && node.path("$ref").isTextual()) {
+            try {
+                ResultReference reference = ResultReference.parse(
+                    node.path("$ref").asText(), 300);
+                String canonicalId = canonicalIds.get(reference.taskId());
+                if (canonicalId == null) return node.deepCopy();
+                ObjectNode result = mapper.createObjectNode();
+                result.put("$ref", canonicalId + ".output"
+                    + reference.path().substring(1));
+                return result;
+            } catch (ReferenceResolutionException ignored) {
+                return node.deepCopy();
+            }
+        }
+        if (node.isObject()) {
+            ObjectNode result = mapper.createObjectNode();
+            node.fields().forEachRemaining(field -> result.set(
+                field.getKey(), canonicalizeReferences(field.getValue(), canonicalIds)));
+            return result;
+        }
+        if (node.isArray()) {
+            ArrayNode result = mapper.createArrayNode();
+            node.forEach(value -> result.add(canonicalizeReferences(value, canonicalIds)));
+            return result;
+        }
+        return node.deepCopy();
+    }
+
+    private boolean isVoiceDependencyReference(
+        RawTask task, JsonNode input, List<String> dependencies
+    ) {
+        return task.type() == AgentTaskType.SKILL
+            && "voice-reply".equalsIgnoreCase(task.skillName())
+            && !dependencies.isEmpty()
+            && input != null && input.isObject() && input.size() == 1
+            && input.path("$ref").isTextual();
     }
 
     private String extractJson(String content) {
@@ -225,6 +361,9 @@ public final class LlmTaskPlanner implements TaskPlanner {
         AgentTaskType type,
         String skillName,
         String instruction,
+        JsonNode input,
+        JsonNode expectedOutput,
+        List<AcceptanceCriterion> acceptanceCriteria,
         List<String> dependencies
     ) {
     }

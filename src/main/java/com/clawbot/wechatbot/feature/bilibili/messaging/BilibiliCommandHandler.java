@@ -132,6 +132,11 @@ public final class BilibiliCommandHandler {
         return catalogCommands.searchByTitle(userId, title);
     }
 
+    public String handleSearchResultByIndex(String userId, int index) {
+        sessions.markActive(userId);
+        return catalogCommands.showSearchResultByIndex(userId, index);
+    }
+
     public String handleMarkState(String userId, Integer index, String state) {
         sessions.markActive(userId);
         return catalogCommands.markByIndex(userId, index, state);
@@ -140,6 +145,13 @@ public final class BilibiliCommandHandler {
     public String handleMarkStateByTitle(String userId, String title, String state) {
         sessions.markActive(userId);
         return catalogCommands.markByTitle(userId, title, state);
+    }
+
+    public String getPreferredTags(String userId, ContentType type) {
+        ContentType actualType = type == null ? ContentType.BANGUMI : type;
+        var pref = preferences.getOrCreate(userId, actualType);
+        var tags = pref.getPreferredTags();
+        return tags.isEmpty() ? "当前没有设置偏好标签。" : "当前偏好标签：" + String.join("、", tags);
     }
 
     public String handleSetPreference(String userId, ContentType type, String key, String value) {

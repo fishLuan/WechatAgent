@@ -5,9 +5,12 @@ import com.github.wechat.ilink.sdk.core.model.MessageItem;
 import com.github.wechat.ilink.sdk.core.model.VoiceItem;
 import com.github.wechat.ilink.sdk.core.model.WeixinMessage;
 import com.clawbot.wechatbot.base.PlannedMessageHandler;
+import com.clawbot.wechatbot.confirmation.ConfirmationReply;
+import com.clawbot.wechatbot.confirmation.ConfirmationReplyService;
 import com.clawbot.wechatbot.memory.ConversationMemory;
 import com.clawbot.wechatbot.memory.ConversationMemoryService;
 import com.clawbot.wechatbot.memory.ConversationMessage;
+import com.clawbot.wechatbot.memory.ConversationContextSelector;
 import com.clawbot.wechatbot.memory.MemoryProperties;
 import com.clawbot.wechatbot.intent.IntentRecognizer;
 import com.clawbot.wechatbot.intent.IntentResult;
@@ -21,11 +24,14 @@ import com.clawbot.wechatbot.service.agent.AgentOrchestrator;
 import com.clawbot.wechatbot.service.agent.AgentRequestContext;
 import com.clawbot.wechatbot.service.agent.AgentResponse;
 import com.clawbot.wechatbot.service.agent.AgentTask;
+import com.clawbot.wechatbot.service.agent.routing.DynamicToolSelector;
 import com.clawbot.wechatbot.service.reply.LongReplyManager;
 import com.clawbot.wechatbot.tools.tiannewstool.TianNewsTool;
 import com.clawbot.wechatbot.util.JsonUtils;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * 文本消息处理器 —— 处理用户发来的普通文本/语音，调用 DeepSeek 对话
@@ -49,6 +55,9 @@ public class TextMessageHandler implements PlannedMessageHandler {
     private final LongReplyManager longReplyManager;
     private final IntentRecognizer intentRecognizer;
     private final AgentInputAttachmentLoader inputAttachmentLoader;
+    private final ConfirmationReplyService confirmationReplies;
+    private final DynamicToolSelector toolSelector;
+    private final ConversationContextSelector contextSelector;
 
     public TextMessageHandler(
         ChatService chatService,
@@ -60,7 +69,10 @@ public class TextMessageHandler implements PlannedMessageHandler {
         MemoryProperties memoryProperties,
         LongReplyManager longReplyManager,
         IntentRecognizer intentRecognizer,
-        AgentInputAttachmentLoader inputAttachmentLoader
+        AgentInputAttachmentLoader inputAttachmentLoader,
+        ConfirmationReplyService confirmationReplies,
+        DynamicToolSelector toolSelector,
+        ConversationContextSelector contextSelector
     ) {
         this.chatService = chatService;
         this.agentOrchestrator = agentOrchestrator;
@@ -72,6 +84,9 @@ public class TextMessageHandler implements PlannedMessageHandler {
         this.longReplyManager = longReplyManager;
         this.intentRecognizer = intentRecognizer;
         this.inputAttachmentLoader = inputAttachmentLoader;
+        this.confirmationReplies = confirmationReplies;
+        this.toolSelector = toolSelector;
+        this.contextSelector = contextSelector;
         DocumentService.silencePdfLogs();  // 屏蔽 PDF 库的噪音日志
     }
 
@@ -105,10 +120,26 @@ public class TextMessageHandler implements PlannedMessageHandler {
     ) {
         String from = msg.getFrom_user_id();
         String userText = extractText(msg);
+        try {
+            ConfirmationReply confirmation = confirmationReplies.handle(
+                from, msg.getMessage_id(), userText);
+            if (confirmation.handled() && !confirmation.continueWithAgent()) {
+                safeSendText(client, from, confirmation.message());
+                return;
+            }
+            if (confirmation.continueWithAgent()) userText = confirmation.revisedRequest();
+        } catch (Exception exception) {
+            safeSendText(client, from, "确认任务处理失败：" + exception.getMessage());
+            return;
+        }
         IntentResult intent = intentRecognizer.recognize(userText);
         System.out.println("[INTENT] type=" + intent.type()
             + " confidence=" + String.format("%.2f", intent.confidence())
             + " slots=" + intent.slots());
+        Optional<DynamicToolSelector.FastRoute> fastRoute =
+            preplannedTasks == null
+                ? toolSelector.fastRoute(intent, userText)
+                : Optional.empty();
 
         // 如果上一条回复过长，优先处理用户对发送方式的选择，不再调用大模型。
         if (handlePendingLongReply(client, from, userText)) return;
@@ -135,7 +166,8 @@ public class TextMessageHandler implements PlannedMessageHandler {
 
             // 2. 新闻关键词检测：如果用户问新闻，直接调 TianNewsTool 获取实时数据
             String newsData = null;
-            if (tianNewsTool != null && isNewsQuery(textForChat)) {
+            if (fastRoute.isEmpty()
+                && tianNewsTool != null && isNewsQuery(textForChat)) {
                 try {
                     String result = tianNewsTool.execute(null);
                     if (result != null && !result.contains("\"success\":false")) {
@@ -148,7 +180,17 @@ public class TextMessageHandler implements PlannedMessageHandler {
 
             // 3. 传给大模型的内容 = 长期摘要 + 最近完整对话
             ConversationMemory memory = memoryService.get(from);
-            String context = buildContextForModel(memory);
+            Set<String> selectedTools = fastRoute
+                .map(DynamicToolSelector.FastRoute::allowedTools)
+                .orElse(null);
+            boolean complexRequest = preplannedTasks != null
+                || toolSelector.requiresAgentPlanning(intent, userText);
+            ConversationContextSelector.Selection contextSelection =
+                contextSelector.select(
+                    memory, userText, intent, selectedTools, complexRequest);
+            String context = contextSelection.context();
+            System.out.println("[MEMORY-CONTEXT] mode=" + contextSelection.mode()
+                + " selectedMessages=" + contextSelection.selectedMessages());
             // 如果有实时新闻数据，直接拼到用户消息前面
             String chatInput;
             if (newsData != null) {
@@ -163,17 +205,29 @@ public class TextMessageHandler implements PlannedMessageHandler {
                 preplannedTasks == null
                     ? List.of()
                     : inputAttachmentLoader.load(client, msg);
-            AgentResponse agentResponse = preplannedTasks == null
-                ? agentOrchestrator.execute(
-                    chatInput,
-                    context.isEmpty() ? "" : context,
-                    requestContext)
-                : agentOrchestrator.executePlanned(
+            AgentResponse agentResponse;
+            if (preplannedTasks != null) {
+                agentResponse = agentOrchestrator.executePlanned(
                     chatInput,
                     context.isEmpty() ? "" : context,
                     preplannedTasks,
                     requestContext,
                     inputAttachments);
+            } else if (fastRoute.isPresent()) {
+                DynamicToolSelector.FastRoute route = fastRoute.orElseThrow();
+                System.out.println("[AGENT-ROUTE] fast=" + route.reason()
+                    + " tools=" + route.allowedTools());
+                agentResponse = agentOrchestrator.executeDirect(
+                    chatInput,
+                    context.isEmpty() ? "" : context,
+                    requestContext,
+                    route.allowedTools());
+            } else {
+                agentResponse = agentOrchestrator.execute(
+                    chatInput,
+                    context.isEmpty() ? "" : context,
+                    requestContext);
+            }
 
             // 3. 发送文字回复（清理大模型可能自作主张加的"（用男声）"等标记）
             String textReply = cleanBotReply(agentResponse.text());
@@ -772,28 +826,6 @@ public class TextMessageHandler implements PlannedMessageHandler {
     // ============================================================
     // 记忆管理（方案C：长期摘要 + 最近对话）
     // ============================================================
-
-    /**
-     * 构建传给大模型的 context = 长期摘要 + 最近完整对话
-     */
-    private String buildContextForModel(ConversationMemory memory) {
-        StringBuilder sb = new StringBuilder();
-        if (!memory.getLongTermSummary().isBlank()) {
-            sb.append("{\"role\":\"system\",\"content\":")
-              .append(JsonUtils.escape(
-                  "【长期记忆摘要】\n" + memory.getLongTermSummary()))
-              .append("}");
-        }
-        for (ConversationMessage message : memory.getRecentMessages()) {
-            if (sb.length() > 0) sb.append(",");
-            sb.append("{\"role\":")
-                .append(JsonUtils.escape(message.role()))
-                .append(",\"content\":")
-                .append(JsonUtils.escape(message.content()))
-                .append("}");
-        }
-        return sb.toString();
-    }
 
     /**
      * 追加一轮对话，并在必要时触发摘要压缩

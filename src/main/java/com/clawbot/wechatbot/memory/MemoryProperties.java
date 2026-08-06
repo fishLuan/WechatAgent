@@ -12,6 +12,9 @@ public class MemoryProperties {
     private int recentTurns = 15;
     private int summaryEvery = 10;
     private long messageDedupTtlMinutes = 30;
+    private int generalContextTurns = 3;
+    private int followUpContextTurns = 3;
+    private int complexContextTurns = 4;
 
     @PostConstruct
     void validate() {
@@ -28,6 +31,11 @@ public class MemoryProperties {
             throw new IllegalStateException(
                 "clawbot.memory.message-dedup-ttl-minutes must be greater than 0");
         }
+        if (generalContextTurns < 1 || followUpContextTurns < 1
+            || complexContextTurns < 1) {
+            throw new IllegalStateException(
+                "clawbot.memory context turn limits must be greater than 0");
+        }
     }
 
     public boolean isEnabled() { return enabled; }
@@ -40,4 +48,10 @@ public class MemoryProperties {
     public void setSummaryEvery(int summaryEvery) { this.summaryEvery = summaryEvery; }
     public long getMessageDedupTtlMinutes() { return messageDedupTtlMinutes; }
     public void setMessageDedupTtlMinutes(long value) { this.messageDedupTtlMinutes = value; }
+    public int getGeneralContextTurns() { return generalContextTurns; }
+    public void setGeneralContextTurns(int value) { this.generalContextTurns = value; }
+    public int getFollowUpContextTurns() { return followUpContextTurns; }
+    public void setFollowUpContextTurns(int value) { this.followUpContextTurns = value; }
+    public int getComplexContextTurns() { return complexContextTurns; }
+    public void setComplexContextTurns(int value) { this.complexContextTurns = value; }
 }

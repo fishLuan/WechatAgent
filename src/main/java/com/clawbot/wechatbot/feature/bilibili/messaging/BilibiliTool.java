@@ -65,13 +65,17 @@ public final class BilibiliTool implements FunctionTool {
             "mark_want", "mark_watched", "mark_disliked",
             "mark_want_by_title", "mark_watched_by_title",
             "mark_disliked_by_title",
-            "today_updates_anime", "today_updates_series"
+            "today_updates_anime", "today_updates_series",
+            "set_preferred_tags", "clear_preferred_tags",
+            "get_preferred_tags", "remove_preferred_tag"
         }) values.add(value);
         properties.putObject("content_type")
             .put("type", "string")
             .put("description", "anime、movie或series");
         properties.putObject("url").put("type", "string");
-        properties.putObject("title").put("type", "string");
+        properties.putObject("title")
+            .put("type", "string")
+            .put("description", "作品标题（搜索/订阅用）或偏好值（set_preferred_tags 时为逗号分隔的标签，如 热血,战斗）");
         properties.putObject("index").put("type", "integer");
         properties.putObject("push_time_hhmm")
             .put("type", "string")
@@ -166,6 +170,22 @@ public final class BilibiliTool implements FunctionTool {
                     commands.handleTodayUpdates(userId, ContentType.BANGUMI);
                 case "today_updates_series" ->
                     commands.handleTodayUpdates(userId, ContentType.SERIES);
+                case "set_preferred_tags" -> {
+                    String tags = text(arguments, "title");
+                    if (tags.isBlank()) tags = text(arguments, "value");
+                    if (tags.isBlank()) yield "❌ 请提供标签值，如：设置偏好标签 热血,战斗";
+                    yield commands.handleSetPreference(
+                        userId, type(arguments), "tags", tags);
+                }
+                case "clear_preferred_tags" ->
+                    commands.handleSetPreference(
+                        userId, type(arguments), "tags", "");
+                case "get_preferred_tags" ->
+                    commands.getPreferredTags(userId, type(arguments));
+                case "remove_preferred_tag" ->
+                    commands.handleSetPreference(
+                        userId, type(arguments), "remove_tag",
+                        require(arguments, "title"));
                 default -> throw new IllegalArgumentException(
                     "未知操作类型：" + action);
             };

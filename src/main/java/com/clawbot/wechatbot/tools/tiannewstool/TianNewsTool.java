@@ -1,6 +1,7 @@
 package com.clawbot.wechatbot.tools.tiannewstool;
 
 import com.clawbot.wechatbot.tools.FunctionTool;
+import com.clawbot.wechatbot.service.agent.contract.NewsDataContract;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -108,26 +109,25 @@ public class TianNewsTool implements FunctionTool {
             return error("未找到相关新闻");
         }
 
-        StringBuilder result = new StringBuilder();
+        ObjectNode result = mapper.createObjectNode();
+        result.put("success", true);
+        result.put("keyword", keyword);
+        ArrayNode items = result.putArray(NewsDataContract.ITEMS);
         for (JsonNode item : newsList) {
             String title = item.path("title").asText("");
             String description = item.path("description").asText("");
             String source = item.path("source").asText("");
             String ctime = item.path("ctime").asText("");
             String link = item.path("url").asText("");
-
-            result.append("📰 ").append(title).append("\n");
-            if (!description.isEmpty()) {
-                result.append("   ").append(description).append("\n");
-            }
-            result.append("   来源：").append(source).append(" | ").append(ctime).append("\n");
-            if (!link.isEmpty()) {
-                result.append("   链接：").append(link).append("\n");
-            }
-            result.append("\n");
+            ObjectNode normalized = items.addObject();
+            normalized.put("title", title);
+            normalized.put("description", description);
+            normalized.put("source", source);
+            normalized.put("publish_time", ctime);
+            normalized.put("url", link);
         }
-
-        return result.toString().trim();
+        result.put("count", items.size());
+        return mapper.writeValueAsString(result);
     }
 
     private String error(String message) throws Exception {

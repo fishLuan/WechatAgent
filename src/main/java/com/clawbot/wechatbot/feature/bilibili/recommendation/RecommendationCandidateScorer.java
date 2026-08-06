@@ -17,11 +17,13 @@ import java.util.stream.Collectors;
 public final class RecommendationCandidateScorer {
 
     /** 评分权重 */
-    static final double RATING_WEIGHT = 0.6;
+    static final double RATING_WEIGHT = 0.35;
     /** 热度权重 */
-    static final double POPULARITY_WEIGHT = 0.3;
+    static final double POPULARITY_WEIGHT = 0.05;
     /** 题材匹配权重 */
-    static final double GENRE_MATCH_WEIGHT = 0.1;
+    static final double GENRE_MATCH_WEIGHT = 0.2;
+    /** 标签匹配权重 */
+    static final double TAG_MATCH_WEIGHT = 0.4;
 
     private RecommendationCandidateScorer() {
     }
@@ -113,6 +115,63 @@ public final class RecommendationCandidateScorer {
             .filter(userGenres::contains)
             .count();
         return Math.min(1.0, (double) matched / userGenres.size());
+    }
+
+    // ---- 支持 tags 的重载方法 ----
+
+    /** 带标签偏好的打分排序。 */
+    public static List<BilibiliContent> scoreAndRank(
+            List<BilibiliContent> candidates, int count,
+            Set<String> userGenres, Set<String> userTags) {
+
+        if (candidates == null || candidates.isEmpty() || count < 1) return List.of();
+        Set<String> genres = userGenres == null ? Set.of() : Set.copyOf(userGenres);
+        Set<String> tags = userTags == null ? Set.of() : Set.copyOf(userTags);
+        long maxViewCount = findMaxViewCount(candidates);
+
+        return candidates.stream()
+            .map(c -> new ScoredCandidate(c, computeScore(c, maxViewCount, genres, tags)))
+            .sorted(Comparator.comparingDouble((ScoredCandidate s) -> s.score).reversed())
+            .limit(count)
+            .map(s -> s.content)
+            .collect(Collectors.toList());
+    }
+
+    static double computeScore(BilibiliContent content, long maxViewCount,
+                               Set<String> userGenres, Set<String> userTags) {
+        double ratingScore = normalizeRating(content.getRating());
+        double popularityScore = normalizePopularity(content.getViewCount(), maxViewCount);
+        double genreScore = computeGenreMatch(content.getGenres(), userGenres);
+        double tagScore = computeTagMatch(content.getTags(), userTags);
+
+        return ratingScore * RATING_WEIGHT
+             + popularityScore * POPULARITY_WEIGHT
+             + genreScore * GENRE_MATCH_WEIGHT
+             + tagScore * TAG_MATCH_WEIGHT;
+    }
+
+    static String generateReason(BilibiliContent content,
+                                 Set<String> userGenres, Set<String> userTags) {
+        if (content.getRating() == null) return "";
+        StringBuilder sb = new StringBuilder();
+        sb.append("评分 ").append(content.getRating());
+        if (!userGenres.isEmpty()) {
+            long matched = content.getGenres().stream().filter(userGenres::contains).count();
+            if (matched > 0) sb.append("，题材匹配");
+        }
+        if (!userTags.isEmpty()) {
+            long matched = content.getTags().stream().filter(userTags::contains).count();
+            if (matched > 0) sb.append("，标签匹配");
+        }
+        return sb.toString();
+    }
+
+    /** 标签匹配度：用户偏好标签中命中的比例。 */
+    static double computeTagMatch(Set<String> contentTags, Set<String> userTags) {
+        if (userTags == null || userTags.isEmpty()) return 0;
+        if (contentTags == null || contentTags.isEmpty()) return 0;
+        long matched = contentTags.stream().filter(userTags::contains).count();
+        return Math.min(1.0, (double) matched / userTags.size());
     }
 
     private static long findMaxViewCount(List<BilibiliContent> candidates) {
