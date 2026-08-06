@@ -58,13 +58,19 @@ public class BilibiliRecommendationServiceImpl implements BilibiliRecommendation
     @Override
     public RecommendationResult recommend(
             String wechatUserId, ContentType contentType, int count) {
-        return generateRecommendation(wechatUserId, contentType, count, false);
+        return recommend(wechatUserId, contentType, count, null);
+    }
+
+    @Override
+    public RecommendationResult recommend(
+            String wechatUserId, ContentType contentType, int count, String tag) {
+        return generateRecommendation(wechatUserId, contentType, count, false, tag);
     }
 
     @Override
     public RecommendationResult refresh(
             String wechatUserId, ContentType contentType, int count) {
-        return generateRecommendation(wechatUserId, contentType, count, true);
+        return generateRecommendation(wechatUserId, contentType, count, true, null);
     }
 
     /**
@@ -132,7 +138,8 @@ public class BilibiliRecommendationServiceImpl implements BilibiliRecommendation
     // ---- internal ----
 
     private RecommendationResult generateRecommendation(
-            String wechatUserId, ContentType contentType, int count, boolean forceRefresh) {
+            String wechatUserId, ContentType contentType, int count, boolean forceRefresh,
+            String tag) {
 
         if (forceRefresh) {
             pendingStore.remove(wechatUserId, contentType);
@@ -143,9 +150,18 @@ public class BilibiliRecommendationServiceImpl implements BilibiliRecommendation
         double minRating = pref.getMinimumRating();
         int targetCount = (count > 0) ? count : pref.getRecommendationCount();
         Set<String> userGenres = pref.getPreferredGenres();
-        Set<String> userTags = pref.getPreferredTags();
+        // 用户指定了 tag → 用它；泛词（动漫/番/剧）忽略，走偏好
+        Set<String> userTags;
+        if (tag != null && !tag.isBlank()
+            && !tag.equals("动漫") && !tag.equals("番") && !tag.equals("番剧")
+            && !tag.equals("新番") && !tag.equals("推荐")) {
+            userTags = Set.of(tag.trim());
+        } else {
+            userTags = pref.getPreferredTags();
+        }
 
         // 2. 有标签偏好 → 纯标签推荐；无标签 → 高分推荐
+        log.info("{} tag={} userTags={}", contentType, tag, userTags);
         List<BilibiliContent> candidates;
         if (!userTags.isEmpty()) {
             // 标签模式：只用标签搜索结果
@@ -225,14 +241,23 @@ public class BilibiliRecommendationServiceImpl implements BilibiliRecommendation
     private RecommendedContent toRecommendedContent(
             BilibiliContent c, Set<String> userGenres, Set<String> userTags) {
         String reason = RecommendationCandidateScorer.generateReason(c, userGenres, userTags);
-        // 标签模式：直接从 tags 字段算匹配
+        // 标签模式：显示具体匹配标签
         if (!userTags.isEmpty()) {
             Set<String> matched = new LinkedHashSet<>();
             if (c.getTags() != null) {
                 c.getTags().stream().filter(userTags::contains).forEach(matched::add);
             }
+            // 兜底：tags 空时用标题和题材匹配
+            if (matched.isEmpty()) {
+                String haystack = c.getTitle() + String.join("", c.getGenres());
+                userTags.stream().filter(haystack::contains).forEach(matched::add);
+            }
+            // 还空就显示第一个偏好标签（表示是按偏好推的）
+            if (matched.isEmpty() && !userTags.isEmpty()) {
+                matched.add(userTags.iterator().next());
+            }
             if (!matched.isEmpty()) {
-                reason = reason.replace("，标签匹配", ""); // 去掉旧标记，重新加上具体名字
+                reason = reason.replace("，标签匹配", "");
                 reason += "，标签匹配：" + String.join("、", matched);
             }
         }

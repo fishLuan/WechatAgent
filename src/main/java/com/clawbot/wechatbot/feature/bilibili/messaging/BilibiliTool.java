@@ -73,6 +73,9 @@ public final class BilibiliTool implements FunctionTool {
             .put("type", "string")
             .put("description", "anime、movie或series");
         properties.putObject("url").put("type", "string");
+        properties.putObject("tag")
+            .put("type", "string")
+            .put("description", "仅推荐时可用：指定推荐类型，如 热血、校园。不填则按用户偏好标签推荐。");
         properties.putObject("title")
             .put("type", "string")
             .put("description", "作品标题（搜索/订阅用）或偏好值（set_preferred_tags 时为逗号分隔的标签，如 热血,战斗）");
@@ -106,11 +109,14 @@ public final class BilibiliTool implements FunctionTool {
         try {
             reply = switch (action) {
                 case "recommend_anime" ->
-                    commands.handleTodayRecommend(userId, ContentType.BANGUMI);
+                    commands.handleTodayRecommend(userId, ContentType.BANGUMI,
+                        text(arguments, "tag"));
                 case "recommend_movie" ->
-                    commands.handleTodayRecommend(userId, ContentType.MOVIE);
+                    commands.handleTodayRecommend(userId, ContentType.MOVIE,
+                        text(arguments, "tag"));
                 case "recommend_series" ->
-                    commands.handleTodayRecommend(userId, ContentType.SERIES);
+                    commands.handleTodayRecommend(userId, ContentType.SERIES,
+                        text(arguments, "tag"));
                 case "subscribe_by_url" ->
                     commands.handle(userId, require(arguments, "url"));
                 case "subscribe_by_index" ->
