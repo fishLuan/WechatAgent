@@ -2,11 +2,13 @@ package com.clawbot.wechatbot.feature.document;
 
 import com.clawbot.wechatbot.service.DocumentService;
 import com.clawbot.wechatbot.service.agent.AgentAttachment;
+import com.clawbot.wechatbot.service.agent.contract.StructuredTaskContentExtractor;
 import com.clawbot.wechatbot.skills.SkillDefinition;
 import com.clawbot.wechatbot.skills.SkillExecutor;
 import com.clawbot.wechatbot.skills.SkillRequest;
 import com.clawbot.wechatbot.skills.SkillResult;
 import org.springframework.stereotype.Component;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.List;
 import java.util.Locale;
@@ -16,6 +18,8 @@ import java.util.Locale;
 public final class DocumentGenerationSkill implements SkillExecutor {
     public static final String EXECUTOR_NAME = "document-generation";
     private final DocumentService documents;
+    private final StructuredTaskContentExtractor contentExtractor =
+        new StructuredTaskContentExtractor(new ObjectMapper());
 
     public DocumentGenerationSkill(DocumentService documents) {
         this.documents = documents;
@@ -53,7 +57,9 @@ public final class DocumentGenerationSkill implements SkillExecutor {
     }
 
     private String resolveContent(SkillRequest request) {
-        if (!request.dependencyText().isBlank()) return request.dependencyText();
+        String dependency = contentExtractor.extract(
+            request.resolvedInput(), request.dependencyText());
+        if (!dependency.isBlank()) return dependency;
         String instruction = request.instruction();
         for (String separator : List.of("：", ":")) {
             int index = instruction.indexOf(separator);

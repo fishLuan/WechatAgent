@@ -128,10 +128,45 @@ public class AmapWeatherTool implements FunctionTool {
         JsonNode root = callAmap(city, extensions);
         ObjectNode result = mapper.createObjectNode();
         result.put("success", true);
+        result.put("data_type", "weather");
         result.put("query_city", city);
         result.put("type", extensions);
-        if ("all".equals(extensions)) result.set("forecasts", root.path("forecasts"));
-        else result.set("lives", root.path("lives"));
+        if ("all".equals(extensions)) {
+            result.set("forecasts", root.path("forecasts"));
+            JsonNode forecast = root.path("forecasts").path(0);
+            JsonNode cast = forecast.path("casts").path(0);
+            String actualCity = forecast.path("city").asText(city);
+            String weather = cast.path("dayweather").asText("");
+            String temperature = cast.path("daytemp").asText("");
+            result.put("city", actualCity);
+            result.put("display_text", actualCity + "天气预报：" + weather
+                + (temperature.isBlank() ? "" : "，白天气温" + temperature + "℃"));
+            ObjectNode info = result.putObject("weather_info");
+            info.put("city", actualCity);
+            info.put("date", cast.path("date").asText(""));
+            info.put("weather", weather);
+            info.put("temperature", temperature);
+            info.put("wind_direction", cast.path("daywind").asText(""));
+            info.put("wind_power", cast.path("daypower").asText(""));
+            info.put("report_time", forecast.path("reporttime").asText(""));
+        } else {
+            result.set("lives", root.path("lives"));
+            JsonNode live = root.path("lives").path(0);
+            String actualCity = live.path("city").asText(city);
+            String weather = live.path("weather").asText("");
+            String temperature = live.path("temperature").asText("");
+            result.put("city", actualCity);
+            result.put("display_text", actualCity + "当前天气：" + weather
+                + (temperature.isBlank() ? "" : "，气温" + temperature + "℃"));
+            ObjectNode info = result.putObject("weather_info");
+            info.put("city", actualCity);
+            info.put("weather", weather);
+            info.put("temperature", temperature);
+            info.put("humidity", live.path("humidity").asText(""));
+            info.put("wind_direction", live.path("winddirection").asText(""));
+            info.put("wind_power", live.path("windpower").asText(""));
+            info.put("report_time", live.path("reporttime").asText(""));
+        }
         return mapper.writeValueAsString(result);
     }
 
@@ -160,6 +195,7 @@ public class AmapWeatherTool implements FunctionTool {
 
         ObjectNode result = mapper.createObjectNode();
         result.put("success", true);
+        result.put("data_type", "weather_advice");
         result.put("city", live.path("city").asText(city));
         result.put("province", live.path("province").asText(""));
         result.put("action", "get_travel_advice");
@@ -167,6 +203,7 @@ public class AmapWeatherTool implements FunctionTool {
         result.put("score", finalScore);
         result.put("level", level);
         result.put("summary", summary);
+        result.put("display_text", summary);
         result.put("report_time", reportTime);
         result.set("tips", tips);
         ObjectNode info = result.putObject("weather_info");
@@ -234,11 +271,13 @@ public class AmapWeatherTool implements FunctionTool {
 
         ObjectNode result = mapper.createObjectNode();
         result.put("success", true);
+        result.put("data_type", "weather_advice");
         result.put("city", live.path("city").asText(city));
         result.put("province", live.path("province").asText(""));
         result.put("action", "get_dressing_advice");
         result.put("report_time", reportTime);
         result.put("summary", summary);
+        result.put("display_text", summary);
         ObjectNode winfo = result.putObject("weather_info");
         winfo.put("weather", weather);
         winfo.put("temperature", fmtTemp(temp));
@@ -266,6 +305,7 @@ public class AmapWeatherTool implements FunctionTool {
         JsonNode fc = fetchForecastRoot(city);
         ObjectNode result = mapper.createObjectNode();
         result.put("success", true);
+        result.put("data_type", "weather_advice");
         result.put("action", "get_daily_task_advice");
         result.put("city", fc.path("city").asText(city));
         result.put("province", fc.path("province").asText(""));
@@ -273,6 +313,14 @@ public class AmapWeatherTool implements FunctionTool {
         ArrayNode results = result.putArray("advice");
         if ("洗车".equals(task) || "全部".equals(task)) results.add(carWashAdvice(casts));
         if ("晾晒".equals(task) || "全部".equals(task)) results.add(dryLaundryAdvice(casts));
+        StringBuilder summaries = new StringBuilder();
+        for (JsonNode advice : results) {
+            String summary = advice.path("summary").asText("");
+            if (summary.isBlank()) continue;
+            if (summaries.length() > 0) summaries.append(' ');
+            summaries.append(summary);
+        }
+        result.put("display_text", summaries.toString());
         return mapper.writeValueAsString(result);
     }
 

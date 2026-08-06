@@ -1,19 +1,30 @@
 package com.clawbot.wechatbot.service.agent;
 
 import com.clawbot.wechatbot.service.ChatService;
+import com.clawbot.wechatbot.service.agent.routing.DynamicToolSelector;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 
 /** 将文本/工具任务交给 DeepSeek function-calling 内循环。 */
 public final class ChatAgentTaskHandler implements AgentTaskHandler {
     private static final String SUPPORTING_CONTEXT_MARKER = "\n用户问题：";
 
     private final ChatService chatService;
+    private final DynamicToolSelector toolSelector;
     private final com.fasterxml.jackson.databind.ObjectMapper mapper =
         new com.fasterxml.jackson.databind.ObjectMapper();
 
     public ChatAgentTaskHandler(ChatService chatService) {
+        this(chatService, new DynamicToolSelector());
+    }
+
+    public ChatAgentTaskHandler(
+        ChatService chatService, DynamicToolSelector toolSelector
+    ) {
         this.chatService = chatService;
+        this.toolSelector = toolSelector;
     }
 
     @Override
@@ -50,7 +61,12 @@ public final class ChatAgentTaskHandler implements AgentTaskHandler {
                 throw new IllegalStateException("无法序列化结构化任务输入", error);
             }
         }
-        String answer = chatService.chat(input.toString(), context.history());
+        Optional<Set<String>> selectedTools =
+            toolSelector.toolsForTask(task.instruction());
+        String answer = selectedTools.isPresent()
+            ? chatService.chatWithAllowedTools(
+                input.toString(), context.history(), selectedTools.orElseThrow())
+            : chatService.chat(input.toString(), context.history());
         return AgentTaskResult.success(task, answer, List.of());
     }
 }

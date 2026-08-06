@@ -71,6 +71,18 @@ public class FunctionToolRegistry {
         return result;
     }
 
+    public ArrayNode definitionsIncluding(
+        Set<String> includedNames, Set<String> excludedNames
+    ) {
+        if (includedNames == null) return definitionsExcluding(excludedNames);
+        ArrayNode result = mapper.createArrayNode();
+        tools.values().stream()
+            .filter(tool -> includedNames.contains(tool.name()))
+            .filter(tool -> excludedNames == null || !excludedNames.contains(tool.name()))
+            .forEach(tool -> result.add(tool.definition()));
+        return result;
+    }
+
     public String execute(String name, String rawArguments) {
         return executeWithOutcome(name, rawArguments).content();
     }
@@ -124,6 +136,13 @@ public class FunctionToolRegistry {
         try {
             JsonNode result = mapper.readTree(content);
             if (result.has("success")) return result.path("success").asBoolean(false);
+            if (result.has("status")) {
+                JsonNode statusNode = result.path("status");
+                if (statusNode.isBoolean()) return statusNode.asBoolean(false);
+                String status = statusNode.asText("").trim().toLowerCase(java.util.Locale.ROOT);
+                if (Set.of("ok", "success", "succeeded").contains(status)) return true;
+                if (Set.of("error", "failed", "failure").contains(status)) return false;
+            }
             if (result.has("error_code")) return result.path("error_code").asInt(-1) == 0;
             if (result.has("error") && !result.path("error").asText("").isBlank()) return false;
         } catch (Exception ignored) {

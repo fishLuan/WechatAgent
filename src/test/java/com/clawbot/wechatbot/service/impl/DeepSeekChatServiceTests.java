@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Queue;
+import java.util.Set;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -23,6 +24,40 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DeepSeekChatServiceTests {
+
+    @Test
+    void sendsOnlyAllowedToolDefinitions() throws Exception {
+        FakeDeepSeekClient client = new FakeDeepSeekClient();
+        client.enqueue(textResponse(client.mapper(), "天气查询完成"));
+        FunctionTool weather = tool(client.mapper(), new AtomicInteger(), true);
+        FunctionTool news = namedTool(client.mapper(), "get_news");
+        DeepSeekChatService service = new DeepSeekChatService(
+            client,
+            new FunctionToolRegistry(client.mapper(), List.of(weather, news)),
+            "测试系统提示词", 3, guard(client.mapper()));
+
+        service.chatWithAllowedTools("杭州天气", "", Set.of("get_weather"));
+
+        assertEquals(1, client.toolsAtCall(1).size());
+        assertEquals("get_weather", client.toolsAtCall(1).path(0)
+            .path("function").path("name").asText());
+    }
+
+    @Test
+    void disablesToolDefinitionsForGeneralChat() throws Exception {
+        FakeDeepSeekClient client = new FakeDeepSeekClient();
+        client.enqueue(textResponse(client.mapper(), "你好"));
+        FunctionTool weather = tool(client.mapper(), new AtomicInteger(), true);
+        DeepSeekChatService service = new DeepSeekChatService(
+            client,
+            new FunctionToolRegistry(client.mapper(), List.of(weather)),
+            "测试系统提示词", 3, guard(client.mapper()));
+
+        service.chatWithAllowedTools("你好", "", Set.of());
+
+        assertTrue(client.toolsAtCall(1).isEmpty());
+        assertTrue(!client.messagesAtCall(1).toString().contains("工具串联执行规则"));
+    }
 
     @Test
     void feedsToolObservationBackIntoTheInnerLoop() throws Exception {
@@ -229,6 +264,22 @@ class DeepSeekChatServiceTests {
                 return success
                     ? "{\"success\":true,\"weather\":\"晴\"}"
                     : "{\"success\":false,\"error\":\"模拟失败\"}";
+            }
+        };
+    }
+
+    private FunctionTool namedTool(ObjectMapper mapper, String name) {
+        return new FunctionTool() {
+            @Override public String name() { return name; }
+            @Override public JsonNode definition() {
+                ObjectNode function = mapper.createObjectNode().put("name", name);
+                ObjectNode definition = mapper.createObjectNode();
+                definition.put("type", "function");
+                definition.set("function", function);
+                return definition;
+            }
+            @Override public String execute(JsonNode arguments) {
+                return "{\"success\":true}";
             }
         };
     }

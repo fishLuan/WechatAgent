@@ -2,11 +2,13 @@ package com.clawbot.wechatbot.feature.voice;
 
 import com.clawbot.wechatbot.service.SpeechSynthesisService;
 import com.clawbot.wechatbot.service.agent.AgentAttachment;
+import com.clawbot.wechatbot.service.agent.contract.StructuredTaskContentExtractor;
 import com.clawbot.wechatbot.skills.SkillDefinition;
 import com.clawbot.wechatbot.skills.SkillExecutor;
 import com.clawbot.wechatbot.skills.SkillRequest;
 import com.clawbot.wechatbot.skills.SkillResult;
 import org.springframework.stereotype.Component;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.List;
 
@@ -16,6 +18,8 @@ public final class VoiceReplySkill implements SkillExecutor {
     public static final String EXECUTOR_NAME = "voice-reply";
     private final SpeechSynthesisService speech;
     private final VoiceReplyContextStore contexts;
+    private final StructuredTaskContentExtractor contentExtractor =
+        new StructuredTaskContentExtractor(new ObjectMapper());
 
     public VoiceReplySkill(
         SpeechSynthesisService speech, VoiceReplyContextStore contexts
@@ -54,7 +58,9 @@ public final class VoiceReplySkill implements SkillExecutor {
     }
 
     private String resolveText(SkillRequest request) {
-        if (!request.dependencyText().isBlank()) return request.dependencyText();
+        String dependency = contentExtractor.extract(
+            request.resolvedInput(), request.dependencyText());
+        if (!dependency.isBlank()) return dependency;
         String structured = firstText(
             request.resolvedInput().path("text").asText(""),
             request.resolvedInput().path("value").asText(""));
