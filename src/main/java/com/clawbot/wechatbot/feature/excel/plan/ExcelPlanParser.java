@@ -235,6 +235,11 @@ public final class ExcelPlanParser {
         // 5. 添加行
         Matcher addMatcher = ADD_PREFIX.matcher(text);
         if (addMatcher.matches() && !addMatcher.group(1).isBlank()) {
+            // 「添加一列/加一列」是列操作（由正则兜底处理），不是添加行，避免把「一列：备注」当行数据
+            if (text.matches(
+                ".*(?:添加|增加|加入|新增|加)\\s*(?:一列|新列|一个列|列).*")) {
+                return null;
+            }
             return plan(userId, op("1", ExcelOperationType.ADD_ROW,
                 Map.of("cells", addMatcher.group(1))));
         }

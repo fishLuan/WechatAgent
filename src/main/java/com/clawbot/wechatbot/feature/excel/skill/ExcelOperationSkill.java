@@ -23,6 +23,7 @@ import com.clawbot.wechatbot.feature.excel.plan.KnowledgeAliasResolver;
 import com.clawbot.wechatbot.feature.excel.plan.KnowledgeAliasResolver.ResolvedPlan;
 import com.clawbot.wechatbot.feature.excel.plan.KnowledgeDeleteHandler;
 import com.clawbot.wechatbot.feature.excel.plan.KnowledgeListHandler;
+import com.clawbot.wechatbot.feature.excel.plan.OperationChecks;
 import com.clawbot.wechatbot.feature.excel.plan.OperationResult;
 import com.clawbot.wechatbot.feature.excel.plan.QueryHandler;
 import com.clawbot.wechatbot.feature.excel.plan.RollbackHandler;
@@ -631,6 +632,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
             }
         };
         if (desc) cmp = cmp.reversed();
+        excelService.snapshotVersion(table, "按" + column + "排序");
         table.getRows().sort(cmp);
         excelService.save(table);
         String dir = desc ? "降序" : "升序";
@@ -692,6 +694,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
         if (table.getHeaders().contains(colName)) {
             return SkillResult.failure("已存在列「" + colName + "」，请换一个名字。");
         }
+        excelService.snapshotVersion(table, "添加列" + colName);
         table.getHeaders().add(colName);
         for (List<String> row : table.getRows()) {
             row.add(""); // 新列填空白
@@ -707,6 +710,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
             return SkillResult.failure("找不到列「" + colName + "」，现有列："
                 + String.join("、", table.getHeaders()));
         }
+        excelService.snapshotVersion(table, "删除列" + colName);
         String removed = table.getHeaders().remove(colIdx);
         for (List<String> row : table.getRows()) {
             if (colIdx < row.size()) row.remove(colIdx);
@@ -723,6 +727,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
                 + String.join("、", table.getHeaders()));
         }
         if (newName.isBlank()) return SkillResult.failure("新列名不能为空。");
+        excelService.snapshotVersion(table, "重命名列" + oldName + "为" + newName);
         table.getHeaders().set(colIdx, newName);
         excelService.save(table);
         return attachmentResult("✅ 已将「" + oldName + "」重命名为「" + newName + "」。", table);
@@ -732,6 +737,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
 
     private SkillResult clearTable(String userId, ExcelTable table) throws Exception {
         int removed = table.getRows().size();
+        excelService.snapshotVersion(table, "清空表格");
         table.setRows(new ArrayList<>());
         excelService.save(table);
         return attachmentResult("✅ 已清空表格（删除了 " + removed + " 行数据），表头保留。", table);
@@ -749,6 +755,17 @@ public final class ExcelOperationSkill implements SkillExecutor {
                 "没有可用的表格数据，请提供首行为表头、每行一条的表格内容。");
         }
         ExcelTable table = excelService.loadOrCreate(userId, resolveTitle(text));
+        // 覆盖保护（与本地 CreateTableHandler 一致）：已有数据时必须显式带「覆盖」
+        if (OperationChecks.hasData(table) && !text.contains("覆盖")) {
+            return SkillResult.failure(
+                "❌ 你已经有一张 " + table.getHeaders().size() + "列×"
+                    + table.getRows().size() + "行 的表格，直接生成会覆盖原数据，已拦截。"
+                    + "确认要替换，请重新发送并在指令中带上「覆盖」二字，例如：\n"
+                    + "生成覆盖表格：姓名,城市\n张三,北京\n李四,上海");
+        }
+        if (OperationChecks.hasData(table)) {
+            excelService.snapshotVersion(table, "覆盖生成表格");
+        }
         table.setTitle(resolveTitle(text));
         table.setHeaders(parsed.headers());
         table.setRows(parsed.rows());
@@ -910,6 +927,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
         if (cells.isEmpty()) {
             return SkillResult.failure("添加的数据行为空。");
         }
+        excelService.snapshotVersion(table, "添加第" + (table.getRows().size() + 1) + "行");
         table.getRows().add(cells);
         excelService.save(table);
         return attachmentResult("✅ 已添加第 " + table.getRows().size() + " 行。", table);
@@ -927,6 +945,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
             return SkillResult.failure("缺少新数据，格式示例：修改第2行为 张三,25,北京。");
         }
         List<String> cells = ExcelService.splitRowData(newData, table);
+        excelService.snapshotVersion(table, "修改第" + rowNumber + "行");
         table.getRows().set(index, cells);
         excelService.save(table);
         return attachmentResult("✅ 已修改第 " + rowNumber + " 行。", table);
@@ -939,6 +958,7 @@ public final class ExcelOperationSkill implements SkillExecutor {
         if (index < 0 || index >= table.getRows().size()) {
             return failureRowRange(table);
         }
+        excelService.snapshotVersion(table, "删除第" + rowNumber + "行");
         List<String> removed = table.getRows().remove(index);
         excelService.save(table);
         return attachmentResult(

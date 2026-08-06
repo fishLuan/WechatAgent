@@ -5,7 +5,7 @@ import com.clawbot.wechatbot.feature.excel.model.ExcelTable;
 import java.util.List;
 
 /** 各操作处理器与校验器共用的表格工具方法。 */
-final class OperationChecks {
+public final class OperationChecks {
 
     private OperationChecks() {
     }
@@ -18,7 +18,7 @@ final class OperationChecks {
     }
 
     /** 表格是否已有非空数据（表头和至少一行数据都齐全才视为有数据）。 */
-    static boolean hasData(ExcelTable table) {
+    public static boolean hasData(ExcelTable table) {
         return !table.getHeaders().isEmpty() && !table.getRows().isEmpty();
     }
 

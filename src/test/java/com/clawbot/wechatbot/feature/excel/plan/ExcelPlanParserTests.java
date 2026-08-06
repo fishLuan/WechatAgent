@@ -116,6 +116,13 @@ class ExcelPlanParserTests {
         assertEquals("张三,25,北京", op.param("cells"));
     }
 
+    /** 「添加一列：备注」是列操作（由正则兜底处理），解析器应让位而不是当成添加行。 */
+    @Test
+    void columnAddIntentIsNotAddRow() {
+        assertNull(parser.parse("user-1", "添加一列：备注"));
+        assertNull(parser.parse("user-1", "增加新列 备注"));
+    }
+
     // ============================
     // 生成表格：覆盖标记与内容提取
     // ============================

@@ -1156,4 +1156,116 @@ class ExcelOperationSkillTests {
         }
         return rows;
     }
+
+    // ============================
+    // 远程合并能力兜底（正则路径）：筛选 / 列操作 / 清空 / 覆盖保护 / 版本快照
+    // ============================
+    /** 本地解析器识别不了的筛选指令走正则兜底，真实执行条件筛选。 */
+    @Test
+    void legacyFilterRowsViaRegexFallback() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = new ExcelTable("user-1", "旧表");
+        table.setHeaders(List.of("产品", "数量"));
+        table.setRows(new ArrayList<>(List.of(
+            List.of("苹果", "10"), List.of("香蕉", "5"), List.of("橘子", "8"))));
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "找出数量大于5的行", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("找到 2 条匹配的行"));
+        assertTrue(result.text().contains("苹果"));
+        assertTrue(result.text().contains("橘子"));
+    }
+
+    /** 添加列：执行成功且写版本快照（与本地语义一致，可回滚）。 */
+    @Test
+    void legacyAddColumnSnapshotsAndMutates() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = new ExcelTable("user-1", "旧表");
+        table.setHeaders(new ArrayList<>(List.of("产品", "数量")));
+        table.setRows(new ArrayList<>(List.of(new ArrayList<>(List.of("苹果", "10")))));
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "添加一列：备注", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已添加列「备注」"));
+        assertEquals(List.of("产品", "数量", "备注"), table.getHeaders());
+        verify(excelService).snapshotVersion(table, "添加列备注");
+    }
+
+    /** 清空表格：执行成功、写版本快照（清空后仍可回滚）。 */
+    @Test
+    void legacyClearTableSnapshotsAndClears() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = new ExcelTable("user-1", "旧表");
+        table.setHeaders(new ArrayList<>(List.of("产品", "数量")));
+        table.setRows(new ArrayList<>(List.of(List.of("苹果", "10"), List.of("香蕉", "5"))));
+        when(excelService.loadOrCreate(eq("user-1"), anyString())).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "清空表格", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已清空表格"));
+        assertTrue(table.getRows().isEmpty());
+        verify(excelService).snapshotVersion(table, "清空表格");
+    }
+
+    /** 生成表格受覆盖保护：已有数据且无「覆盖」时拦截，不落库（本地与兜底路径均生效）。 */
+    @Test
+    void createTableBlockedWithoutOverwrite() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(existingTable());
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "把下面的数据整理成表：产品,销量\n苹果,10", "", "", ""));
+
+        assertFalse(result.success());
+        assertTrue(result.text().contains("覆盖"));
+        verify(excelService, never()).save(any());
+    }
+
+    /** 生成表格带「覆盖」时允许替换，并写版本快照。 */
+    @Test
+    void createTableOverwriteSnapshots() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "覆盖：产品,销量\n苹果,10", "", "", ""));
+
+        assertTrue(result.success());
+        assertEquals(List.of("产品", "销量"), table.getHeaders());
+        verify(excelService).snapshotVersion(table, "覆盖生成表格");
+    }
+
+    /** 添加行：写版本快照，与本地添加行语义一致（本地/兜底路径均生效）。 */
+    @Test
+    void addRowSnapshotsForRollback() throws Exception {
+        ExcelService excelService = mock(ExcelService.class);
+        ExcelTable table = existingTable();
+        when(excelService.getActiveWorkbook(eq("user-1"))).thenReturn(table);
+        when(excelService.toXlsx(any())).thenReturn(new byte[]{1, 2, 3});
+        ExcelOperationSkill skill = new ExcelOperationSkill(excelService);
+
+        SkillResult result = skill.execute(definition,
+            new SkillRequest("user-1", "加一行：王五,28", "", "", ""));
+
+        assertTrue(result.success());
+        assertTrue(result.text().contains("已添加第 2 行"));
+        verify(excelService).snapshotVersion(table, "添加第2行");
+    }
 }
