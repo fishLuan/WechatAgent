@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ClawBot 控制台 · 仪表盘</title>
+<style>
+  :root {
+    --bg:#f5f7fb; --card:#fff; --line:#e5e9f2; --text:#1f2733; --sub:#6b7688;
+    --primary:#3b82f6; --primary-soft:#eff6ff; --green:#10b981; --green-soft:#ecfdf5; --radius:12px;
+    --shadow:0 1px 3px rgba(16,24,40,.06);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text)}
+  .app{display:flex;min-height:100vh}
+  .sidebar{width:210px;background:#101828;color:#cbd5e1;padding:20px 12px;display:flex;flex-direction:column;gap:4px}
+  .logo{display:flex;align-items:center;gap:10px;padding:6px 10px 20px;font-size:16px;font-weight:700;color:#fff}
+  .logo .badge{font-size:10px;background:var(--green);color:#fff;padding:2px 8px;border-radius:99px}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;font-size:13.5px}
+  .nav-item.active{background:var(--primary);color:#fff}
+  .sec{font-size:11px;color:#64748b;padding:14px 12px 6px;letter-spacing:1px}
+  .main{flex:1;padding:24px 30px}
+  .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}
+  .topbar h1{font-size:20px}
+  .status-pill{display:inline-flex;align-items:center;gap:6px;background:var(--green-soft);color:#047857;border:1px solid #a7f3d0;padding:6px 14px;border-radius:99px;font-size:12.5px;font-weight:600}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green)}
+  .banner{background:var(--primary-soft);border:1px solid #bfdbfe;border-radius:var(--radius);padding:14px 18px;margin-bottom:20px;font-size:13px;line-height:1.7;color:#1e3a8a}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+  .stat .num{font-size:26px;font-weight:800;margin-top:4px}
+  .stat .lbl{font-size:12.5px;color:var(--sub)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+  .card h3{font-size:14px;margin-bottom:12px}
+  .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .row:last-child{border:none}
+  .muted{color:var(--sub)}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="logo">ClawBot <span class="badge">运行中</span></div>
+    <div class="sec">导航</div>
+    <div class="nav-item active">📊 仪表盘</div>
+    <div class="nav-item">🧩 能力中心</div>
+    <div class="nav-item">⏰ 定时任务</div>
+    <div class="nav-item">💬 对话记录</div>
+    <div class="nav-item">⚙️ 设置</div>
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <h1>仪表盘</h1>
+      <div class="status-pill"><span class="dot"></span> Bot 在线 · DeepSeek</div>
+    </div>
+    <div class="banner">运维与答辩演示控制台。终端用户通过微信对话使用 Agent；此处可查看能力、任务与会话记忆。</div>
+    <div class="stats">
+      <div class="stat"><div class="lbl">已注册工具</div><div class="num">14</div></div>
+      <div class="stat"><div class="lbl">已加载 Skill</div><div class="num">5</div></div>
+      <div class="stat"><div class="lbl">会话用户</div><div class="num">3</div></div>
+      <div class="stat"><div class="lbl">定时任务</div><div class="num">2</div></div>
+    </div>
+    <div class="card">
+      <h3>运行状态</h3>
+      <div class="row"><span>模型</span><span>DeepSeek + DashScope 多模态</span></div>
+      <div class="row"><span>运行时长</span><span>02:18:44</span></div>
+      <div class="row"><span>消息调度并行度</span><span>4（同用户保序）</span></div>
+      <div class="row"><span>Agent 并行度</span><span>3 · 总超时 90s</span></div>
+      <div class="row"><span class="muted">端口</span><span class="muted">8080 · /console</span></div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="720" fill="url(#bg)"/>
+  <text x="40" y="48" fill="#f8fafc" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="26" font-weight="700">ClawBot Main Architecture</text>
+  <text x="40" y="78" fill="#94a3b8" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="14">WeChat -&gt; Dispatch -&gt; Handler -&gt; Agent / Bypass -&gt; Reply</text>
+
+  <rect x="40" y="120" width="200" height="70" rx="10" fill="#1d4ed8"/>
+  <text x="140" y="150" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="15" font-weight="600">WeChat Msg</text>
+  <text x="140" y="172" text-anchor="middle" fill="#bfdbfe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">iLink SDK</text>
+
+  <rect x="300" y="120" width="240" height="70" rx="10" fill="#0ea5e9"/>
+  <text x="420" y="150" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="15" font-weight="600">MessageDispatch</text>
+  <text x="420" y="172" text-anchor="middle" fill="#e0f2fe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">serial/user parallel x4</text>
+
+  <rect x="600" y="120" width="240" height="70" rx="10" fill="#6366f1"/>
+  <text x="720" y="150" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="15" font-weight="600">MessageHandler</text>
+  <text x="720" y="172" text-anchor="middle" fill="#e0e7ff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">priority routing</text>
+
+  <line x1="240" y1="155" x2="300" y2="155" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="540" y1="155" x2="600" y2="155" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="420" y="260" width="220" height="90" rx="10" fill="#059669"/>
+  <text x="530" y="295" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="15" font-weight="600">PlanningBypass</text>
+  <text x="530" y="320" text-anchor="middle" fill="#d1fae5" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">Bilibili / Weread cmds</text>
+  <text x="530" y="338" text-anchor="middle" fill="#d1fae5" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">direct domain handler</text>
+
+  <rect x="720" y="260" width="240" height="90" rx="10" fill="#7c3aed"/>
+  <text x="840" y="295" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="15" font-weight="600">AgentOrchestrator</text>
+  <text x="840" y="320" text-anchor="middle" fill="#ede9fe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">plan - parallel - validate</text>
+  <text x="840" y="338" text-anchor="middle" fill="#ede9fe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">- replan - format</text>
+
+  <path d="M720 190 L530 260" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <path d="M720 190 L840 260" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+
+  <rect x="420" y="420" width="220" height="70" rx="10" fill="#047857"/>
+  <text x="530" y="450" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="14" font-weight="600">BilibiliCommandHandler</text>
+  <text x="530" y="472" text-anchor="middle" fill="#a7f3d0" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">recommend / subscribe</text>
+
+  <rect x="700" y="400" width="280" height="110" rx="10" fill="#4c1d95"/>
+  <text x="840" y="430" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="14" font-weight="600">Task Dispatch</text>
+  <text x="840" y="455" text-anchor="middle" fill="#ddd6fe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">CHAT_TOOL / SKILL</text>
+  <text x="840" y="475" text-anchor="middle" fill="#ddd6fe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">IMAGE / DOCUMENT</text>
+  <text x="840" y="495" text-anchor="middle" fill="#ddd6fe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">+ Memory (Mongo)</text>
+
+  <line x1="530" y1="350" x2="530" y2="420" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="840" y1="350" x2="840" y2="400" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="480" y="560" width="320" height="70" rx="10" fill="#dc2626"/>
+  <text x="640" y="590" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="15" font-weight="600">Formatter -&gt; WeChat Reply</text>
+  <text x="640" y="612" text-anchor="middle" fill="#fecaca" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">chunk long text / extract summary</text>
+
+  <path d="M530 490 L580 560" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <path d="M840 510 L700 575" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+
+  <text x="40" y="690" fill="#64748b" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">Entry / Handler / Agent / Skill-Tool / LLM / Memory</text>
+</svg>

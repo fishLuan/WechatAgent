@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="680" fill="url(#bg)"/>
+  <text x="40" y="48" fill="#f8fafc" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="26" font-weight="700">Dual-Loop Agent</text>
+  <text x="40" y="78" fill="#94a3b8" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="14">Outer orchestrator / Inner function-calling / Domain sub-agent</text>
+
+  <rect x="40" y="110" width="1120" height="220" rx="16" fill="#1e1b4b" stroke="#8b5cf6" stroke-width="2"/>
+  <text x="60" y="145" fill="#c4b5fd" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="16" font-weight="700">Outer Loop - AgentOrchestrator</text>
+  <text x="60" y="168" fill="#a78bfa" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">max-parallelism=3 / timeout=90s / replan&lt;=1</text>
+
+  <rect x="70" y="190" width="160" height="90" rx="10" fill="#7c3aed"/>
+  <text x="150" y="230" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="14" font-weight="600">Plan</text>
+  <text x="150" y="252" text-anchor="middle" fill="#ede9fe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="11">LlmTaskPlanner</text>
+
+  <rect x="280" y="190" width="180" height="90" rx="10" fill="#6d28d9"/>
+  <text x="370" y="230" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="14" font-weight="600">Parallel Batch</text>
+  <text x="370" y="252" text-anchor="middle" fill="#ede9fe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="11">ready deps graph</text>
+
+  <rect x="510" y="190" width="160" height="90" rx="10" fill="#5b21b6"/>
+  <text x="590" y="230" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="14" font-weight="600">Validate</text>
+  <text x="590" y="252" text-anchor="middle" fill="#ede9fe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="11">Acceptance</text>
+
+  <rect x="720" y="190" width="160" height="90" rx="10" fill="#4c1d95"/>
+  <text x="800" y="230" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="14" font-weight="600">Replan</text>
+  <text x="800" y="252" text-anchor="middle" fill="#ede9fe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="11">timeout 8s</text>
+
+  <rect x="930" y="190" width="190" height="90" rx="10" fill="#3b0764"/>
+  <text x="1025" y="230" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="14" font-weight="600">Format</text>
+  <text x="1025" y="252" text-anchor="middle" fill="#ede9fe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="11">UserFacingResult</text>
+
+  <line x1="230" y1="235" x2="280" y2="235" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="460" y1="235" x2="510" y2="235" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="670" y1="235" x2="720" y2="235" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="880" y1="235" x2="930" y2="235" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="40" y="360" width="560" height="200" rx="16" fill="#082f49" stroke="#0ea5e9" stroke-width="2"/>
+  <text x="60" y="395" fill="#7dd3fc" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="16" font-weight="700">Inner Loop - DeepSeekChatService</text>
+  <text x="60" y="418" fill="#38bdf8" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">CHAT_TOOL / max-tool-rounds=5</text>
+
+  <rect x="70" y="445" width="130" height="70" rx="10" fill="#0284c7"/>
+  <text x="135" y="485" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="13" font-weight="600">LLM</text>
+
+  <rect x="240" y="445" width="140" height="70" rx="10" fill="#0369a1"/>
+  <text x="310" y="475" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="13" font-weight="600">tool_calls</text>
+  <text x="310" y="495" text-anchor="middle" fill="#e0f2fe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="11">&lt;=4 / round</text>
+
+  <rect x="420" y="445" width="140" height="70" rx="10" fill="#075985"/>
+  <text x="490" y="475" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="13" font-weight="600">Registry</text>
+  <text x="490" y="495" text-anchor="middle" fill="#e0f2fe" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="11">FunctionTool</text>
+
+  <line x1="200" y1="480" x2="240" y2="480" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="380" y1="480" x2="420" y2="480" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="640" y="360" width="520" height="200" rx="16" fill="#052e16" stroke="#10b981" stroke-width="2"/>
+  <text x="660" y="395" fill="#6ee7b7" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="16" font-weight="700">Domain Sub-Loop - BilibiliSubAgent</text>
+  <text x="660" y="418" fill="#34d399" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">bounded plan / max-tasks=5 / rounds=3 / 30s</text>
+
+  <rect x="680" y="445" width="130" height="70" rx="10" fill="#059669"/>
+  <text x="745" y="485" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="13" font-weight="600">TaskPlan</text>
+
+  <rect x="850" y="445" width="130" height="70" rx="10" fill="#047857"/>
+  <text x="915" y="485" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="13" font-weight="600">Execute</text>
+
+  <rect x="1020" y="445" width="110" height="70" rx="10" fill="#065f46"/>
+  <text x="1075" y="485" text-anchor="middle" fill="#fff" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="13" font-weight="600">Guard</text>
+
+  <line x1="810" y1="480" x2="850" y2="480" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="980" y1="480" x2="1020" y2="480" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <text x="40" y="620" fill="#94a3b8" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="13">Outer schedules SKILL/CHAT_TOOL; Inner runs atomic tools; Bilibili Skill opens a bounded sub-plan.</text>
+  <text x="40" y="650" fill="#64748b" font-family="Microsoft YaHei, Segoe UI, sans-serif" font-size="12">Guard: max-total-tool-calls=8 / max-same-tool-failures=2 / truncate 8k/16k</text>
+</svg>

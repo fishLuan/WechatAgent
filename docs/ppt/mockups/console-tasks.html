@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ClawBot 控制台 · 定时任务</title>
+<style>
+  :root {
+    --bg:#f5f7fb; --card:#fff; --line:#e5e9f2; --text:#1f2733; --sub:#6b7688;
+    --primary:#3b82f6; --primary-soft:#eff6ff; --green:#10b981; --green-soft:#ecfdf5; --radius:12px;
+    --shadow:0 1px 3px rgba(16,24,40,.06);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text)}
+  .app{display:flex;min-height:100vh}
+  .sidebar{width:210px;background:#101828;color:#cbd5e1;padding:20px 12px}
+  .logo{padding:6px 10px 20px;font-size:16px;font-weight:700;color:#fff}
+  .logo .badge{font-size:10px;background:var(--green);color:#fff;padding:2px 8px;border-radius:99px;margin-left:8px}
+  .nav-item{padding:10px 12px;border-radius:8px;font-size:13.5px;margin-bottom:2px}
+  .nav-item.active{background:var(--primary);color:#fff}
+  .sec{font-size:11px;color:#64748b;padding:14px 12px 6px}
+  .main{flex:1;padding:24px 30px}
+  .page-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+  .page-head h1{font-size:20px}
+  .btn{background:var(--primary);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;padding:10px 14px;color:var(--sub);font-weight:600;border-bottom:1px solid var(--line);background:#fafbfe;font-size:12px}
+  td{padding:11px 14px;border-bottom:1px solid var(--line)}
+  .chip{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600}
+  .chip.on{background:var(--green-soft);color:#047857}
+  .chip.type{background:var(--primary-soft);color:#1d4ed8}
+  .mono{font-family:ui-monospace,monospace;font-size:12px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="logo">ClawBot <span class="badge">运行中</span></div>
+    <div class="sec">导航</div>
+    <div class="nav-item">📊 仪表盘</div>
+    <div class="nav-item">🧩 能力中心</div>
+    <div class="nav-item active">⏰ 定时任务</div>
+    <div class="nav-item">💬 对话记录</div>
+    <div class="nav-item">⚙️ 设置</div>
+  </aside>
+  <main class="main">
+    <div class="page-head">
+      <h1>定时任务</h1>
+      <button class="btn">+ 新建任务</button>
+    </div>
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>名称</th><th>类型</th><th>表达式</th><th>下次触发</th><th>状态</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>每晚电影推送</td>
+            <td><span class="chip type">BILIBILI_PUSH</span></td>
+            <td class="mono">0 0 22 * * ?</td>
+            <td>今天 22:00</td>
+            <td><span class="chip on">启用</span></td>
+          </tr>
+          <tr>
+            <td>工作日早八提醒</td>
+            <td><span class="chip type">REMINDER</span></td>
+            <td class="mono">0 0 8 ? * MON-FRI</td>
+            <td>明天 08:00</td>
+            <td><span class="chip on">启用</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ClawBot 控制台 · 能力中心</title>
+<style>
+  :root {
+    --bg:#f5f7fb; --card:#fff; --line:#e5e9f2; --text:#1f2733; --sub:#6b7688;
+    --primary:#3b82f6; --primary-soft:#eff6ff; --green:#10b981; --green-soft:#ecfdf5;
+    --amber:#f59e0b; --amber-soft:#fffbeb; --radius:12px;
+    --shadow:0 1px 3px rgba(16,24,40,.06);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text)}
+  .app{display:flex;min-height:100vh}
+  .sidebar{width:210px;background:#101828;color:#cbd5e1;padding:20px 12px}
+  .logo{display:flex;align-items:center;gap:10px;padding:6px 10px 20px;font-size:16px;font-weight:700;color:#fff}
+  .logo .badge{font-size:10px;background:var(--green);color:#fff;padding:2px 8px;border-radius:99px}
+  .nav-item{padding:10px 12px;border-radius:8px;font-size:13.5px;margin-bottom:2px}
+  .nav-item.active{background:var(--primary);color:#fff}
+  .sec{font-size:11px;color:#64748b;padding:14px 12px 6px}
+  .main{flex:1;padding:24px 30px}
+  .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
+  .topbar h1{font-size:20px}
+  .desc{color:var(--sub);font-size:13px;margin-bottom:16px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .tool-card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
+  .tool-card.hl{border-color:var(--primary);box-shadow:0 6px 16px rgba(16,24,40,.1)}
+  .icon{width:42px;height:42px;border-radius:10px;background:var(--primary-soft);display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:10px}
+  .tool-card.skill .icon{background:var(--amber-soft)}
+  .tool-card h3{font-size:14.5px;margin-bottom:4px}
+  .cat{font-size:10px;padding:2px 8px;border-radius:99px;background:#f1f5f9;color:var(--sub);font-weight:600;margin-left:6px}
+  .tool-card p{font-size:12.5px;color:var(--sub);line-height:1.5}
+  .auto-mark{position:absolute;top:12px;right:12px;font-size:10px;color:#059669;background:var(--green-soft);border:1px solid #a7f3d0;padding:2px 7px;border-radius:99px;font-weight:700}
+  .meta{margin-top:10px;font-size:11px;color:#94a3b8;font-family:ui-monospace,monospace}
+  .modal-mask{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center}
+  .modal{background:#fff;border-radius:14px;width:420px;box-shadow:0 20px 50px rgba(0,0,0,.25)}
+  .m-head{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+  .m-body{padding:18px 20px;font-size:13px;line-height:1.6}
+  .ok{background:var(--green-soft);border:1px solid #a7f3d0;color:#047857;border-radius:8px;padding:10px 12px;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="logo">ClawBot <span class="badge">运行中</span></div>
+    <div class="sec">导航</div>
+    <div class="nav-item">📊 仪表盘</div>
+    <div class="nav-item active">🧩 能力中心</div>
+    <div class="nav-item">⏰ 定时任务</div>
+    <div class="nav-item">💬 对话记录</div>
+    <div class="nav-item">⚙️ 设置</div>
+  </aside>
+  <main class="main">
+    <div class="topbar"><h1>能力中心</h1></div>
+    <p class="desc">Skill（领域能力包）与 Tool（Function-calling 原子能力）统一展示，可在线试跑。</p>
+    <div class="grid">
+      <div class="tool-card skill"><span class="auto-mark">SKILL</span><div class="icon">📺</div><h3>B站内容管理 <span class="cat">bilibili</span></h3><p>搜索、推荐、订阅与标记动漫/影视</p><div class="meta">timeout 30s</div></div>
+      <div class="tool-card skill"><span class="auto-mark">SKILL</span><div class="icon">📗</div><h3>微信读书 <span class="cat">weread</span></h3><p>书架、统计、笔记与荐书</p><div class="meta">timeout 30s</div></div>
+      <div class="tool-card skill"><span class="auto-mark">SKILL</span><div class="icon">📊</div><h3>Excel 操作 <span class="cat">excel</span></h3><p>生成、筛选、排序与聚合</p><div class="meta">timeout 30s</div></div>
+      <div class="tool-card hl"><span class="auto-mark">TOOL</span><div class="icon">🌤</div><h3>天气查询 <span class="cat">get_weather</span></h3><p>高德天气 / 穿衣出行建议</p><div class="meta">AmapWeatherTool</div></div>
+      <div class="tool-card"><span class="auto-mark">TOOL</span><div class="icon">🔍</div><h3>联网搜索 <span class="cat">web_search</span></h3><p>博查 / Bing 多通道</p><div class="meta">WebSearchTool</div></div>
+      <div class="tool-card"><span class="auto-mark">TOOL</span><div class="icon">⏱</div><h3>定时任务 <span class="cat">scheduler_manage</span></h3><p>含 BILIBILI_PUSH 推送类型</p><div class="meta">SchedulerTool</div></div>
+    </div>
+  </main>
+</div>
+<div class="modal-mask">
+  <div class="modal">
+    <div class="m-head"><h2>执行 · get_weather</h2><span>×</span></div>
+    <div class="m-body">
+      <div><b>city</b> = 杭州</div>
+      <div class="ok">✓ 杭州：晴 26°C · 东南风 2 级 · 适宜出行</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

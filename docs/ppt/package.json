@@ -1,0 +1,14 @@
+{
+  "name": "clawbot-ppt",
+  "private": true,
+  "scripts": {
+    "serve": "node serve.js",
+    "capture": "node capture-screens.js",
+    "build": "node generate-pptx.js",
+    "all": "node capture-screens.js && node generate-pptx.js"
+  },
+  "dependencies": {
+    "pptxgenjs": "^4.0.1",
+    "puppeteer": "^25.5.0"
+  }
+}

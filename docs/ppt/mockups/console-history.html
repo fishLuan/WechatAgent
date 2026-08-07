@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ClawBot 控制台 · 对话记录</title>
+<style>
+  :root {
+    --bg:#f5f7fb; --card:#fff; --line:#e5e9f2; --text:#1f2733; --sub:#6b7688;
+    --primary:#3b82f6; --green:#10b981; --radius:12px;
+    --shadow:0 1px 3px rgba(16,24,40,.06);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text)}
+  .app{display:flex;min-height:100vh}
+  .sidebar{width:210px;background:#101828;color:#cbd5e1;padding:20px 12px}
+  .logo{padding:6px 10px 20px;font-size:16px;font-weight:700;color:#fff}
+  .logo .badge{font-size:10px;background:var(--green);color:#fff;padding:2px 8px;border-radius:99px;margin-left:8px}
+  .nav-item{padding:10px 12px;border-radius:8px;font-size:13.5px;margin-bottom:2px}
+  .nav-item.active{background:var(--primary);color:#fff}
+  .sec{font-size:11px;color:#64748b;padding:14px 12px 6px}
+  .main{flex:1;padding:24px 30px}
+  h1{font-size:20px;margin-bottom:8px}
+  .desc{color:var(--sub);font-size:13px;margin-bottom:16px}
+  .conv{border:1px solid var(--line);border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow);overflow:hidden;max-width:720px}
+  .c-head{padding:12px 16px;border-bottom:1px solid var(--line);background:#fafbfe;font-size:13px;display:flex;gap:10px;align-items:center}
+  .c-head .sub{color:var(--sub);font-size:11.5px}
+  .c-body{padding:10px 16px}
+  .msg{display:flex;gap:10px;padding:7px 0;font-size:13px}
+  .who{flex-shrink:0;font-weight:700;font-size:12px;width:52px}
+  .user .who{color:var(--primary)}
+  .assistant .who{color:var(--green)}
+  .txt{line-height:1.55}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="logo">ClawBot <span class="badge">运行中</span></div>
+    <div class="sec">导航</div>
+    <div class="nav-item">📊 仪表盘</div>
+    <div class="nav-item">🧩 能力中心</div>
+    <div class="nav-item">⏰ 定时任务</div>
+    <div class="nav-item active">💬 对话记录</div>
+    <div class="nav-item">⚙️ 设置</div>
+  </aside>
+  <main class="main">
+    <h1>对话记录</h1>
+    <p class="desc">MongoDB 记忆：近期 15 轮 + 每 10 轮长期摘要</p>
+    <div class="conv">
+      <div class="c-head"><b>用户 u_demo_01</b><span class="sub">最近活跃 · 含 B站推荐会话</span></div>
+      <div class="c-body">
+        <div class="msg user"><div class="who">用户</div><div class="txt">动漫推荐</div></div>
+        <div class="msg assistant"><div class="who">小虾</div><div class="txt">为你推荐 3 部高分番剧：① 葬送的芙莉莲 9.7 ② 药屋少女的呢喃 9.5 ③ 孤独摇滚 9.4…</div></div>
+        <div class="msg user"><div class="who">用户</div><div class="txt">订阅1</div></div>
+        <div class="msg assistant"><div class="who">小虾</div><div class="txt">已订阅《葬送的芙莉莲》。🏷️ 已学习标签：奇幻、冒险、治愈</div></div>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>
